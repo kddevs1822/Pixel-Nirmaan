@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-body bg-bg-light text-slate-900;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading font-bold;
+  }
+}
+
+.bg-canvas-grid {
+  background-color: #FAF6F0;
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, rgba(198, 93, 59, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(198, 93, 59, 0.1) 1px, transparent 1px);
+}
