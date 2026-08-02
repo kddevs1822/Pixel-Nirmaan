@@ -21,7 +21,7 @@ const URLImage = ({ node, commonProps }: any) => {
 };
 
 export const CanvasArea: React.FC = () => {
-  const { nodes, selectedId, pan, zoom, setPan, setZoom, selectNode, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId } = useCanvasStore();
+  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId } = useCanvasStore();
   
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -29,6 +29,7 @@ export const CanvasArea: React.FC = () => {
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [selectionRect, setSelectionRect] = useState<{ startX: number, startY: number, x: number, y: number, width: number, height: number } | null>(null);
   
   useEffect(() => {
     const handleResize = () => {
@@ -49,22 +50,25 @@ export const CanvasArea: React.FC = () => {
     }
 
     if (transformerRef.current && stageRef.current) {
-      if (selectedId) {
-        const storeNode = nodes.find(n => n.id === selectedId);
-        if (storeNode && storeNode.type !== 'Line') {
-          const selectedNode = stageRef.current.findOne(`#node-${selectedId}`);
-          if (selectedNode) {
-            transformerRef.current.nodes([selectedNode]);
-            transformerRef.current.getLayer()?.batchDraw();
+      if (selectedIds.length > 0) {
+        const selectedKonvaNodes = selectedIds.map(id => stageRef.current?.findOne(`#node-${id}`)).filter(Boolean) as Konva.Node[];
+        
+        // Don't attach transformer to Line directly if it's the only one selected (we use custom anchors)
+        if (selectedIds.length === 1) {
+          const storeNode = nodes.find(n => n.id === selectedIds[0]);
+          if (storeNode && storeNode.type === 'Line') {
+            transformerRef.current.nodes([]);
+            return;
           }
-        } else {
-          transformerRef.current.nodes([]);
         }
+        
+        transformerRef.current.nodes(selectedKonvaNodes);
+        transformerRef.current.getLayer()?.batchDraw();
       } else {
         transformerRef.current.nodes([]);
       }
     }
-  }, [selectedId, nodes.length, zoom, pan, mode]);
+  }, [selectedIds, nodes.length, zoom, pan, mode]);
 
   const handleWheel = (e: KonvaEventObject<WheelEvent>) => {
     if (mode === 'preview') return;
@@ -209,7 +213,7 @@ export const CanvasArea: React.FC = () => {
   };
 
   const handleLineDblClick = (e: KonvaEventObject<MouseEvent>, nodeId: string) => {
-    if (mode !== 'select' || selectedId !== nodeId) return;
+    if (mode !== 'select' || !selectedIds.includes(nodeId)) return;
     const storeNode = nodes.find(n => n.id === nodeId);
     if (!storeNode || !storeNode.points) return;
     
@@ -259,7 +263,6 @@ export const CanvasArea: React.FC = () => {
     
     if (mode === 'connect') {
       if (connectingSourceId) {
-        // Complete connection
         const sourceNode = nodes.find(n => n.id === connectingSourceId);
         let targetFrameId = node.id;
         if (node.type !== 'Frame' && node.parentId) {
@@ -268,7 +271,6 @@ export const CanvasArea: React.FC = () => {
         const targetFrame = nodes.find(n => n.id === targetFrameId);
         
         if (sourceNode && targetFrame && targetFrame.type === 'Frame') {
-          // Verify frame types match
           const sourceFrame = nodes.find(n => n.id === sourceNode.parentId);
           if (sourceFrame && sourceFrame.frameType === targetFrame.frameType) {
             updateNode(connectingSourceId, { linkTo: targetFrame.id }, true);
@@ -278,7 +280,6 @@ export const CanvasArea: React.FC = () => {
         }
         setConnectingSourceId(null);
       } else {
-        // Start connection
         if (node.type !== 'Frame' && node.parentId) {
           setConnectingSourceId(node.id);
         }
@@ -286,7 +287,11 @@ export const CanvasArea: React.FC = () => {
       return;
     }
     
-    selectNode(node.id);
+    if (e.evt.shiftKey) {
+      toggleNodeSelection(node.id);
+    } else {
+      selectNodes([node.id]);
+    }
   };
 
   const renderNode = (node: CanvasNode, isPreview: boolean = false) => {
@@ -303,7 +308,15 @@ export const CanvasArea: React.FC = () => {
       listening: mode === 'preview' ? (node.type === 'Frame' ? true : !!node.linkTo) : true,
       onClick: (e: any) => handleNodeClick(e, node),
       onTap: (e: any) => handleNodeClick(e, node),
-      onDragStart: (e: any) => { if (mode === 'select') { e.cancelBubble = true; selectNode(node.id); } },
+      onDragStart: (e: any) => { 
+        if (mode === 'select') { 
+          e.cancelBubble = true; 
+          if (!selectedIds.includes(node.id)) {
+            if (e.evt.shiftKey) toggleNodeSelection(node.id);
+            else selectNodes([node.id]); 
+          }
+        } 
+      },
       onDragEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleDragEnd(e, node.id); } },
       onTransformEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleTransformEnd(e, node.id); } },
       onMouseEnter: (e: any) => {
@@ -332,7 +345,6 @@ export const CanvasArea: React.FC = () => {
           clipHeight={node.height}
           draggable={mode === 'select' && !isPreview}
         >
-          {/* Frame Background */}
           <Rect
             x={0}
             y={0}
@@ -342,7 +354,6 @@ export const CanvasArea: React.FC = () => {
             stroke="#cbd5e1"
             strokeWidth={1}
           />
-          {/* Frame Label */}
           {!isPreview && (
             <Text
               x={0}
@@ -354,11 +365,12 @@ export const CanvasArea: React.FC = () => {
               listening={false}
             />
           )}
-          {/* Children inside frame */}
           {childNodes.map(n => renderNode(n, isPreview))}
         </Group>
       );
     }
+    
+
 
     if (node.type === 'Rect') {
       return (
@@ -406,7 +418,7 @@ export const CanvasArea: React.FC = () => {
             listening={true}
             onDblClick={(e) => { e.cancelBubble = true; handleLineDblClick(e, node.id); }}
           />
-          {mode === 'select' && selectedId === node.id && node.points && (
+          {mode === 'select' && selectedIds.includes(node.id) && node.points && (
             <>
               {Array.from({ length: node.points.length / 2 }).map((_, i) => (
                 <Circle
@@ -457,16 +469,14 @@ export const CanvasArea: React.FC = () => {
     return null;
   };
 
-  // Preview Mode Rendering
   if (mode === 'preview' && previewFrameId) {
     const previewFrame = nodes.find(n => n.id === previewFrameId);
     if (!previewFrame) return null;
     
-    // Scale frame to fit screen
     const padding = 60;
     const scaleX = (window.innerWidth - padding * 2) / (previewFrame.width || 1);
     const scaleY = (window.innerHeight - padding * 2) / (previewFrame.height || 1);
-    const fitScale = Math.min(scaleX, scaleY, 1); // Max scale 1
+    const fitScale = Math.min(scaleX, scaleY, 1);
     
     const centeredX = (window.innerWidth - (previewFrame.width || 0) * fitScale) / 2;
     const centeredY = (window.innerHeight - (previewFrame.height || 0) * fitScale) / 2;
@@ -495,7 +505,6 @@ export const CanvasArea: React.FC = () => {
     );
   }
 
-  // Calculate absolute centers for connections
   const getConnectionPoints = () => {
     const lines: { id: string, points: number[] }[] = [];
     nodes.forEach(node => {
@@ -544,10 +553,24 @@ export const CanvasArea: React.FC = () => {
         scaleY={zoom}
         x={pan.x}
         y={pan.y}
-        draggable={mode === 'select'}
-        onMouseMove={() => {
+        draggable={mode === 'select' && !selectionRect}
+        onMouseMove={(e) => {
           if (mode === 'connect' && connectingSourceId) {
-            stageRef.current?.draw(); // Force redraw for temp line
+            stageRef.current?.draw();
+          }
+          if (selectionRect && stageRef.current) {
+            const pointer = stageRef.current.getPointerPosition();
+            if (pointer) {
+              const unscaledX = (pointer.x - stageRef.current.x()) / zoom;
+              const unscaledY = (pointer.y - stageRef.current.y()) / zoom;
+              setSelectionRect({
+                ...selectionRect,
+                x: Math.min(selectionRect.startX, unscaledX),
+                y: Math.min(selectionRect.startY, unscaledY),
+                width: Math.abs(unscaledX - selectionRect.startX),
+                height: Math.abs(unscaledY - selectionRect.startY),
+              });
+            }
           }
         }}
         onDragMove={(e) => {}}
@@ -558,8 +581,56 @@ export const CanvasArea: React.FC = () => {
         }}
         onMouseDown={(e) => {
           if (e.target === e.target.getStage()) {
-            if (mode === 'select') selectNode(null);
+            if (mode === 'select') {
+              if (!e.evt.shiftKey) selectNodes([]);
+              const pointer = stageRef.current?.getPointerPosition();
+              if (pointer && stageRef.current) {
+                const unscaledX = (pointer.x - stageRef.current.x()) / zoom;
+                const unscaledY = (pointer.y - stageRef.current.y()) / zoom;
+                setSelectionRect({ startX: unscaledX, startY: unscaledY, x: unscaledX, y: unscaledY, width: 0, height: 0 });
+              }
+            }
             if (mode === 'connect') setConnectingSourceId(null);
+          }
+        }}
+        onMouseUp={(e) => {
+          if (selectionRect && stageRef.current) {
+            // Find intersected nodes
+            const newSelectedIds = e.evt.shiftKey ? [...selectedIds] : [];
+            const r1 = selectionRect;
+            
+            nodes.forEach(node => {
+              if (node.type === 'Frame') return; // Don't marquee select frames
+              // Basic bounding box check using unscaled absolute coords
+              let absX = node.x;
+              let absY = node.y;
+              if (node.parentId) {
+                const parent = nodes.find(n => n.id === node.parentId);
+                if (parent) {
+                  absX += parent.x;
+                  absY += parent.y;
+                }
+              }
+              
+              const w = node.width || (node.radius ? node.radius * 2 : 100);
+              const h = node.height || (node.radius ? node.radius * 2 : 100);
+              const r2 = { x: absX, y: absY, width: w, height: h };
+
+              if (node.type === 'Circle' || node.type === 'Triangle') {
+                r2.x -= w/2;
+                r2.y -= h/2;
+              }
+
+              if (r1.x < r2.x + r2.width && r1.x + r1.width > r2.x &&
+                  r1.y < r2.y + r2.height && r1.y + r1.height > r2.y) {
+                if (!newSelectedIds.includes(node.id)) {
+                  newSelectedIds.push(node.id);
+                }
+              }
+            });
+            
+            selectNodes(newSelectedIds);
+            setSelectionRect(null);
           }
         }}
       >
@@ -579,6 +650,19 @@ export const CanvasArea: React.FC = () => {
             />
           ))}
           {rootNodes.map(n => renderNode(n))}
+
+          {selectionRect && (
+            <Rect
+              x={selectionRect.x}
+              y={selectionRect.y}
+              width={selectionRect.width}
+              height={selectionRect.height}
+              fill="rgba(74, 58, 255, 0.1)"
+              stroke="#4A3AFF"
+              strokeWidth={1}
+              listening={false}
+            />
+          )}
 
           <Transformer
             ref={transformerRef}

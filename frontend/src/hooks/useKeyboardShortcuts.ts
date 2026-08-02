@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
 
 export const useKeyboardShortcuts = () => {
-  const { deleteNode, duplicateNode, copyNode, pasteNode, undo, redo } = useCanvasStore();
+  const { deleteNodes, duplicateNodes, copyNodes, pasteNodes, undo, redo } = useCanvasStore();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -13,14 +13,14 @@ export const useKeyboardShortcuts = () => {
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        deleteNode();
+        deleteNodes();
       } else if (cmdOrCtrl && e.key === 'd') {
         e.preventDefault();
-        duplicateNode();
+        duplicateNodes();
       } else if (cmdOrCtrl && e.key === 'c') {
-        copyNode();
+        copyNodes();
       } else if (cmdOrCtrl && e.key === 'v') {
-        pasteNode();
+        pasteNodes();
       } else if (cmdOrCtrl && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         undo();
@@ -36,5 +36,5 @@ export const useKeyboardShortcuts = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [deleteNode, duplicateNode, copyNode, pasteNode, undo, redo]);
+  }, [deleteNodes, duplicateNodes, copyNodes, pasteNodes, undo, redo]);
 };

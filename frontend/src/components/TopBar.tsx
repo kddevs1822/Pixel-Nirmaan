@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import { Undo, Redo, Play, Download, Search, ZoomOut, ZoomIn, HelpCircle } from 'lucide-react';
+import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle } from 'lucide-react';
 import { useCanvasStore } from '../store/useCanvasStore';
 
 export const TopBar: React.FC = () => {
-  const { undo, redo, zoom, setZoom, past, future, selectedId, nodes, setMode, setPreviewFrameId } = useCanvasStore();
+  const { undo, redo, zoom, setZoom, past, future, selectedIds, nodes, setMode, setPreviewFrameId } = useCanvasStore();
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   const handlePreview = () => {
-    const selectedNode = nodes.find(n => n.id === selectedId);
+    const selectedNode = selectedIds.length > 0 ? nodes.find(n => n.id === selectedIds[0]) : null;
     let targetFrameId = null;
     
     if (selectedNode) {
@@ -15,7 +15,6 @@ export const TopBar: React.FC = () => {
       else if (selectedNode.parentId) targetFrameId = selectedNode.parentId;
     }
     
-    // Fallback to first frame if none selected
     if (!targetFrameId) {
       const firstFrame = nodes.find(n => n.type === 'Frame');
       if (firstFrame) targetFrameId = firstFrame.id;
@@ -81,12 +80,19 @@ export const TopBar: React.FC = () => {
 
       {showShortcuts && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-[400px] p-6 max-h-[80vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl w-[450px] p-6 max-h-[80vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-lg font-bold font-heading">Help & Shortcuts</h2>
               <button onClick={() => setShowShortcuts(false)} className="text-slate-400 hover:text-slate-800 text-2xl leading-none">&times;</button>
             </div>
             
+            <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Multi-Select</h3>
+            <div className="text-sm text-slate-600 space-y-2 mb-6">
+              <p>• <strong>Shift + Click</strong> on elements to select multiple items.</p>
+              <p>• <strong>Drag on the background</strong> to draw a selection box.</p>
+              <p>• Multi-selected items can be dragged, resized, and modified together!</p>
+            </div>
+
             <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Connections (Prototyping)</h3>
             <div className="text-sm text-slate-600 space-y-2 mb-6">
               <p>1. Select the <strong>Connect Tool</strong> (Link icon) in the left sidebar.</p>
