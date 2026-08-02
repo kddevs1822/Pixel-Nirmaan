@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Square, Circle, Type, Image as ImageIcon, Monitor, Tablet, Smartphone, Triangle, Minus, Spline } from 'lucide-react';
+import { Square, Circle, Type, Image as ImageIcon, Monitor, Tablet, Smartphone, Triangle, Minus, Spline, MousePointer2, Link } from 'lucide-react';
 import { useCanvasStore } from '../store/useCanvasStore';
 import type { NodeType } from '../store/useCanvasStore';
 
@@ -7,6 +7,8 @@ export const LeftSidebar: React.FC = () => {
   const addNode = useCanvasStore((state) => state.addNode);
   const pan = useCanvasStore((state) => state.pan);
   const zoom = useCanvasStore((state) => state.zoom);
+  const mode = useCanvasStore((state) => state.mode);
+  const setMode = useCanvasStore((state) => state.setMode);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getCenterOffset = () => {
@@ -18,26 +20,45 @@ export const LeftSidebar: React.FC = () => {
   const handleAdd = (type: NodeType | 'Frame-Desktop' | 'Frame-Tablet' | 'Frame-Mobile' | 'Curve') => {
     const { x, y } = getCenterOffset();
     
+    const nodes = useCanvasStore.getState().nodes;
+    const frames = nodes.filter(n => n.type === 'Frame');
+    
+    let parentId = undefined;
+    let localX = x;
+    let localY = y;
+
+    if (!type.startsWith('Frame')) {
+      for (let i = frames.length - 1; i >= 0; i--) {
+        const f = frames[i];
+        if (x >= f.x && x <= f.x + (f.width || 0) && y >= f.y && y <= f.y + (f.height || 0)) {
+          parentId = f.id;
+          localX = x - f.x;
+          localY = y - f.y;
+          break;
+        }
+      }
+    }
+    
     if (type === 'Rect') {
-      addNode({ type: 'Rect', x, y, width: 100, height: 100, fill: '#C65D3B', cornerRadius: 0 });
+      addNode({ type: 'Rect', x: localX, y: localY, width: 100, height: 100, fill: '#C65D3B', cornerRadius: 0, parentId });
     } else if (type === 'Circle') {
-      addNode({ type: 'Circle', x: x + 50, y: y + 50, radius: 50, fill: '#4A3AFF' });
+      addNode({ type: 'Circle', x: localX + 50, y: localY + 50, radius: 50, fill: '#4A3AFF', parentId });
     } else if (type === 'Triangle') {
-      addNode({ type: 'Triangle', x: x + 50, y: y + 50, radius: 50, fill: '#F2A93B' });
+      addNode({ type: 'Triangle', x: localX + 50, y: localY + 50, radius: 50, fill: '#F2A93B', parentId });
     } else if (type === 'Line') {
-      addNode({ type: 'Line', x, y, points: [0, 0, 100, 100], stroke: '#1A1A1D', strokeWidth: 4 });
+      addNode({ type: 'Line', x: localX, y: localY, points: [0, 0, 100, 100], stroke: '#1A1A1D', strokeWidth: 4, parentId });
     } else if (type === 'Curve') {
-      addNode({ type: 'Line', x, y, points: [0, 0, 50, 0, 100, 0], tension: 0.5, stroke: '#1A1A1D', strokeWidth: 4 });
+      addNode({ type: 'Line', x: localX, y: localY, points: [0, 0, 50, 0, 100, 0], tension: 0.5, stroke: '#1A1A1D', strokeWidth: 4, parentId });
     } else if (type === 'Text') {
-      addNode({ type: 'Text', x, y, text: 'Modern Craft', fontSize: 32, fontFamily: 'Space Grotesk', fill: '#1A1A1D' });
+      addNode({ type: 'Text', x: localX, y: localY, text: 'Modern Craft', fontSize: 32, fontFamily: 'Space Grotesk', fill: '#1A1A1D', parentId });
     } else if (type === 'Image') {
       fileInputRef.current?.click();
     } else if (type === 'Frame-Desktop') {
-      addNode({ type: 'Frame', x: x - 720 + 50, y: y - 450 + 50, width: 1440, height: 900, fill: '#ffffff' });
+      addNode({ type: 'Frame', x: x - 720 + 50, y: y - 450 + 50, width: 1440, height: 900, fill: '#ffffff', frameType: 'desktop' });
     } else if (type === 'Frame-Tablet') {
-      addNode({ type: 'Frame', x: x - 384 + 50, y: y - 512 + 50, width: 768, height: 1024, fill: '#ffffff' });
+      addNode({ type: 'Frame', x: x - 384 + 50, y: y - 512 + 50, width: 768, height: 1024, fill: '#ffffff', frameType: 'tablet' });
     } else if (type === 'Frame-Mobile') {
-      addNode({ type: 'Frame', x: x - 196 + 50, y: y - 426 + 50, width: 393, height: 852, fill: '#ffffff' });
+      addNode({ type: 'Frame', x: x - 196 + 50, y: y - 426 + 50, width: 393, height: 852, fill: '#ffffff', frameType: 'mobile' });
     }
   };
 
@@ -47,7 +68,21 @@ export const LeftSidebar: React.FC = () => {
       const reader = new FileReader();
       reader.onload = (event) => {
         const { x, y } = getCenterOffset();
-        addNode({ type: 'Image', x, y, width: 200, height: 200, src: event.target?.result as string });
+        const nodes = useCanvasStore.getState().nodes;
+        const frames = nodes.filter(n => n.type === 'Frame');
+        let parentId = undefined;
+        let localX = x;
+        let localY = y;
+        for (let i = frames.length - 1; i >= 0; i--) {
+          const f = frames[i];
+          if (x >= f.x && x <= f.x + (f.width || 0) && y >= f.y && y <= f.y + (f.height || 0)) {
+            parentId = f.id;
+            localX = x - f.x;
+            localY = y - f.y;
+            break;
+          }
+        }
+        addNode({ type: 'Image', x: localX, y: localY, width: 200, height: 200, src: event.target?.result as string, parentId });
       };
       reader.readAsDataURL(file);
     }
@@ -57,6 +92,23 @@ export const LeftSidebar: React.FC = () => {
   return (
     <div className="w-16 bg-white border-r border-slate-200 flex flex-col items-center py-6 gap-2 z-10 shadow-sm shrink-0 overflow-y-auto">
       <div className="flex flex-col items-center gap-1 w-full pb-4 border-b border-slate-100">
+        <button 
+          onClick={() => setMode('select')} 
+          className={`p-3 rounded-xl transition-colors ${mode === 'select' ? 'bg-[#4A3AFF] text-white' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'}`} 
+          title="Select Tool"
+        >
+          <MousePointer2 size={20} />
+        </button>
+        <button 
+          onClick={() => setMode('connect')} 
+          className={`p-3 rounded-xl transition-colors ${mode === 'connect' ? 'bg-[#4A3AFF] text-white' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'}`} 
+          title="Connect Tool"
+        >
+          <Link size={20} />
+        </button>
+      </div>
+
+      <div className="flex flex-col items-center gap-1 w-full pt-2 pb-4 border-b border-slate-100">
         <button onClick={() => handleAdd('Frame-Desktop')} className="p-3 rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors" title="Desktop Frame">
           <Monitor size={20} />
         </button>

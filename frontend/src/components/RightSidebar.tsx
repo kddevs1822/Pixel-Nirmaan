@@ -10,6 +10,12 @@ export const RightSidebar: React.FC = () => {
 
   const selectedNode = nodes.find((n) => n.id === selectedId);
 
+  const parentFrame = selectedNode?.parentId ? nodes.find(n => n.id === selectedNode.parentId) : null;
+  const isConnectable = !!parentFrame && parentFrame.type === 'Frame';
+  const compatibleFrames = isConnectable 
+    ? nodes.filter(n => n.type === 'Frame' && n.frameType === parentFrame.frameType && n.id !== parentFrame.id) 
+    : [];
+
   if (!selectedNode) {
     return (
       <div className="w-72 bg-white border-l border-slate-200 p-6 flex flex-col gap-4 z-10 shadow-sm text-slate-400 text-sm text-center pt-20 shrink-0">
@@ -212,6 +218,27 @@ export const RightSidebar: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {isConnectable && compatibleFrames.length > 0 && (
+        <div className="flex flex-col gap-2 pt-4 border-t border-slate-100">
+          <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Prototyping</label>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Navigate To</label>
+            <select 
+              value={selectedNode.linkTo || ''}
+              onChange={(e) => updateNode(selectedNode.id, { linkTo: e.target.value || undefined }, true)}
+              className="border border-slate-200 rounded px-2 py-1.5 text-sm bg-slate-50 w-full"
+            >
+              <option value="">None</option>
+              {compatibleFrames.map((frame, i) => (
+                <option key={frame.id} value={frame.id}>
+                  {`Frame - ${Math.round(frame.width || 0)}x${Math.round(frame.height || 0)} (ID: ${frame.id.slice(0,4)})`}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

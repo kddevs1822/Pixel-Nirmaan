@@ -1,10 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Stage, Layer, Rect, Circle, Text, Transformer, Group, Image as KonvaImage, RegularPolygon, Line } from 'react-konva';
+import { Stage, Layer, Rect, Circle, Text, Transformer, Group, Image as KonvaImage, RegularPolygon, Line, Arrow } from 'react-konva';
 import { useCanvasStore } from '../store/useCanvasStore';
 import type { CanvasNode } from '../store/useCanvasStore';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import useImage from 'use-image';
+import { X, AlertCircle } from 'lucide-react';
 
 const URLImage = ({ node, commonProps }: any) => {
   const [image] = useImage(node.src || '');
@@ -20,26 +21,33 @@ const URLImage = ({ node, commonProps }: any) => {
 };
 
 export const CanvasArea: React.FC = () => {
-  const { nodes, selectedId, pan, zoom, setPan, setZoom, selectNode, updateNode } = useCanvasStore();
+  const { nodes, selectedId, pan, zoom, setPan, setZoom, selectNode, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId } = useCanvasStore();
   
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
 
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [errorPopup, setErrorPopup] = useState<string | null>(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   
   useEffect(() => {
     const handleResize = () => {
       setStageSize({
-        width: window.innerWidth - 64 - 288,
-        height: window.innerHeight - 56,
+        width: window.innerWidth - (mode === 'preview' ? 0 : 64 + 288),
+        height: window.innerHeight - (mode === 'preview' ? 0 : 56),
       });
     };
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
+    if (mode === 'preview' || mode === 'connect') {
+      if (transformerRef.current) transformerRef.current.nodes([]);
+      return;
+    }
+
     if (transformerRef.current && stageRef.current) {
       if (selectedId) {
         const storeNode = nodes.find(n => n.id === selectedId);
@@ -56,9 +64,10 @@ export const CanvasArea: React.FC = () => {
         transformerRef.current.nodes([]);
       }
     }
-  }, [selectedId, nodes.length, zoom, pan]);
+  }, [selectedId, nodes.length, zoom, pan, mode]);
 
   const handleWheel = (e: KonvaEventObject<WheelEvent>) => {
+    if (mode === 'preview') return;
     e.evt.preventDefault();
     if (!stageRef.current) return;
     
@@ -88,13 +97,60 @@ export const CanvasArea: React.FC = () => {
   };
 
   const handleDragEnd = (e: KonvaEventObject<DragEvent>, id: string) => {
+    if (mode !== 'select') return;
     const node = e.target;
     if (node.name() === 'anchor') return;
     if (node === stageRef.current) return;
-    updateNode(id, { x: node.x(), y: node.y() }, true);
+    
+    const storeNode = nodes.find(n => n.id === id);
+    if (!storeNode) return;
+
+    let unscaledAbsX = node.x();
+    let unscaledAbsY = node.y();
+    if (storeNode.parentId) {
+      const parentFrame = nodes.find(n => n.id === storeNode.parentId);
+      if (parentFrame) {
+        unscaledAbsX += parentFrame.x;
+        unscaledAbsY += parentFrame.y;
+      }
+    }
+
+    let updates: any = { x: node.x(), y: node.y() };
+
+    if (storeNode.type !== 'Frame') {
+      let targetFrameId = undefined;
+      const frames = nodes.filter(n => n.type === 'Frame');
+      for (let i = frames.length - 1; i >= 0; i--) {
+        const frame = frames[i];
+        if (
+          unscaledAbsX >= frame.x && unscaledAbsX <= frame.x + (frame.width || 0) &&
+          unscaledAbsY >= frame.y && unscaledAbsY <= frame.y + (frame.height || 0)
+        ) {
+          targetFrameId = frame.id;
+          break;
+        }
+      }
+
+      if (targetFrameId !== storeNode.parentId) {
+        updates.parentId = targetFrameId;
+        if (targetFrameId) {
+          const targetFrame = frames.find(f => f.id === targetFrameId);
+          if (targetFrame) {
+            updates.x = unscaledAbsX - targetFrame.x;
+            updates.y = unscaledAbsY - targetFrame.y;
+          }
+        } else {
+          updates.x = unscaledAbsX;
+          updates.y = unscaledAbsY;
+        }
+      }
+    }
+
+    updateNode(id, updates, true);
   };
 
   const handleTransformEnd = (e: KonvaEventObject<Event>, id: string) => {
+    if (mode !== 'select') return;
     const node = e.target;
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
@@ -104,18 +160,20 @@ export const CanvasArea: React.FC = () => {
       y: node.y(),
     };
 
-    node.scaleX(1);
-    node.scaleY(1);
-
     const storeNode = nodes.find(n => n.id === id);
     if (!storeNode) return;
 
     if (storeNode.type === 'Rect' || storeNode.type === 'Image' || storeNode.type === 'Frame') {
+      node.scaleX(1);
+      node.scaleY(1);
       updates.width = Math.max(5, (storeNode.width || 0) * scaleX);
       updates.height = Math.max(5, (storeNode.height || 0) * scaleY);
     } else if (storeNode.type === 'Circle' || storeNode.type === 'Triangle') {
-      updates.radius = Math.max(5, (storeNode.radius || 0) * Math.max(scaleX, scaleY));
+      updates.scaleX = scaleX;
+      updates.scaleY = scaleY;
     } else if (storeNode.type === 'Text') {
+      node.scaleX(1);
+      node.scaleY(1);
       updates.fontSize = Math.max(8, (storeNode.fontSize || 16) * scaleX);
     }
 
@@ -123,24 +181,22 @@ export const CanvasArea: React.FC = () => {
   };
 
   const handleAnchorDragMove = (e: KonvaEventObject<DragEvent>, nodeId: string, index: number) => {
+    if (mode !== 'select') return;
     const storeNode = nodes.find(n => n.id === nodeId);
     if (!storeNode || !storeNode.points) return;
     const newPoints = [...storeNode.points];
-    
     newPoints[index * 2] = e.target.x();
     newPoints[index * 2 + 1] = e.target.y();
-    
     updateNode(nodeId, { points: newPoints }, false);
   };
 
   const handleAnchorDragEnd = (e: KonvaEventObject<DragEvent>, nodeId: string, index: number) => {
+    if (mode !== 'select') return;
     const storeNode = nodes.find(n => n.id === nodeId);
     if (!storeNode || !storeNode.points) return;
     const newPoints = [...storeNode.points];
-    
     newPoints[index * 2] = e.target.x();
     newPoints[index * 2 + 1] = e.target.y();
-    
     updateNode(nodeId, { points: newPoints }, true);
   };
 
@@ -153,7 +209,7 @@ export const CanvasArea: React.FC = () => {
   };
 
   const handleLineDblClick = (e: KonvaEventObject<MouseEvent>, nodeId: string) => {
-    if (selectedId !== nodeId) return;
+    if (mode !== 'select' || selectedId !== nodeId) return;
     const storeNode = nodes.find(n => n.id === nodeId);
     if (!storeNode || !storeNode.points) return;
     
@@ -182,27 +238,86 @@ export const CanvasArea: React.FC = () => {
   };
 
   const handleAnchorDblClick = (e: KonvaEventObject<MouseEvent>, nodeId: string, index: number) => {
+    if (mode !== 'select') return;
     const storeNode = nodes.find(n => n.id === nodeId);
     if (!storeNode || !storeNode.points) return;
-    if (storeNode.points.length <= 4) return; // Keep at least 2 points
+    if (storeNode.points.length <= 4) return;
     
     const newPoints = [...storeNode.points];
     newPoints.splice(index * 2, 2);
     updateNode(nodeId, { points: newPoints }, true);
   };
 
-  const renderNode = (node: CanvasNode) => {
+  const handleNodeClick = (e: any, node: CanvasNode) => {
+    e.cancelBubble = true;
+    if (mode === 'preview') {
+      if (node.linkTo) {
+        setPreviewFrameId(node.linkTo);
+      }
+      return;
+    }
+    
+    if (mode === 'connect') {
+      if (connectingSourceId) {
+        // Complete connection
+        const sourceNode = nodes.find(n => n.id === connectingSourceId);
+        let targetFrameId = node.id;
+        if (node.type !== 'Frame' && node.parentId) {
+          targetFrameId = node.parentId;
+        }
+        const targetFrame = nodes.find(n => n.id === targetFrameId);
+        
+        if (sourceNode && targetFrame && targetFrame.type === 'Frame') {
+          // Verify frame types match
+          const sourceFrame = nodes.find(n => n.id === sourceNode.parentId);
+          if (sourceFrame && sourceFrame.frameType === targetFrame.frameType) {
+            updateNode(connectingSourceId, { linkTo: targetFrame.id }, true);
+          } else {
+            setErrorPopup(`Cannot connect a ${sourceFrame?.frameType} to a ${targetFrame.frameType}. Frames must be of the same type.`);
+          }
+        }
+        setConnectingSourceId(null);
+      } else {
+        // Start connection
+        if (node.type !== 'Frame' && node.parentId) {
+          setConnectingSourceId(node.id);
+        }
+      }
+      return;
+    }
+    
+    selectNode(node.id);
+  };
+
+  const renderNode = (node: CanvasNode, isPreview: boolean = false) => {
+    const isInteractive = mode === 'preview' && node.linkTo;
+    
     const commonProps = {
       id: `node-${node.id}`,
       x: node.x,
       y: node.y,
+      scaleX: node.scaleX || 1,
+      scaleY: node.scaleY || 1,
       fill: node.fill,
-      draggable: true,
-      onClick: (e: any) => { e.cancelBubble = true; selectNode(node.id); },
-      onTap: (e: any) => { e.cancelBubble = true; selectNode(node.id); },
-      onDragStart: (e: any) => { e.cancelBubble = true; selectNode(node.id); },
-      onDragEnd: (e: any) => { e.cancelBubble = true; handleDragEnd(e, node.id); },
-      onTransformEnd: (e: any) => { e.cancelBubble = true; handleTransformEnd(e, node.id); },
+      draggable: mode === 'select',
+      listening: mode === 'preview' ? (node.type === 'Frame' ? true : !!node.linkTo) : true,
+      onClick: (e: any) => handleNodeClick(e, node),
+      onTap: (e: any) => handleNodeClick(e, node),
+      onDragStart: (e: any) => { if (mode === 'select') { e.cancelBubble = true; selectNode(node.id); } },
+      onDragEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleDragEnd(e, node.id); } },
+      onTransformEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleTransformEnd(e, node.id); } },
+      onMouseEnter: (e: any) => {
+        if (isInteractive || mode === 'connect') {
+          const container = e.target.getStage()?.container();
+          if (container) container.style.cursor = 'pointer';
+        }
+      },
+      onMouseLeave: (e: any) => {
+        if (isInteractive || mode === 'connect') {
+          const container = e.target.getStage()?.container();
+          if (container) container.style.cursor = 'default';
+        }
+      }
     };
 
     if (node.type === 'Frame') {
@@ -215,6 +330,7 @@ export const CanvasArea: React.FC = () => {
           clipY={0} 
           clipWidth={node.width} 
           clipHeight={node.height}
+          draggable={mode === 'select' && !isPreview}
         >
           {/* Frame Background */}
           <Rect
@@ -227,17 +343,19 @@ export const CanvasArea: React.FC = () => {
             strokeWidth={1}
           />
           {/* Frame Label */}
-          <Text
-            x={0}
-            y={-20}
-            text={`Frame - ${Math.round(node.width || 0)}x${Math.round(node.height || 0)}`}
-            fill="#94a3b8"
-            fontSize={12}
-            fontFamily="Inter"
-            listening={false}
-          />
+          {!isPreview && (
+            <Text
+              x={0}
+              y={-20}
+              text={`Frame - ${Math.round(node.width || 0)}x${Math.round(node.height || 0)}`}
+              fill="#94a3b8"
+              fontSize={12}
+              fontFamily="Inter"
+              listening={false}
+            />
+          )}
           {/* Children inside frame */}
-          {childNodes.map(renderNode)}
+          {childNodes.map(n => renderNode(n, isPreview))}
         </Group>
       );
     }
@@ -288,7 +406,7 @@ export const CanvasArea: React.FC = () => {
             listening={true}
             onDblClick={(e) => { e.cancelBubble = true; handleLineDblClick(e, node.id); }}
           />
-          {selectedId === node.id && node.points && (
+          {mode === 'select' && selectedId === node.id && node.points && (
             <>
               {Array.from({ length: node.points.length / 2 }).map((_, i) => (
                 <Circle
@@ -300,7 +418,7 @@ export const CanvasArea: React.FC = () => {
                   fill="#ffffff"
                   stroke="#4A3AFF"
                   strokeWidth={2}
-                  draggable
+                  draggable={mode === 'select'}
                   onDragMove={(e) => handleAnchorDragMove(e, node.id, i)}
                   onDragEnd={(e) => handleAnchorDragEnd(e, node.id, i)}
                   onDblClick={(e) => { e.cancelBubble = true; handleAnchorDblClick(e, node.id, i); }}
@@ -339,10 +457,84 @@ export const CanvasArea: React.FC = () => {
     return null;
   };
 
+  // Preview Mode Rendering
+  if (mode === 'preview' && previewFrameId) {
+    const previewFrame = nodes.find(n => n.id === previewFrameId);
+    if (!previewFrame) return null;
+    
+    // Scale frame to fit screen
+    const padding = 60;
+    const scaleX = (window.innerWidth - padding * 2) / (previewFrame.width || 1);
+    const scaleY = (window.innerHeight - padding * 2) / (previewFrame.height || 1);
+    const fitScale = Math.min(scaleX, scaleY, 1); // Max scale 1
+    
+    const centeredX = (window.innerWidth - (previewFrame.width || 0) * fitScale) / 2;
+    const centeredY = (window.innerHeight - (previewFrame.height || 0) * fitScale) / 2;
+
+    const modifiedPreviewFrame = { ...previewFrame, x: 0, y: 0 };
+
+    return (
+      <div className="fixed inset-0 bg-black z-50 flex flex-col">
+        <div className="h-14 flex items-center justify-between px-6 bg-slate-900 text-white shrink-0">
+          <span className="font-semibold text-sm">Previewing: {previewFrame.frameType}</span>
+          <button 
+            onClick={() => setMode('select')}
+            className="flex items-center gap-2 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors text-sm font-medium"
+          >
+            <X size={16} /> Exit Preview
+          </button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <Stage width={window.innerWidth} height={window.innerHeight - 56}>
+            <Layer x={centeredX} y={centeredY} scaleX={fitScale} scaleY={fitScale}>
+              {renderNode(modifiedPreviewFrame, true)}
+            </Layer>
+          </Stage>
+        </div>
+      </div>
+    );
+  }
+
+  // Calculate absolute centers for connections
+  const getConnectionPoints = () => {
+    const lines: { id: string, points: number[] }[] = [];
+    nodes.forEach(node => {
+      if (node.linkTo && node.parentId) {
+        const parentFrame = nodes.find(n => n.id === node.parentId);
+        const targetFrame = nodes.find(n => n.id === node.linkTo);
+        if (parentFrame && targetFrame) {
+          const startX = parentFrame.x + node.x + (node.width || 0) / 2;
+          const startY = parentFrame.y + node.y + (node.height || 0) / 2;
+          const endX = targetFrame.x;
+          const endY = targetFrame.y + (targetFrame.height || 0) / 2;
+          lines.push({ id: node.id, points: [startX, startY, endX, endY] });
+        }
+      }
+    });
+
+    if (mode === 'connect' && connectingSourceId && stageRef.current) {
+      const sourceNode = nodes.find(n => n.id === connectingSourceId);
+      const parentFrame = nodes.find(n => n.id === sourceNode?.parentId);
+      if (sourceNode && parentFrame) {
+        const startX = parentFrame.x + sourceNode.x + (sourceNode.width || 0) / 2;
+        const startY = parentFrame.y + sourceNode.y + (sourceNode.height || 0) / 2;
+        
+        const stage = stageRef.current;
+        const pointer = stage.getPointerPosition();
+        if (pointer) {
+          const endX = (pointer.x - stage.x()) / stage.scaleX();
+          const endY = (pointer.y - stage.y()) / stage.scaleY();
+          lines.push({ id: 'temp', points: [startX, startY, endX, endY] });
+        }
+      }
+    }
+    return lines;
+  };
+
   const rootNodes = nodes.filter(n => !n.parentId);
 
   return (
-    <div className="flex-1 bg-canvas-grid relative overflow-hidden">
+    <div className="flex-1 bg-canvas-grid relative overflow-hidden" style={{ cursor: mode === 'connect' ? 'crosshair' : 'default' }}>
       <Stage
         width={stageSize.width}
         height={stageSize.height}
@@ -352,33 +544,76 @@ export const CanvasArea: React.FC = () => {
         scaleY={zoom}
         x={pan.x}
         y={pan.y}
-        draggable
+        draggable={mode === 'select'}
+        onMouseMove={() => {
+          if (mode === 'connect' && connectingSourceId) {
+            stageRef.current?.draw(); // Force redraw for temp line
+          }
+        }}
         onDragMove={(e) => {}}
         onDragEnd={(e) => {
-          if (e.target === stageRef.current) {
+          if (mode === 'select' && e.target === stageRef.current) {
             setPan({ x: e.target.x(), y: e.target.y() });
           }
         }}
         onMouseDown={(e) => {
           if (e.target === e.target.getStage()) {
-            selectNode(null);
+            if (mode === 'select') selectNode(null);
+            if (mode === 'connect') setConnectingSourceId(null);
           }
         }}
       >
         <Layer>
-          {rootNodes.map(renderNode)}
+          {getConnectionPoints().map(line => (
+            <Arrow
+              key={`conn-${line.id}`}
+              points={line.points}
+              stroke="#4A3AFF"
+              strokeWidth={2}
+              fill="#4A3AFF"
+              pointerLength={10}
+              pointerWidth={10}
+              dash={[5, 5]}
+              opacity={line.id === 'temp' ? 0.5 : 1}
+              listening={false}
+            />
+          ))}
+          {rootNodes.map(n => renderNode(n))}
 
           <Transformer
             ref={transformerRef}
             boundBoxFunc={(oldBox, newBox) => {
-              if (newBox.width < 5 || newBox.height < 5) {
-                return oldBox;
-              }
+              if (newBox.width < 5 || newBox.height < 5) return oldBox;
               return newBox;
             }}
           />
         </Layer>
       </Stage>
+
+      {errorPopup && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-[400px] p-6 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center text-[#C65D3B] shrink-0">
+                <AlertCircle size={20} />
+              </div>
+              <h3 className="font-heading font-bold text-lg text-slate-800">Connection Error</h3>
+            </div>
+            <p className="text-slate-600 mb-6 leading-relaxed">{errorPopup}</p>
+            <div className="flex justify-end">
+              <button 
+                onClick={() => setErrorPopup(null)}
+                className="px-6 py-2 rounded-xl text-white font-medium transition-colors shadow-sm"
+                style={{ backgroundColor: '#4A3AFF' }}
+                onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'} 
+                onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

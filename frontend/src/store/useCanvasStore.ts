@@ -22,7 +22,11 @@ export interface CanvasNode {
   parentId?: string;
   points?: number[];
   tension?: number;
+  frameType?: 'desktop' | 'tablet' | 'mobile';
+  linkTo?: string;
 }
+
+export type AppMode = 'select' | 'connect' | 'preview';
 
 interface CanvasState {
   nodes: CanvasNode[];
@@ -33,6 +37,14 @@ interface CanvasState {
   past: CanvasNode[][];
   future: CanvasNode[][];
   clipboard: CanvasNode | null;
+
+  mode: AppMode;
+  connectingSourceId: string | null;
+  previewFrameId: string | null;
+
+  setMode: (mode: AppMode) => void;
+  setConnectingSourceId: (id: string | null) => void;
+  setPreviewFrameId: (id: string | null) => void;
 
   addNode: (node: Omit<CanvasNode, 'id'>) => void;
   updateNode: (id: string, node: Partial<CanvasNode>, saveHistory?: boolean) => void;
@@ -58,20 +70,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   future: [],
   clipboard: null,
 
-  addNode: (node) => {
-    const { nodes, past, selectedId } = get();
-    
-    let parentId = undefined;
-    if (selectedId && node.type !== 'Frame') {
-      const selectedNode = nodes.find(n => n.id === selectedId);
-      if (selectedNode?.type === 'Frame') {
-        parentId = selectedNode.id;
-      } else if (selectedNode?.parentId) {
-        parentId = selectedNode.parentId;
-      }
-    }
+  mode: 'select',
+  connectingSourceId: null,
+  previewFrameId: null,
 
-    const newNode = { ...node, id: uuidv4(), parentId };
+  setMode: (mode) => set({ mode, connectingSourceId: null }),
+  setConnectingSourceId: (connectingSourceId) => set({ connectingSourceId }),
+  setPreviewFrameId: (previewFrameId) => set({ previewFrameId }),
+
+  addNode: (node) => {
+    const { nodes, past } = get();
+    const newNode = { ...node, id: uuidv4() };
     set({
       past: [...past, nodes],
       future: [],
