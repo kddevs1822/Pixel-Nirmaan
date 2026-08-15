@@ -68,7 +68,7 @@ export const CanvasArea: React.FC = () => {
         transformerRef.current.nodes([]);
       }
     }
-  }, [selectedIds, nodes.length, zoom, pan, mode]);
+  }, [selectedIds, nodes, zoom, pan, mode]);
 
   const handleWheel = (e: KonvaEventObject<WheelEvent>) => {
     if (mode === 'preview') return;
@@ -76,28 +76,40 @@ export const CanvasArea: React.FC = () => {
     if (!stageRef.current) return;
     
     const stage = stageRef.current;
-    const oldScale = stage.scaleX();
-    const pointer = stage.getPointerPosition();
-
-    if (!pointer) return;
-
-    const mousePointTo = {
-      x: (pointer.x - stage.x()) / oldScale,
-      y: (pointer.y - stage.y()) / oldScale,
-    };
-
-    const direction = e.evt.deltaY > 0 ? -1 : 1;
-    const scaleBy = 1.1;
-    const newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
-    const clampedScale = Math.max(0.1, Math.min(newScale, 5));
     
-    const newPos = {
-      x: pointer.x - mousePointTo.x * clampedScale,
-      y: pointer.y - mousePointTo.y * clampedScale,
-    };
+    if (e.evt.ctrlKey || e.evt.metaKey) {
+      const oldScale = stage.scaleX();
+      const pointer = stage.getPointerPosition();
 
-    setZoom(clampedScale);
-    setPan(newPos);
+      if (!pointer) return;
+
+      const mousePointTo = {
+        x: (pointer.x - stage.x()) / oldScale,
+        y: (pointer.y - stage.y()) / oldScale,
+      };
+
+      const direction = e.evt.deltaY > 0 ? -1 : 1;
+      const scaleBy = 1.1;
+      const newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
+      const clampedScale = Math.max(0.1, Math.min(newScale, 5));
+      
+      const newPos = {
+        x: pointer.x - mousePointTo.x * clampedScale,
+        y: pointer.y - mousePointTo.y * clampedScale,
+      };
+
+      setZoom(clampedScale);
+      setPan(newPos);
+    } else {
+      // Support holding shift for horizontal scroll if user has a standard scroll wheel
+      const deltaX = e.evt.shiftKey && e.evt.deltaY !== 0 ? e.evt.deltaY : e.evt.deltaX;
+      const deltaY = e.evt.shiftKey && e.evt.deltaY !== 0 ? 0 : e.evt.deltaY;
+
+      setPan({
+        x: stage.x() - deltaX,
+        y: stage.y() - deltaY
+      });
+    }
   };
 
   const handleDragEnd = (e: KonvaEventObject<DragEvent>, id: string) => {
@@ -162,23 +174,27 @@ export const CanvasArea: React.FC = () => {
     const updates: any = {
       x: node.x(),
       y: node.y(),
+      rotation: node.rotation()
     };
 
     const storeNode = nodes.find(n => n.id === id);
     if (!storeNode) return;
 
     if (storeNode.type === 'Rect' || storeNode.type === 'Image' || storeNode.type === 'Frame') {
+      const w = node.width();
+      const h = node.height();
       node.scaleX(1);
       node.scaleY(1);
-      updates.width = Math.max(5, (storeNode.width || 0) * scaleX);
-      updates.height = Math.max(5, (storeNode.height || 0) * scaleY);
+      updates.width = Math.max(5, Math.abs(w * scaleX));
+      updates.height = Math.max(5, Math.abs(h * scaleY));
     } else if (storeNode.type === 'Circle' || storeNode.type === 'Triangle') {
       updates.scaleX = scaleX;
       updates.scaleY = scaleY;
     } else if (storeNode.type === 'Text') {
+      const fs = node.fontSize ? node.fontSize() : (storeNode.fontSize || 16);
       node.scaleX(1);
       node.scaleY(1);
-      updates.fontSize = Math.max(8, (storeNode.fontSize || 16) * scaleX);
+      updates.fontSize = Math.max(8, Math.abs(fs * scaleX));
     }
 
     updateNode(id, updates, true);
@@ -252,7 +268,7 @@ export const CanvasArea: React.FC = () => {
     updateNode(nodeId, { points: newPoints }, true);
   };
 
-  const handleNodeClick = (e: any, node: CanvasNode) => {
+  const handleNodeClick = (e: any, node: CanvasNode, isDoubleClick: boolean = false) => {
     e.cancelBubble = true;
     if (mode === 'preview') {
       if (node.linkTo) {
@@ -287,33 +303,132 @@ export const CanvasArea: React.FC = () => {
       return;
     }
     
+    let targetNode = node;
+    if (!isDoubleClick) {
+      let rootComponent = null;
+      let curr = node;
+      while (curr.parentId) {
+        const parent = nodes.find(n => n.id === curr.parentId);
+        if (!parent) break;
+        if (parent.isMasterComponent || parent.componentId) {
+          rootComponent = parent;
+        }
+        curr = parent;
+      }
+      if (rootComponent) {
+        targetNode = rootComponent;
+      }
+    }
+
     if (e.evt.shiftKey) {
-      toggleNodeSelection(node.id);
+      toggleNodeSelection(targetNode.id);
     } else {
-      selectNodes([node.id]);
+      selectNodes([targetNode.id]);
     }
   };
 
-  const renderNode = (node: CanvasNode, isPreview: boolean = false) => {
-    const isInteractive = mode === 'preview' && node.linkTo;
+  const RenderNode = ({ node, isPreview = false }: { node: CanvasNode, isPreview?: boolean }) => {
+    const [interactiveState, setInteractiveState] = useState<'default'|'hover'|'active'|'disabled'>('default');
+
+    let resolvedNode = { ...node };
+    let masterNode = node.isMasterComponent ? node : undefined;
+    
+    let rootInstance: CanvasNode | undefined = undefined;
+    let rootMaster: CanvasNode | undefined = undefined;
+
+    if (node.componentId) {
+      masterNode = nodes.find(n => n.id === node.componentId);
+      if (masterNode) {
+        rootInstance = node;
+        let curr = node;
+        while (curr.parentId) {
+          const parent = nodes.find(n => n.id === curr.parentId);
+          if (!parent || !parent.componentId) break;
+          rootInstance = parent;
+          curr = parent;
+        }
+
+        rootMaster = rootInstance.componentId ? nodes.find(n => n.id === rootInstance!.componentId) : undefined;
+
+        resolvedNode = {
+          ...masterNode,
+          id: node.id,
+          x: node.x,
+          y: node.y,
+          parentId: node.parentId,
+          componentId: node.componentId,
+          variant: node.variant,
+          linkTo: node.linkTo,
+          isMasterComponent: false,
+          propOverrides: node.propOverrides
+        };
+
+        if (masterNode.boundProps && rootInstance.propOverrides) {
+          Object.entries(masterNode.boundProps).forEach(([field, propId]) => {
+            if (rootInstance!.propOverrides![propId] !== undefined) {
+              (resolvedNode as any)[field] = rootInstance!.propOverrides![propId];
+            }
+          });
+        }
+      }
+    }
+
+    if (masterNode && masterNode.variants) {
+      let activeVariant = isPreview ? interactiveState : (rootInstance?.variant || node.variant || 'default');
+      if (activeVariant !== 'default' && masterNode.variants[activeVariant]) {
+        resolvedNode = { ...resolvedNode, ...masterNode.variants[activeVariant] };
+      } else if (isPreview && interactiveState !== 'default') {
+        activeVariant = 'default';
+      }
+    }
+
+    const isInteractive = mode === 'preview' && (resolvedNode.linkTo || masterNode);
+    
+    let inComponent = false;
+    let currCheck = node;
+    while (currCheck.parentId) {
+      const parent = nodes.find(n => n.id === currCheck.parentId);
+      if (!parent) break;
+      if (parent.isMasterComponent || parent.componentId) {
+        inComponent = true;
+        break;
+      }
+      currCheck = parent;
+    }
     
     const commonProps = {
-      id: `node-${node.id}`,
-      x: node.x,
-      y: node.y,
-      scaleX: node.scaleX || 1,
-      scaleY: node.scaleY || 1,
-      fill: node.fill,
-      draggable: mode === 'select',
-      listening: mode === 'preview' ? (node.type === 'Frame' ? true : !!node.linkTo) : true,
-      onClick: (e: any) => handleNodeClick(e, node),
-      onTap: (e: any) => handleNodeClick(e, node),
+      id: `node-${resolvedNode.id}`,
+      x: resolvedNode.x,
+      y: resolvedNode.y,
+      scaleX: resolvedNode.scaleX || 1,
+      scaleY: resolvedNode.scaleY || 1,
+      rotation: resolvedNode.rotation || 0,
+      fill: resolvedNode.fill,
+      draggable: mode === 'select' && (!inComponent || selectedIds.includes(node.id)),
+      listening: mode === 'preview' ? (resolvedNode.type === 'Frame' ? true : !!resolvedNode.linkTo || !!masterNode) : true,
+      onClick: (e: any) => handleNodeClick(e, node, false),
+      onTap: (e: any) => handleNodeClick(e, node, false),
+      onDblClick: (e: any) => handleNodeClick(e, node, true),
+      onDblTap: (e: any) => handleNodeClick(e, node, true),
       onDragStart: (e: any) => { 
         if (mode === 'select') { 
           e.cancelBubble = true; 
+          let targetNode = node;
           if (!selectedIds.includes(node.id)) {
-            if (e.evt.shiftKey) toggleNodeSelection(node.id);
-            else selectNodes([node.id]); 
+            let rootComponent = null;
+            let curr = node;
+            while (curr.parentId) {
+              const parent = nodes.find(n => n.id === curr.parentId);
+              if (!parent) break;
+              if (parent.isMasterComponent || parent.componentId) {
+                rootComponent = parent;
+              }
+              curr = parent;
+            }
+            if (rootComponent) targetNode = rootComponent;
+            
+            if (e.evt.shiftKey) toggleNodeSelection(targetNode.id);
+            else selectNodes([targetNode.id]); 
           }
         } 
       },
@@ -324,108 +439,135 @@ export const CanvasArea: React.FC = () => {
           const container = e.target.getStage()?.container();
           if (container) container.style.cursor = 'pointer';
         }
+        if (mode === 'preview' && masterNode?.variants?.hover) {
+          setInteractiveState('hover');
+        }
       },
       onMouseLeave: (e: any) => {
         if (isInteractive || mode === 'connect') {
           const container = e.target.getStage()?.container();
           if (container) container.style.cursor = 'default';
         }
+        if (mode === 'preview') {
+          setInteractiveState('default');
+        }
+      },
+      onMouseDown: (e: any) => {
+        if (mode === 'select') {
+          if (e.target === e.target.getStage()) {
+            if (!e.evt.shiftKey) selectNodes([]);
+          }
+        }
+        if (mode === 'preview' && masterNode?.variants?.active) {
+          setInteractiveState('active');
+        }
+      },
+      onMouseUp: (e: any) => {
+        if (mode === 'preview' && interactiveState === 'active') {
+          setInteractiveState('hover');
+        }
       }
     };
 
-    if (node.type === 'Frame') {
+    const isComponentIndicator = (mode === 'select' && !isPreview && (node.isMasterComponent || node.componentId));
+    const indicatorStroke = node.isMasterComponent ? '#4A3AFF' : '#C65D3B';
+
+    let content = null;
+
+    if (resolvedNode.type === 'Frame') {
       const childNodes = nodes.filter(n => n.parentId === node.id);
-      return (
+      content = (
         <Group 
           key={node.id} 
           {...commonProps} 
           clipX={0} 
           clipY={0} 
-          clipWidth={node.width} 
-          clipHeight={node.height}
+          clipWidth={resolvedNode.width} 
+          clipHeight={resolvedNode.height}
           draggable={mode === 'select' && !isPreview}
         >
           <Rect
             x={0}
             y={0}
-            width={node.width}
-            height={node.height}
-            fill={node.fill || '#ffffff'}
-            stroke="#cbd5e1"
-            strokeWidth={1}
+            width={resolvedNode.width}
+            height={resolvedNode.height}
+            fill={resolvedNode.fill || '#ffffff'}
+            stroke={isComponentIndicator ? indicatorStroke : "#cbd5e1"}
+            strokeWidth={isComponentIndicator ? 2 : 1}
+            dash={node.componentId ? [5, 5] : undefined}
           />
           {!isPreview && (
             <Text
               x={0}
               y={-20}
-              text={`Frame - ${Math.round(node.width || 0)}x${Math.round(node.height || 0)}`}
+              text={`Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
               fill="#94a3b8"
               fontSize={12}
               fontFamily="Inter"
               listening={false}
             />
           )}
-          {childNodes.map(n => renderNode(n, isPreview))}
+          {childNodes.map(n => <RenderNode key={n.id} node={n} isPreview={isPreview} />)}
         </Group>
       );
-    }
-    
-
-
-    if (node.type === 'Rect') {
-      return (
+    } else if (resolvedNode.type === 'Rect') {
+      content = (
         <Rect
           key={node.id}
           {...commonProps}
-          width={node.width}
-          height={node.height}
-          cornerRadius={node.cornerRadius}
+          width={resolvedNode.width}
+          height={resolvedNode.height}
+          cornerRadius={resolvedNode.cornerRadius}
+          stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
+          strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
+          dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
         />
       );
-    }
-
-    if (node.type === 'Circle') {
-      return (
+    } else if (resolvedNode.type === 'Circle') {
+      content = (
         <Circle
           key={node.id}
           {...commonProps}
-          radius={node.radius}
+          radius={resolvedNode.radius}
+          stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
+          strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
+          dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
         />
       );
-    }
-
-    if (node.type === 'Triangle') {
-      return (
+    } else if (resolvedNode.type === 'Triangle') {
+      content = (
         <RegularPolygon
           key={node.id}
           {...commonProps}
           sides={3}
-          radius={node.radius}
+          radius={resolvedNode.radius}
+          stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
+          strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
+          dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
         />
       );
-    }
-
-    if (node.type === 'Line') {
-      return (
+    } else if (resolvedNode.type === 'Line') {
+      content = (
         <Group key={node.id} {...commonProps}>
           <Line
-            points={node.points}
-            stroke={node.stroke}
-            strokeWidth={node.strokeWidth}
-            tension={node.tension || 0}
+            points={resolvedNode.points}
+            stroke={isComponentIndicator ? indicatorStroke : resolvedNode.stroke}
+            strokeWidth={resolvedNode.strokeWidth}
+            tension={resolvedNode.tension || 0}
             fillEnabled={false}
             hitStrokeWidth={15}
             listening={true}
+            dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
             onDblClick={(e) => { e.cancelBubble = true; handleLineDblClick(e, node.id); }}
           />
-          {mode === 'select' && selectedIds.includes(node.id) && node.points && (
+          {mode === 'select' && selectedIds.includes(node.id) && resolvedNode.points && (
             <>
-              {Array.from({ length: node.points.length / 2 }).map((_, i) => (
+              {Array.from({ length: resolvedNode.points.length / 2 }).map((_, i) => (
                 <Circle
                   key={`anchor-${i}`}
                   name="anchor"
-                  x={node.points![i * 2]}
-                  y={node.points![i * 2 + 1]}
+                  x={resolvedNode.points![i * 2]}
+                  y={resolvedNode.points![i * 2 + 1]}
                   radius={6}
                   fill="#ffffff"
                   stroke="#4A3AFF"
@@ -448,25 +590,42 @@ export const CanvasArea: React.FC = () => {
           )}
         </Group>
       );
-    }
-
-    if (node.type === 'Text') {
-      return (
+    } else if (resolvedNode.type === 'Text') {
+      content = (
         <Text
           key={node.id}
           {...commonProps}
-          text={node.text}
-          fontSize={node.fontSize}
-          fontFamily={node.fontFamily}
+          text={resolvedNode.text}
+          fontSize={resolvedNode.fontSize}
+          fontFamily={resolvedNode.fontFamily}
+          stroke={isComponentIndicator ? indicatorStroke : undefined}
+          strokeWidth={isComponentIndicator ? 1 : 0}
         />
+      );
+    } else if (resolvedNode.type === 'Image') {
+      content = <URLImage key={node.id} node={resolvedNode} commonProps={commonProps} />;
+    }
+
+    // Add component indicator label in select mode
+    if (isComponentIndicator) {
+      return (
+        <Group key={node.id}>
+          {content}
+          <Text
+            x={resolvedNode.x}
+            y={resolvedNode.y - 14}
+            text={node.isMasterComponent ? `❖ ${node.componentName || 'Component'}` : `◇ Instance`}
+            fill={indicatorStroke}
+            fontSize={10}
+            fontFamily="Inter"
+            fontStyle="bold"
+            listening={false}
+          />
+        </Group>
       );
     }
 
-    if (node.type === 'Image') {
-      return <URLImage key={node.id} node={node} commonProps={commonProps} />;
-    }
-    
-    return null;
+    return content;
   };
 
   if (mode === 'preview' && previewFrameId) {
@@ -497,7 +656,7 @@ export const CanvasArea: React.FC = () => {
         <div className="flex-1 overflow-hidden">
           <Stage width={window.innerWidth} height={window.innerHeight - 56}>
             <Layer x={centeredX} y={centeredY} scaleX={fitScale} scaleY={fitScale}>
-              {renderNode(modifiedPreviewFrame, true)}
+              <RenderNode node={modifiedPreviewFrame} isPreview={true} />
             </Layer>
           </Stage>
         </div>
@@ -649,7 +808,7 @@ export const CanvasArea: React.FC = () => {
               listening={false}
             />
           ))}
-          {rootNodes.map(n => renderNode(n))}
+          {rootNodes.map(n => <RenderNode key={n.id} node={n} />)}
 
           {selectionRect && (
             <Rect
@@ -664,13 +823,11 @@ export const CanvasArea: React.FC = () => {
             />
           )}
 
-          <Transformer
-            ref={transformerRef}
-            boundBoxFunc={(oldBox, newBox) => {
-              if (newBox.width < 5 || newBox.height < 5) return oldBox;
-              return newBox;
-            }}
-          />
+          {mode === 'select' && selectedIds.length > 0 && (
+            <Transformer
+              ref={transformerRef}
+            />
+          )}
         </Layer>
       </Stage>
 

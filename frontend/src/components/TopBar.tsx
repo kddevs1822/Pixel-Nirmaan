@@ -86,6 +86,23 @@ export const TopBar: React.FC = () => {
               <button onClick={() => setShowShortcuts(false)} className="text-slate-400 hover:text-slate-800 text-2xl leading-none">&times;</button>
             </div>
             
+            <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Keyboard Shortcuts</h3>
+            <div className="flex flex-col gap-3 text-sm mb-6">
+              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Copy</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + C</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Paste</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + V</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Duplicate</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + D</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Undo</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + Z</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Redo</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + Shift + Z</kbd></div>
+              <div className="flex justify-between pt-1"><span>Delete</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Del / Backspace</kbd></div>
+            </div>
+
+            <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Components & Props</h3>
+            <div className="text-sm text-slate-600 space-y-2 mb-6">
+              <p>1. Select one or more elements and click <strong>Create Component</strong>.</p>
+              <p>2. In the right sidebar, use <strong>Available Elements</strong> to auto-expose properties like Text or Fill Color.</p>
+              <p>3. Drag the component from the <strong>Component Library</strong> to create reusable instances!</p>
+            </div>
+
             <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Multi-Select</h3>
             <div className="text-sm text-slate-600 space-y-2 mb-6">
               <p>• <strong>Shift + Click</strong> on elements to select multiple items.</p>
@@ -94,21 +111,11 @@ export const TopBar: React.FC = () => {
             </div>
 
             <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Connections (Prototyping)</h3>
-            <div className="text-sm text-slate-600 space-y-2 mb-6">
+            <div className="text-sm text-slate-600 space-y-2 mb-2">
               <p>1. Select the <strong>Connect Tool</strong> (Link icon) in the left sidebar.</p>
               <p>2. Click on a shape/button inside a Frame.</p>
               <p>3. Click anywhere on a <strong>matching Frame</strong> (e.g., Mobile to Mobile) to link them.</p>
               <p>4. Click the <strong>Preview</strong> button above to test your interactive prototype!</p>
-            </div>
-
-            <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Keyboard Shortcuts</h3>
-            <div className="flex flex-col gap-3 text-sm">
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Copy</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + C</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Paste</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + V</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Duplicate</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + D</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Undo</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + Z</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Redo</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + Shift + Z</kbd></div>
-              <div className="flex justify-between pt-1"><span>Delete</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Del / Backspace</kbd></div>
             </div>
           </div>
         </div>
