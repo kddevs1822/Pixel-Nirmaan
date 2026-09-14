@@ -701,17 +701,80 @@ export default function ${componentName}(props) {
     const pageWidth = Math.round(page.width || 1440);
     const pageHeight = Math.round(page.height || 900);
     const bgColor = page.fill || '#ffffff';
+    const isScrollingPage = pageHeight > 1080;
 
-    return `import React from 'react';
+    if (isScrollingPage) {
+      return `import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 ${imports}
 
 export default function Page() {
   const navigate = useNavigate();
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const updateScale = () => {
+      const availW = window.innerWidth;
+      const scaleX = availW / ${pageWidth};
+      setScale(Math.min(scaleX, 1));
+    };
+    updateScale();
+    window.addEventListener('resize', updateScale);
+    return () => window.removeEventListener('resize', updateScale);
+  }, []);
 
   return (
-    <div className="min-h-screen w-full flex justify-center" style={{ backgroundColor: '${bgColor}' }}>
-      <div className="relative w-full overflow-visible" style={{ maxWidth: '${pageWidth}px', minHeight: '${pageHeight}px' }}>
+    <div className="min-h-screen w-full flex flex-col items-center overflow-x-hidden" style={{ backgroundColor: '${bgColor}' }}>
+      <div 
+        className="relative shrink-0 overflow-visible" 
+        style={{ 
+          width: '${pageWidth}px', 
+          height: '${pageHeight}px',
+          transform: \`scale(\${scale})\`,
+          transformOrigin: 'top center',
+          marginBottom: scale < 1 ? \`-\${Math.round(${pageHeight} * (1 - scale))}px\` : undefined
+        }}
+      >
+        ${childrenJsx}
+      </div>
+    </div>
+  );
+}
+`;
+    }
+
+    return `import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+${imports}
+
+export default function Page() {
+  const navigate = useNavigate();
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const updateScale = () => {
+      const availW = window.innerWidth;
+      const availH = window.innerHeight;
+      const scaleX = availW / ${pageWidth};
+      const scaleY = availH / ${pageHeight};
+      setScale(Math.min(scaleX, scaleY, 1));
+    };
+    updateScale();
+    window.addEventListener('resize', updateScale);
+    return () => window.removeEventListener('resize', updateScale);
+  }, []);
+
+  return (
+    <div className="w-screen h-screen overflow-hidden flex items-center justify-center" style={{ backgroundColor: '${bgColor}' }}>
+      <div 
+        className="relative shrink-0 overflow-visible" 
+        style={{ 
+          width: '${pageWidth}px', 
+          height: '${pageHeight}px',
+          transform: \`scale(\${scale})\`,
+          transformOrigin: 'center center'
+        }}
+      >
         ${childrenJsx}
       </div>
     </div>
