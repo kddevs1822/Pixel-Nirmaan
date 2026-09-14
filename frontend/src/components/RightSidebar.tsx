@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw } from 'lucide-react';
+import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -462,25 +462,35 @@ export const RightSidebar: React.FC = () => {
       )}
 
       {selectedNodes.length === 1 && hasDimensions && (
-        <div className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">W</label>
-            <input 
-              type="number" 
-              value={Math.round((getValue('width') as number) || 0)} 
-              onChange={(e) => handleChange(e, 'width', true)}
-              className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50 font-mono"
-            />
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">W</label>
+              <input 
+                type="number" 
+                value={Math.round((getValue('width') as number) || 0)} 
+                onChange={(e) => handleChange(e, 'width', true)}
+                className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50 font-mono"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">H</label>
+              <input 
+                type="number" 
+                value={Math.round((getValue('height') as number) || 0)} 
+                onChange={(e) => handleChange(e, 'height', true)}
+                className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50 font-mono"
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">H</label>
-            <input 
-              type="number" 
-              value={Math.round((getValue('height') as number) || 0)} 
-              onChange={(e) => handleChange(e, 'height', true)}
-              className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50 font-mono"
-            />
-          </div>
+          {primaryNode.type === 'Frame' && (
+            <button 
+              onClick={() => updateNodes([primaryNode.id], { width: window.innerWidth, height: window.innerHeight }, true)}
+              className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded transition-colors text-xs flex items-center justify-center gap-1 mt-1"
+            >
+              <Monitor size={14} /> Resize Frame to match Monitor
+            </button>
+          )}
         </div>
       )}
 

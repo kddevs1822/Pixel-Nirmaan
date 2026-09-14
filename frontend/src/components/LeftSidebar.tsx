@@ -1,10 +1,10 @@
 import React, { useRef, useState } from 'react';
-import { Square, Circle, Type, Image as ImageIcon, Monitor, Tablet, Smartphone, Triangle, Minus, Spline, MousePointer2, Link, Layers, Box } from 'lucide-react';
+import { Square, Circle, Type, Image as ImageIcon, Monitor, Tablet, Smartphone, Triangle, Minus, Spline, MousePointer2, Link, Layers, Box, Edit2, Trash2 } from 'lucide-react';
 import { useCanvasStore } from '../store/useCanvasStore';
 import type { NodeType } from '../store/useCanvasStore';
 
 export const LeftSidebar: React.FC = () => {
-  const { addNode, nodes, pan, zoom, mode, setMode, spawnInstance } = useCanvasStore();
+  const { addNode, nodes, pan, zoom, mode, setMode, spawnInstance, selectNodes, deleteComponent, setPan } = useCanvasStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<'tools' | 'components'>('tools');
 
@@ -148,15 +148,44 @@ export const LeftSidebar: React.FC = () => {
                 {masterComponents.map(comp => (
                   <div 
                     key={comp.id} 
-                    onClick={() => handleSpawnInstance(comp.id)}
-                    className="p-3 rounded-xl border border-slate-200 hover:border-[#4A3AFF] hover:bg-indigo-50/30 cursor-pointer transition-all group flex items-center gap-3"
+                    className="group relative p-3 rounded-xl border border-slate-200 hover:border-[#4A3AFF] hover:bg-indigo-50/30 transition-all flex items-center gap-3"
                   >
-                    <div className="w-10 h-10 rounded bg-slate-100 flex items-center justify-center shrink-0 text-[#4A3AFF]">
+                    <div className="w-10 h-10 rounded bg-slate-100 flex items-center justify-center shrink-0 text-[#4A3AFF] cursor-pointer" onClick={() => handleSpawnInstance(comp.id)}>
                       <Box size={20} />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => handleSpawnInstance(comp.id)}>
                       <h4 className="font-medium text-sm text-slate-700 truncate group-hover:text-[#4A3AFF] transition-colors">{comp.componentName || 'Unnamed Component'}</h4>
                       <p className="text-xs text-slate-400 uppercase tracking-wider mt-0.5">{comp.type}</p>
+                    </div>
+                    
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 backdrop-blur-sm rounded-md p-1 shadow-sm">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          selectNodes([comp.id]);
+                          // Calculate center of screen in unscaled coordinates
+                          const cx = window.innerWidth / 2;
+                          const cy = window.innerHeight / 2;
+                          // Set pan to center the component
+                          setPan({ x: cx - (comp.x * zoom), y: cy - (comp.y * zoom) });
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-[#4A3AFF] hover:bg-indigo-50 rounded transition-colors"
+                        title="Edit Master Component"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm('Are you sure you want to delete this component and all its instances?')) {
+                            deleteComponent(comp.id);
+                          }
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                        title="Delete Component"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   </div>
                 ))}

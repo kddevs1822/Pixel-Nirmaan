@@ -133,9 +133,11 @@ export const CanvasArea: React.FC = () => {
 
     let updates: any = { x: node.x(), y: node.y() };
 
-    if (storeNode.type !== 'Frame') {
+    // Allow reparenting for non-Frames, component instances, OR master components
+    if (storeNode.type !== 'Frame' || storeNode.componentId || storeNode.isMasterComponent) {
       let targetFrameId = undefined;
-      const frames = nodes.filter(n => n.type === 'Frame');
+      // Only valid target frames are actual layout frames, not master components or instances themselves
+      const frames = nodes.filter(n => n.type === 'Frame' && !n.isMasterComponent && !n.componentId && n.id !== storeNode.id);
       for (let i = frames.length - 1; i >= 0; i--) {
         const frame = frames[i];
         if (
@@ -288,10 +290,12 @@ export const CanvasArea: React.FC = () => {
         
         if (sourceNode && targetFrame && targetFrame.type === 'Frame') {
           const sourceFrame = nodes.find(n => n.id === sourceNode.parentId);
-          if (sourceFrame && sourceFrame.frameType === targetFrame.frameType) {
+          const sType = sourceFrame?.frameType || 'desktop';
+          const tType = targetFrame.frameType || 'desktop';
+          if (sourceFrame && sType === tType) {
             updateNode(connectingSourceId, { linkTo: targetFrame.id }, true);
           } else {
-            setErrorPopup(`Cannot connect a ${sourceFrame?.frameType} to a ${targetFrame.frameType}. Frames must be of the same type.`);
+            setErrorPopup(`Cannot connect a ${sType} to a ${tType}. Frames must be of the same type.`);
           }
         }
         setConnectingSourceId(null);

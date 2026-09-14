@@ -255,11 +255,37 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     } else if (action === 'back') {
       newNodes = [...nodesToMove, ...otherNodes];
     } else if (action === 'forward') {
-      // Simplistic forward (just moves them to the end of their current general position)
-      // True forward is complex for multi-select, this acts mostly like front for now
-      newNodes = [...otherNodes, ...nodesToMove];
+      for (let i = newNodes.length - 1; i >= 0; i--) {
+        if (selectedIds.includes(newNodes[i].id)) {
+          const node = newNodes[i];
+          let nextSiblingIdx = -1;
+          for (let j = i + 1; j < newNodes.length; j++) {
+            if (newNodes[j].parentId === node.parentId && !selectedIds.includes(newNodes[j].id)) {
+              nextSiblingIdx = j;
+              break;
+            }
+          }
+          if (nextSiblingIdx !== -1) {
+            [newNodes[i], newNodes[nextSiblingIdx]] = [newNodes[nextSiblingIdx], newNodes[i]];
+          }
+        }
+      }
     } else if (action === 'backward') {
-      newNodes = [...nodesToMove, ...otherNodes];
+      for (let i = 0; i < newNodes.length; i++) {
+        if (selectedIds.includes(newNodes[i].id)) {
+          const node = newNodes[i];
+          let prevSiblingIdx = -1;
+          for (let j = i - 1; j >= 0; j--) {
+            if (newNodes[j].parentId === node.parentId && !selectedIds.includes(newNodes[j].id)) {
+              prevSiblingIdx = j;
+              break;
+            }
+          }
+          if (prevSiblingIdx !== -1) {
+            [newNodes[i], newNodes[prevSiblingIdx]] = [newNodes[prevSiblingIdx], newNodes[i]];
+          }
+        }
+      }
     }
 
     set({ past: [...past, nodes], future: [], nodes: newNodes });

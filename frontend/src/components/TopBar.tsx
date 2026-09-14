@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle } from 'lucide-react';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import { useCanvasStore } from '../store/useCanvasStore';
 
 export const TopBar: React.FC = () => {
@@ -25,6 +27,40 @@ export const TopBar: React.FC = () => {
       setMode('preview');
     } else {
       alert("Please add a Frame to the canvas before previewing.");
+    }
+  };
+
+  const handleExportCode = async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ nodes })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.files) {
+        throw new Error("No files returned from the server");
+      }
+
+      const zip = new JSZip();
+      
+      Object.entries(data.files).forEach(([filepath, content]) => {
+        zip.file(filepath, content as string);
+      });
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      saveAs(blob, 'pixelnirmaan-export.zip');
+    } catch (error: any) {
+      console.error("Export error:", error);
+      alert(`Export Error: ${error.message}`);
     }
   };
 
@@ -72,7 +108,7 @@ export const TopBar: React.FC = () => {
           <Play size={16} />
           <span>Preview</span>
         </button>
-        <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-white text-sm font-medium transition-colors" style={{backgroundColor: '#4A3AFF'}} onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'} onMouseOut={(e) => e.currentTarget.style.opacity = '1'}>
+        <button onClick={handleExportCode} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-white text-sm font-medium transition-colors" style={{backgroundColor: '#4A3AFF'}} onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'} onMouseOut={(e) => e.currentTarget.style.opacity = '1'}>
           <Download size={16} />
           <span>Export Code</span>
         </button>
