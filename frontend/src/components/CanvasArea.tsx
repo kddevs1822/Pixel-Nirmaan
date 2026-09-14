@@ -280,27 +280,47 @@ export const CanvasArea: React.FC = () => {
     }
     
     if (mode === 'connect') {
+      const findRootLayoutFrame = (startNode: CanvasNode): CanvasNode | undefined => {
+        let curr: CanvasNode | undefined = startNode;
+        while (curr && curr.parentId) {
+          const p = nodes.find(n => n.id === curr!.parentId);
+          if (p && p.type === 'Frame' && !p.isMasterComponent && !p.componentId) {
+            return p;
+          }
+          curr = p;
+        }
+        if (curr && curr.type === 'Frame' && !curr.isMasterComponent && !curr.componentId) {
+          return curr;
+        }
+        return undefined;
+      };
+
       if (connectingSourceId) {
         const sourceNode = nodes.find(n => n.id === connectingSourceId);
-        let targetFrameId = node.id;
-        if (node.type !== 'Frame' && node.parentId) {
-          targetFrameId = node.parentId;
-        }
-        const targetFrame = nodes.find(n => n.id === targetFrameId);
+        const sourceFrame = sourceNode ? findRootLayoutFrame(sourceNode) : undefined;
+        const targetFrame = findRootLayoutFrame(node);
         
-        if (sourceNode && targetFrame && targetFrame.type === 'Frame') {
-          const sourceFrame = nodes.find(n => n.id === sourceNode.parentId);
-          const sType = sourceFrame?.frameType || 'desktop';
+        if (sourceNode && sourceFrame && targetFrame && targetFrame.type === 'Frame') {
+          const sType = sourceFrame.frameType || 'desktop';
           const tType = targetFrame.frameType || 'desktop';
-          if (sourceFrame && sType === tType) {
+          if (sType === tType) {
             updateNode(connectingSourceId, { linkTo: targetFrame.id }, true);
+            // Also link the parent component if sourceNode is inside a component
+            let curr = sourceNode;
+            while (curr && curr.parentId) {
+              const parent = nodes.find(n => n.id === curr.parentId);
+              if (parent && (parent.isMasterComponent || parent.componentId)) {
+                updateNode(parent.id, { linkTo: targetFrame.id }, true);
+              }
+              curr = parent!;
+            }
           } else {
             setErrorPopup(`Cannot connect a ${sType} to a ${tType}. Frames must be of the same type.`);
           }
         }
         setConnectingSourceId(null);
       } else {
-        if (node.type !== 'Frame' && node.parentId) {
+        if (node.parentId || node.type !== 'Frame' || node.isMasterComponent || node.componentId) {
           setConnectingSourceId(node.id);
         }
       }

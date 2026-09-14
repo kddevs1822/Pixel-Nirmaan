@@ -89,25 +89,25 @@ export class CodeGeneratorService {
     const nodesById: Record<string, CanvasNode> = {};
     nodes.forEach(n => { nodesById[n.id] = n; });
 
+    // Pages
+    const pageRouteMap: { frameId: string; route: string; componentName: string }[] = [];
+    pages.forEach((page, index) => {
+      const pageName = `Page${index + 1}`;
+      const route = index === 0 ? '/' : `/page${index + 1}`;
+      pageRouteMap.push({ frameId: page.id, route, componentName: pageName });
+    });
+
     // Components
     masterComponents.forEach(comp => {
       const componentName = this.getComponentName(comp);
-      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById);
+      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap);
     });
 
-    // Pages
-    const pageRouteMap: { route: string; componentName: string }[] = [];
+    // Generate page code
     pages.forEach((page, index) => {
       const pageName = `Page${index + 1}`;
-      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents);
-      pageRouteMap.push({ route: `/${page.id}`, componentName: pageName });
+      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap);
     });
-
-    // Add a default route if pages exist
-    if (pageRouteMap.length > 0 && !pageRouteMap.find(p => p.route === '/')) {
-       // just alias the first page to /
-       pageRouteMap.push({ route: '/', componentName: pageRouteMap[0].componentName });
-    }
 
     // App & Router
     files['src/App.jsx'] = this.generateAppCode(pageRouteMap);
@@ -242,11 +242,20 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 `;
   }
 
-  private static generateAppCode(routes: { route: string; componentName: string }[]): string {
+  private static generateAppCode(routes: { frameId: string; route: string; componentName: string }[]): string {
     const uniqueImports = Array.from(new Set(routes.map(r => r.componentName)));
     const imports = uniqueImports.map(name => `import ${name} from './pages/${name}';`).join('\n');
     
-    const routeElements = routes.map(r => `        <Route path="${r.route}" element={<${r.componentName} />} />`).join('\n');
+    const routeElements: string[] = [];
+    routes.forEach((r, idx) => {
+      routeElements.push(`        <Route path="${r.route}" element={<${r.componentName} />} />`);
+      if (idx === 0) {
+        routeElements.push(`        <Route path="/page1" element={<${r.componentName} />} />`);
+      }
+      if (r.frameId && r.frameId !== r.route.replace('/', '')) {
+        routeElements.push(`        <Route path="/${r.frameId}" element={<${r.componentName} />} />`);
+      }
+    });
 
     return `import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
@@ -256,7 +265,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-${routeElements}
+${routeElements.join('\n')}
       </Routes>
     </BrowserRouter>
   );
@@ -266,6 +275,7 @@ ${routeElements}
 
   private static generateNodeTailwindClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
     const classes = [];
+    const round = (val: number) => Math.round(val);
     
     const scaleX = node.scaleX || 1;
     const scaleY = node.scaleY || 1;
@@ -321,7 +331,7 @@ ${routeElements}
       } else if (isTouchRight) {
         classes.push('right-0');
       } else {
-        classes.push(`left-[${cssX}px]`);
+        classes.push(`left-[${round(cssX)}px]`);
       }
       
       if (isFullHeight) {
@@ -332,22 +342,21 @@ ${routeElements}
       } else if (isTouchBottom) {
         classes.push('bottom-0');
       } else {
-        classes.push(`top-[${cssY}px]`);
+        classes.push(`top-[${round(cssY)}px]`);
       }
     } else {
-      classes.push('relative'); // Root frames/components usually need to establish a positioning context
+      classes.push('relative');
       if (node.isMasterComponent) {
-        if (node.width) classes.push(`w-[${node.width}px]`);
-        if (node.height) classes.push(`h-[${node.height}px]`);
+        if (node.width) classes.push(`w-[${round(node.width)}px]`);
+        if (node.height) classes.push(`h-[${round(node.height)}px]`);
       } else {
         classes.push('w-full');
-        classes.push('h-screen');
+        classes.push('min-h-screen');
       }
-      classes.push('overflow-hidden');
     }
     
     if (node.rotation) {
-      classes.push(`rotate-[${node.rotation}deg]`);
+      classes.push(`rotate-[${round(node.rotation)}deg]`);
       if (node.type !== 'Circle' && node.type !== 'Triangle') {
         classes.push('origin-top-left');
       }
@@ -358,13 +367,13 @@ ${routeElements}
         if (isFullWidth) {
           classes.push('w-full');
         } else if (node.width) {
-          classes.push(`w-[${node.width}px]`);
+          classes.push(`w-[${round(node.width)}px]`);
         }
         
         if (isFullHeight) {
           classes.push('h-full');
         } else if (node.height) {
-          classes.push(`h-[${node.height}px]`);
+          classes.push(`h-[${round(node.height)}px]`);
         }
       }
     }
@@ -374,7 +383,7 @@ ${routeElements}
     if (node.stroke && node.type !== 'Line') {
       classes.push(`border-[${node.stroke}]`);
       if (node.strokeWidth) {
-        classes.push(`border-[${node.strokeWidth}px]`);
+        classes.push(`border-[${round(node.strokeWidth)}px]`);
       } else {
         classes.push('border-[1px]');
       }
@@ -386,7 +395,6 @@ ${routeElements}
       let lineLeft = cssX;
       let lineTop = cssY;
       
-      // If a line is defined by points instead of width/rotation (which is true in PixelNirmaan)
       if (node.points && node.points.length >= 4) {
         const p1x = node.points[0];
         const p1y = node.points[1];
@@ -396,46 +404,42 @@ ${routeElements}
         const dy = p2y - p1y;
         lineW = Math.sqrt(dx * dx + dy * dy);
         lineRot = Math.atan2(dy, dx) * (180 / Math.PI);
-        // The line starts at p1 relative to the group
         lineLeft = p1x;
         lineTop = p1y;
       }
       
-      classes.push(`border-t-[${node.strokeWidth || 1}px]`);
+      classes.push(`border-t-[${round(node.strokeWidth || 1)}px]`);
       classes.push(`border-[${node.stroke || '#000000'}]`);
-      classes.push(`w-[${lineW}px]`);
+      classes.push(`w-[${round(lineW || 0)}px]`);
       classes.push('origin-top-left');
       
-      // Overwrite cssX and cssY for positioning below
       cssX = lineLeft;
       cssY = lineTop;
       
       if (lineRot) {
-        classes.push(`rotate-[${lineRot}deg]`);
+        classes.push(`rotate-[${round(lineRot)}deg]`);
       }
     }
     
     if (node.type === 'Circle') {
       classes.push('rounded-full');
       if (node.radius) {
-        classes.push(`w-[${node.radius * 2 * scaleX}px]`);
-        classes.push(`h-[${node.radius * 2 * scaleY}px]`);
+        classes.push(`w-[${round(node.radius * 2 * scaleX)}px]`);
+        classes.push(`h-[${round(node.radius * 2 * scaleY)}px]`);
       }
     } else if (node.type === 'Triangle') {
       if (node.radius) {
-        classes.push(`w-[${node.radius * 2 * scaleX}px]`);
-        classes.push(`h-[${node.radius * 2 * scaleY}px]`);
-        classes.push('clip-path-triangle'); // Assuming you might have a custom utility for this
+        classes.push(`w-[${round(node.radius * 2 * scaleX)}px]`);
+        classes.push(`h-[${round(node.radius * 2 * scaleY)}px]`);
+        classes.push('clip-path-triangle');
       }
     } else if (node.cornerRadius) {
-      classes.push(`rounded-[${node.cornerRadius}px]`);
+      classes.push(`rounded-[${round(node.cornerRadius)}px]`);
     }
 
     if (node.type === 'Text') {
-      if (node.fontSize) classes.push(`text-[${node.fontSize}px]`);
-      // Text color is usually fill in canvas
+      if (node.fontSize) classes.push(`text-[${round(node.fontSize)}px]`);
       if (node.fill) {
-        // override bg for text, use text color instead
         const bgIndex = classes.findIndex(c => c.startsWith('bg-['));
         if (bgIndex !== -1) {
           classes.splice(bgIndex, 1);
@@ -471,14 +475,56 @@ ${routeElements}
     return dynamicProps;
   }
 
-  private static generateJsxForNode(node: CanvasNode, allNodes: CanvasNode[], nodesById: Record<string, CanvasNode>, masterComponents: CanvasNode[], isMasterComponentDef: boolean = false, parentNode?: CanvasNode): string {
-    // Helper to check if a linked node is a valid page
-    const isValidPageTarget = (targetId: string) => {
-      const target = allNodes.find(n => n.id === targetId);
-      if (!target) return false;
-      if (target.id === 'virtual_root_page') return true;
-      return target.type === 'Frame' && !target.isMasterComponent && !target.parentId && !target.componentId;
-    };
+  private static getRouteForTarget(targetId: string, pageRouteMap: { frameId: string; route: string; componentName: string }[]): string {
+    const match = pageRouteMap.find(p => p.frameId === targetId);
+    if (match) return match.route;
+    if (targetId === 'virtual_root_page') return '/';
+    return `/${targetId}`;
+  }
+
+  private static generateJsxForNode(
+    node: CanvasNode, 
+    allNodes: CanvasNode[], 
+    nodesById: Record<string, CanvasNode>, 
+    masterComponents: CanvasNode[], 
+    isMasterComponentDef: boolean = false, 
+    parentNode?: CanvasNode,
+    pages: CanvasNode[] = [],
+    pageRouteMap: { frameId: string; route: string; componentName: string }[] = []
+  ): string {
+    const round = (val: number) => Math.round(val);
+
+    // Resolve target route if this node (or for components, any child) has a linkTo
+    let targetLinkId = '';
+    if (!isMasterComponentDef) {
+      targetLinkId = node.linkTo || '';
+      if (!targetLinkId && (node.componentId || node.isMasterComponent)) {
+        // Check if any direct child has linkTo
+        const childWithLink = allNodes.find(c => c.parentId === node.id && c.linkTo);
+        if (childWithLink && childWithLink.linkTo) {
+          targetLinkId = childWithLink.linkTo;
+        }
+        // If it was placed on a page and master's child has linkTo, only link if the target is not this page
+        if (!targetLinkId && node.componentId) {
+          const master = masterComponents.find(m => m.id === node.componentId);
+          if (master?.linkTo) {
+            targetLinkId = master.linkTo;
+          } else if (master) {
+            const masterChild = allNodes.find(c => c.parentId === master.id && c.linkTo);
+            if (masterChild && masterChild.linkTo) {
+              targetLinkId = masterChild.linkTo;
+            }
+          }
+        }
+      }
+
+      // If the target is the page we are already inside, do not link to self
+      if (targetLinkId && parentNode && parentNode.id === targetLinkId) {
+        targetLinkId = '';
+      }
+    }
+
+    const targetRoute = targetLinkId ? this.getRouteForTarget(targetLinkId, pageRouteMap) : '';
 
     // If it's an instance of a component
     if (node.componentId) {
@@ -498,13 +544,15 @@ ${routeElements}
           });
         }
         
-        // Positioning container for the component instance
-        const hasValidLink = node.linkTo && isValidPageTarget(node.linkTo);
-        const clickHandlerStr = hasValidLink ? ` onClick={() => window.location.href = '/${node.linkTo}'}` : '';
-        const cursorClassStr = hasValidLink ? ' cursor-pointer' : '';
-        const positioningClasses = `absolute left-[${node.x}px] top-[${node.y}px]${cursorClassStr}`;
+        const positioningClasses = `absolute left-[${round(node.x)}px] top-[${round(node.y)}px]`;
         
-        return `<div className="${positioningClasses}"${clickHandlerStr}>
+        if (targetRoute) {
+          return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer">
+      <${compName}${propsStr} />
+    </Link>`;
+        }
+        
+        return `<div className="${positioningClasses}">
       <${compName}${propsStr} />
     </div>`;
       }
@@ -513,13 +561,15 @@ ${routeElements}
     if (node.isMasterComponent && !isMasterComponentDef) {
       // If the user placed the Master Component directly inside a layout frame, render it as an instance!
       const compName = this.getComponentName(node);
+      const positioningClasses = `absolute left-[${round(node.x)}px] top-[${round(node.y)}px]`;
       
-      const hasValidLink = node.linkTo && isValidPageTarget(node.linkTo);
-      const clickHandlerStr = hasValidLink ? ` onClick={() => window.location.href = '/${node.linkTo}'}` : '';
-      const cursorClassStr = hasValidLink ? ' cursor-pointer' : '';
-      const positioningClasses = `absolute left-[${node.x}px] top-[${node.y}px]${cursorClassStr}`;
+      if (targetRoute) {
+        return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer">
+      <${compName} />
+    </Link>`;
+      }
       
-      return `<div className="${positioningClasses}"${clickHandlerStr}>
+      return `<div className="${positioningClasses}">
       <${compName} />
     </div>`;
     }
@@ -528,61 +578,83 @@ ${routeElements}
     const dynamicProps = this.resolveBoundProps(node, isMasterComponentDef);
     
     // For bound fill props, use inline style with fallback instead of Tailwind dynamic classes.
-    // This avoids generating invalid classes like bg-[undefined].
     let fillStyle = '';
     if (dynamicProps.fill && node.type !== 'Text') {
-      // Remove the static bg-[...] class since we'll use inline style
       twClasses = twClasses.replace(/bg-\[[^\]]+\]/g, '');
       fillStyle = ` style={{ backgroundColor: ${dynamicProps.fill.expression} || '${dynamicProps.fill.defaultValue}' }}`;
     }
     let textColorStyle = '';
     if (dynamicProps.fill && node.type === 'Text') {
-      // Remove the static text-[...] color class
       twClasses = twClasses.replace(/text-\[#[^\]]+\]/g, '');
       textColorStyle = ` style={{ color: ${dynamicProps.fill.expression} || '${dynamicProps.fill.defaultValue}' }}`;
     }
 
     let jsx = '';
-    const hasValidLink = node.linkTo && isValidPageTarget(node.linkTo);
-    const clickHandler = hasValidLink ? ` onClick={() => window.location.href = '/${node.linkTo}'}` : '';
-    const cursorClass = hasValidLink ? ' cursor-pointer' : '';
+    const cursorClass = targetRoute ? ' cursor-pointer' : '';
 
     if (node.type === 'Frame') {
       const children = allNodes.filter(n => n.parentId === node.id);
-      const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node)).join('\n      ');
+      const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap)).join('\n      ');
       
-      jsx = `<div className="${twClasses}${cursorClass}"${fillStyle}${clickHandler}>
+      if (targetRoute) {
+        jsx = `<Link to="${targetRoute}" className="${twClasses}${cursorClass} block"${fillStyle}>
+      ${childrenJsx}
+    </Link>`;
+      } else {
+        jsx = `<div className="${twClasses}"${fillStyle}>
       ${childrenJsx}
     </div>`;
+      }
     } else if (node.type === 'Text') {
       const textContent = dynamicProps.text 
         ? `{${dynamicProps.text.expression} || "${dynamicProps.text.defaultValue}"}` 
         : (node.text || '');
       
-      jsx = `<div className="${twClasses}${cursorClass}"${textColorStyle}${clickHandler}>${textContent}</div>`;
+      if (targetRoute) {
+        jsx = `<Link to="${targetRoute}" className="${twClasses}${cursorClass} block"${textColorStyle}>${textContent}</Link>`;
+      } else {
+        jsx = `<div className="${twClasses}"${textColorStyle}>${textContent}</div>`;
+      }
     } else if (node.type === 'Image') {
       const imgSrc = dynamicProps.src 
         ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue}"}`
         : `"${node.src || ''}"`;
-      jsx = `<img src=${imgSrc} className="${twClasses}${cursorClass}"${clickHandler} alt="image" />`;
+      if (targetRoute) {
+        jsx = `<Link to="${targetRoute}" className="block cursor-pointer"><img src=${imgSrc} className="${twClasses}" alt="image" /></Link>`;
+      } else {
+        jsx = `<img src=${imgSrc} className="${twClasses}" alt="image" />`;
+      }
     } else {
       // Rect, Circle, etc
-      jsx = `<div className="${twClasses}${cursorClass}"${fillStyle}${clickHandler}></div>`;
+      if (targetRoute) {
+        jsx = `<Link to="${targetRoute}" className="${twClasses}${cursorClass} block"${fillStyle}></Link>`;
+      } else {
+        jsx = `<div className="${twClasses}"${fillStyle}></div>`;
+      }
     }
 
     return jsx;
   }
 
-  private static generateComponentCode(comp: CanvasNode, allNodes: CanvasNode[], nodesById: Record<string, CanvasNode>): string {
+  private static generateComponentCode(
+    comp: CanvasNode, 
+    allNodes: CanvasNode[], 
+    nodesById: Record<string, CanvasNode>,
+    pages: CanvasNode[] = [],
+    pageRouteMap: { frameId: string; route: string; componentName: string }[] = []
+  ): string {
     const componentName = this.getComponentName(comp);
     
     const children = allNodes.filter(n => n.parentId === comp.id);
-    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, [], true, comp)).join('\n      ');
+    const hasAnyLink = children.some(c => c.linkTo);
+    const linkImport = hasAnyLink ? "import { Link } from 'react-router-dom';\n" : '';
+    
+    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, [], true, comp, pages, pageRouteMap)).join('\n      ');
     
     const rootClasses = this.generateNodeTailwindClasses(comp, true);
     
     return `import React from 'react';
-
+${linkImport}
 export default function ${componentName}(props) {
   return (
     <div className="${rootClasses}">
@@ -593,7 +665,14 @@ export default function ${componentName}(props) {
 `;
   }
 
-  private static generatePageCode(page: CanvasNode, allNodes: CanvasNode[], nodesById: Record<string, CanvasNode>, masterComponents: CanvasNode[]): string {
+  private static generatePageCode(
+    page: CanvasNode, 
+    allNodes: CanvasNode[], 
+    nodesById: Record<string, CanvasNode>, 
+    masterComponents: CanvasNode[],
+    pages: CanvasNode[] = [],
+    pageRouteMap: { frameId: string; route: string; componentName: string }[] = []
+  ): string {
     const children = allNodes.filter(n => n.parentId === page.id);
     
     // Find imports for instances used in this page
@@ -617,19 +696,24 @@ export default function ${componentName}(props) {
     
     const imports = Array.from(instancesUsed).map(name => `import ${name} from '../components/${name}';`).join('\n');
     
-    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, page)).join('\n      ');
-    const rootClasses = this.generateNodeTailwindClasses(page, true);
+    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, page, pages, pageRouteMap)).join('\n      ');
+    
+    const pageWidth = Math.round(page.width || 1440);
+    const pageHeight = Math.round(page.height || 900);
+    const bgColor = page.fill || '#ffffff';
 
     return `import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 ${imports}
 
 export default function Page() {
   const navigate = useNavigate();
 
   return (
-    <div className="${rootClasses}" style={{ backgroundColor: '${page.fill || '#ffffff'}' }}>
-      ${childrenJsx}
+    <div className="min-h-screen w-full flex justify-center" style={{ backgroundColor: '${bgColor}' }}>
+      <div className="relative w-full overflow-visible" style={{ maxWidth: '${pageWidth}px', minHeight: '${pageHeight}px' }}>
+        ${childrenJsx}
+      </div>
     </div>
   );
 }
