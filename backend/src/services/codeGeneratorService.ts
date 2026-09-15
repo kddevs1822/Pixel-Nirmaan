@@ -12,6 +12,20 @@ export class CodeGeneratorService {
     files['postcss.config.js'] = this.generatePostcssConfig();
     files['src/index.css'] = this.generateIndexCss();
 
+    // Extract base64 images
+    nodes.forEach(node => {
+      if (node.type === 'Image' && node.src && node.src.startsWith('data:image/')) {
+        let ext = 'png';
+        if (node.src.startsWith('data:image/jpeg')) ext = 'jpg';
+        if (node.src.startsWith('data:image/svg+xml')) ext = 'svg';
+        if (node.src.startsWith('data:image/gif')) ext = 'gif';
+        
+        const filename = `public/images/img_${node.id}.${ext}`;
+        files[filename] = node.src;
+        node.src = `/images/img_${node.id}.${ext}`;
+      }
+    });
+
     // Group nodes
     const masterComponents = nodes.filter(n => n.isMasterComponent);
     const masterIds = new Set(masterComponents.map(m => m.id));
@@ -546,13 +560,29 @@ ${routeElements.join('\n')}
         
         const positioningClasses = `absolute left-[${round(node.x)}px] top-[${round(node.y)}px]`;
         
+        let styleStr = '';
+        let sx = node.scaleX !== undefined ? node.scaleX : 1;
+        let sy = node.scaleY !== undefined ? node.scaleY : 1;
+        
+        if (node.width !== undefined && master.width) {
+          sx *= (node.width / master.width);
+        }
+        if (node.height !== undefined && master.height) {
+          sy *= (node.height / master.height);
+        }
+        
+        const rot = node.rotation || 0;
+        if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01 || rot !== 0) {
+          styleStr = ` style={{ transform: 'scale(${sx}, ${sy}) rotate(${rot}deg)', transformOrigin: 'top left' }}`;
+        }
+        
         if (targetRoute) {
-          return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer">
+          return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer"${styleStr}>
       <${compName}${propsStr} />
     </Link>`;
         }
         
-        return `<div className="${positioningClasses}">
+        return `<div className="${positioningClasses}"${styleStr}>
       <${compName}${propsStr} />
     </div>`;
       }
@@ -563,13 +593,32 @@ ${routeElements.join('\n')}
       const compName = this.getComponentName(node);
       const positioningClasses = `absolute left-[${round(node.x)}px] top-[${round(node.y)}px]`;
       
+      let styleStr = '';
+      let sx = node.scaleX !== undefined ? node.scaleX : 1;
+      let sy = node.scaleY !== undefined ? node.scaleY : 1;
+      
+      const master = masterComponents.find(m => m.id === node.id);
+      if (master) {
+        if (node.width !== undefined && master.width) {
+          sx *= (node.width / master.width);
+        }
+        if (node.height !== undefined && master.height) {
+          sy *= (node.height / master.height);
+        }
+      }
+      
+      const rot = node.rotation || 0;
+      if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01 || rot !== 0) {
+        styleStr = ` style={{ transform: 'scale(${sx}, ${sy}) rotate(${rot}deg)', transformOrigin: 'top left' }}`;
+      }
+      
       if (targetRoute) {
-        return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer">
+        return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer"${styleStr}>
       <${compName} />
     </Link>`;
       }
       
-      return `<div className="${positioningClasses}">
+      return `<div className="${positioningClasses}"${styleStr}>
       <${compName} />
     </div>`;
     }
@@ -701,63 +750,19 @@ export default function ${componentName}(props) {
     const pageWidth = Math.round(page.width || 1440);
     const pageHeight = Math.round(page.height || 900);
     const bgColor = page.fill || '#ffffff';
-    const isScrollingPage = pageHeight > 1080;
-
-    if (isScrollingPage) {
-      return `import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-${imports}
-
-export default function Page() {
-  const navigate = useNavigate();
-  const [scale, setScale] = useState(1);
-
-  useEffect(() => {
-    const updateScale = () => {
-      const availW = window.innerWidth;
-      const scaleX = availW / ${pageWidth};
-      setScale(Math.min(scaleX, 1));
-    };
-    updateScale();
-    window.addEventListener('resize', updateScale);
-    return () => window.removeEventListener('resize', updateScale);
-  }, []);
-
-  return (
-    <div className="min-h-screen w-full flex flex-col items-center overflow-x-hidden" style={{ backgroundColor: '${bgColor}' }}>
-      <div 
-        className="relative shrink-0 overflow-visible" 
-        style={{ 
-          width: '${pageWidth}px', 
-          height: '${pageHeight}px',
-          transform: \`scale(\${scale})\`,
-          transformOrigin: 'top center',
-          marginBottom: scale < 1 ? \`-\${Math.round(${pageHeight} * (1 - scale))}px\` : undefined
-        }}
-      >
-        ${childrenJsx}
-      </div>
-    </div>
-  );
-}
-`;
-    }
-
     return `import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 ${imports}
 
 export default function Page() {
   const navigate = useNavigate();
-  const [scale, setScale] = useState(1);
+  const [scaleX, setScaleX] = useState(1);
+  const [scaleY, setScaleY] = useState(1);
 
   useEffect(() => {
     const updateScale = () => {
-      const availW = window.innerWidth;
-      const availH = window.innerHeight;
-      const scaleX = availW / ${pageWidth};
-      const scaleY = availH / ${pageHeight};
-      setScale(Math.min(scaleX, scaleY, 1));
+      setScaleX(window.innerWidth / ${pageWidth});
+      setScaleY(window.innerHeight / ${pageHeight});
     };
     updateScale();
     window.addEventListener('resize', updateScale);
@@ -765,14 +770,14 @@ export default function Page() {
   }, []);
 
   return (
-    <div className="w-screen h-screen overflow-hidden flex items-center justify-center" style={{ backgroundColor: '${bgColor}' }}>
+    <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${bgColor}' }}>
       <div 
-        className="relative shrink-0 overflow-visible" 
+        className="relative" 
         style={{ 
           width: '${pageWidth}px', 
           height: '${pageHeight}px',
-          transform: \`scale(\${scale})\`,
-          transformOrigin: 'center center'
+          transform: \`scale(\${scaleX}, \${scaleY})\`,
+          transformOrigin: 'top left'
         }}
       >
         ${childrenJsx}

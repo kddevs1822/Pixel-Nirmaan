@@ -53,7 +53,13 @@ export const TopBar: React.FC = () => {
       const zip = new JSZip();
       
       Object.entries(data.files).forEach(([filepath, content]) => {
-        zip.file(filepath, content as string);
+        const contentStr = content as string;
+        if (contentStr.startsWith('data:image/')) {
+          const base64Data = contentStr.split(',')[1];
+          zip.file(filepath, base64Data, { base64: true });
+        } else {
+          zip.file(filepath, contentStr);
+        }
       });
 
       const blob = await zip.generateAsync({ type: 'blob' });

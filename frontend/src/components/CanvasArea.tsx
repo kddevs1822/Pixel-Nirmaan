@@ -9,15 +9,18 @@ import { X, AlertCircle } from 'lucide-react';
 
 const URLImage = ({ node, commonProps }: any) => {
   const [image] = useImage(node.src || '');
-  if (!image) {
-    return (
-      <Group {...commonProps}>
-        <Rect width={node.width} height={node.height} fill="#e2e8f0" stroke="#cbd5e1" strokeWidth={2} dash={[5, 5]} />
-        <Text text="Loading..." width={node.width} height={node.height} verticalAlign="middle" align="center" fontSize={14} fill="#64748b" fontFamily="Inter" />
-      </Group>
-    );
-  }
-  return <KonvaImage image={image} width={node.width} height={node.height} {...commonProps} />;
+  return (
+    <Group {...commonProps} width={node.width} height={node.height}>
+      {!image ? (
+        <>
+          <Rect width={node.width} height={node.height} fill="#e2e8f0" stroke="#cbd5e1" strokeWidth={2} dash={[5, 5]} />
+          <Text text="Loading..." width={node.width} height={node.height} verticalAlign="middle" align="center" fontSize={14} fill="#64748b" fontFamily="Inter" />
+        </>
+      ) : (
+        <KonvaImage image={image} width={node.width} height={node.height} />
+      )}
+    </Group>
+  );
 };
 
 export const CanvasArea: React.FC = () => {
@@ -135,14 +138,17 @@ export const CanvasArea: React.FC = () => {
 
     // Allow reparenting for non-Frames, component instances, OR master components
     if (storeNode.type !== 'Frame' || storeNode.componentId || storeNode.isMasterComponent) {
+      const centerX = unscaledAbsX + (storeNode.width || 0) / 2;
+      const centerY = unscaledAbsY + (storeNode.height || 0) / 2;
+      
       let targetFrameId = undefined;
       // Only valid target frames are actual layout frames, not master components or instances themselves
       const frames = nodes.filter(n => n.type === 'Frame' && !n.isMasterComponent && !n.componentId && n.id !== storeNode.id);
       for (let i = frames.length - 1; i >= 0; i--) {
         const frame = frames[i];
         if (
-          unscaledAbsX >= frame.x && unscaledAbsX <= frame.x + (frame.width || 0) &&
-          unscaledAbsY >= frame.y && unscaledAbsY <= frame.y + (frame.height || 0)
+          centerX >= frame.x && centerX <= frame.x + (frame.width || 0) &&
+          centerY >= frame.y && centerY <= frame.y + (frame.height || 0)
         ) {
           targetFrameId = frame.id;
           break;
@@ -187,8 +193,35 @@ export const CanvasArea: React.FC = () => {
       const h = node.height();
       node.scaleX(1);
       node.scaleY(1);
-      updates.width = Math.max(5, Math.abs(w * scaleX));
-      updates.height = Math.max(5, Math.abs(h * scaleY));
+      const newW = Math.max(5, Math.abs(w * scaleX));
+      const newH = Math.max(5, Math.abs(h * scaleY));
+      updates.width = newW;
+      updates.height = newH;
+
+      if (storeNode.type === 'Frame') {
+        const ratioX = newW / Math.max(1, w);
+        const ratioY = newH / Math.max(1, h);
+        if (ratioX !== 1 || ratioY !== 1) {
+          const scaleChildren = (parentId: string, rx: number, ry: number) => {
+            nodes.filter(n => n.parentId === parentId).forEach(child => {
+              const childUpdates: any = {
+                x: child.x * rx,
+                y: child.y * ry,
+              };
+              if (child.width !== undefined) childUpdates.width = child.width * rx;
+              if (child.height !== undefined) childUpdates.height = child.height * ry;
+              if (child.radius !== undefined) childUpdates.radius = child.radius * Math.min(rx, ry);
+              if (child.fontSize !== undefined) childUpdates.fontSize = child.fontSize * Math.min(rx, ry);
+              if (child.points !== undefined) {
+                childUpdates.points = child.points.map((p, i) => i % 2 === 0 ? p * rx : p * ry);
+              }
+              updateNode(child.id, childUpdates, false);
+              scaleChildren(child.id, rx, ry);
+            });
+          };
+          scaleChildren(id, ratioX, ratioY);
+        }
+      }
     } else if (storeNode.type === 'Circle' || storeNode.type === 'Triangle') {
       updates.scaleX = scaleX;
       updates.scaleY = scaleY;
@@ -504,6 +537,8 @@ export const CanvasArea: React.FC = () => {
         <Group 
           key={node.id} 
           {...commonProps} 
+          width={resolvedNode.width}
+          height={resolvedNode.height}
           clipX={0} 
           clipY={0} 
           clipWidth={resolvedNode.width} 
@@ -662,7 +697,7 @@ export const CanvasArea: React.FC = () => {
     const fitScale = Math.min(scaleX, scaleY, 1);
     
     const centeredX = (window.innerWidth - (previewFrame.width || 0) * fitScale) / 2;
-    const centeredY = (window.innerHeight - (previewFrame.height || 0) * fitScale) / 2;
+    const centeredY = 20;
 
     const modifiedPreviewFrame = { ...previewFrame, x: 0, y: 0 };
 
@@ -818,19 +853,79 @@ export const CanvasArea: React.FC = () => {
         }}
       >
         <Layer>
+          {/* Highlight for connection source */}
+          {mode === 'connect' && connectingSourceId && (() => {
+            const sourceNode = nodes.find(n => n.id === connectingSourceId);
+            if (!sourceNode) return null;
+            let absX = sourceNode.x;
+            let absY = sourceNode.y;
+            if (sourceNode.parentId) {
+              const parent = nodes.find(n => n.id === sourceNode.parentId);
+              if (parent) {
+                absX += parent.x;
+                absY += parent.y;
+              }
+            }
+            const w = sourceNode.width || (sourceNode.radius ? sourceNode.radius * 2 : 100);
+            const h = sourceNode.height || (sourceNode.radius ? sourceNode.radius * 2 : 100);
+            const finalX = (sourceNode.type === 'Circle' || sourceNode.type === 'Triangle') ? absX - w/2 : absX;
+            const finalY = (sourceNode.type === 'Circle' || sourceNode.type === 'Triangle') ? absY - h/2 : absY;
+            
+            return (
+              <Rect
+                x={finalX - 4}
+                y={finalY - 4}
+                width={w + 8}
+                height={h + 8}
+                cornerRadius={sourceNode.cornerRadius || (sourceNode.type === 'Circle' ? w/2 : 4)}
+                stroke="#4A3AFF"
+                strokeWidth={3}
+                fill="rgba(74, 58, 255, 0.15)"
+                listening={false}
+              />
+            );
+          })()}
+
           {getConnectionPoints().map(line => (
-            <Arrow
-              key={`conn-${line.id}`}
-              points={line.points}
-              stroke="#4A3AFF"
-              strokeWidth={2}
-              fill="#4A3AFF"
-              pointerLength={10}
-              pointerWidth={10}
-              dash={[5, 5]}
-              opacity={line.id === 'temp' ? 0.5 : 1}
-              listening={false}
-            />
+            <Group key={`conn-group-${line.id}`}>
+              <Arrow
+                key={`conn-${line.id}`}
+                points={line.points}
+                stroke="#4A3AFF"
+                strokeWidth={line.id === 'temp' ? 2 : 4}
+                fill="#4A3AFF"
+                pointerLength={15}
+                pointerWidth={15}
+                dash={line.id === 'temp' ? [6, 6] : undefined}
+                opacity={line.id === 'temp' ? 0.6 : 1}
+                shadowColor="#4A3AFF"
+                shadowBlur={line.id === 'temp' ? 0 : 8}
+                shadowOpacity={0.3}
+                listening={false}
+              />
+              {mode === 'connect' && line.id !== 'temp' && (
+                <Group
+                  x={(line.points[0] + line.points[2]) / 2}
+                  y={(line.points[1] + line.points[3]) / 2}
+                  listening={true}
+                  onClick={(e) => {
+                    e.cancelBubble = true;
+                    updateNode(line.id, { linkTo: undefined }, true);
+                  }}
+                  onMouseEnter={(e) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = 'pointer';
+                  }}
+                  onMouseLeave={(e) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = 'crosshair';
+                  }}
+                >
+                  <Circle radius={10} fill="#EF4444" shadowColor="rgba(0,0,0,0.2)" shadowBlur={4} shadowOffsetY={2} />
+                  <Text text="×" fill="white" fontSize={16} fontStyle="bold" x={-5} y={-8} />
+                </Group>
+              )}
+            </Group>
           ))}
           {rootNodes.map(n => <RenderNode key={n.id} node={n} />)}
 
