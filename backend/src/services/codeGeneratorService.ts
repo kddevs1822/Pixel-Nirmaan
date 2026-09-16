@@ -104,10 +104,11 @@ export class CodeGeneratorService {
     nodes.forEach(n => { nodesById[n.id] = n; });
 
     // Pages
+    const usedNames = new Set<string>();
     const pageRouteMap: { frameId: string; route: string; componentName: string }[] = [];
     pages.forEach((page, index) => {
-      const pageName = `Page${index + 1}`;
-      const route = index === 0 ? '/' : `/page${index + 1}`;
+      const pageName = this.getPageComponentName(page, index, usedNames);
+      const route = this.getPageRoute(pageName, index);
       pageRouteMap.push({ frameId: page.id, route, componentName: pageName });
     });
 
@@ -119,8 +120,9 @@ export class CodeGeneratorService {
 
     // Generate page code
     pages.forEach((page, index) => {
-      const pageName = `Page${index + 1}`;
-      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap);
+      const routeInfo = pageRouteMap.find(p => p.frameId === page.id);
+      const pageName = routeInfo ? routeInfo.componentName : `Page${index + 1}`;
+      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap, pageName);
     });
 
     // App & Router
@@ -128,6 +130,38 @@ export class CodeGeneratorService {
     files['src/main.jsx'] = this.generateMainCode();
 
     return files;
+  }
+
+  private static getPageComponentName(page: CanvasNode, index: number, usedNames: Set<string>): string {
+    const rawName = page.name || `Page${index + 1}`;
+    let pascalName = rawName
+      .trim()
+      .replace(/[^a-zA-Z0-9_\s-]/g, '')
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+
+    if (!pascalName || /^[0-9]/.test(pascalName)) {
+      pascalName = `Page${pascalName || (index + 1)}`;
+    }
+
+    let finalName = pascalName;
+    let counter = 1;
+    while (usedNames.has(finalName)) {
+      finalName = `${pascalName}_${counter}`;
+      counter++;
+    }
+    usedNames.add(finalName);
+    return finalName;
+  }
+
+  private static getPageRoute(componentName: string, index: number): string {
+    if (index === 0) return '/';
+    const slug = componentName
+      .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+      .toLowerCase();
+    return `/${slug}`;
   }
 
   private static getComponentName(node: CanvasNode): string {
@@ -720,7 +754,8 @@ export default function ${componentName}(props) {
     nodesById: Record<string, CanvasNode>, 
     masterComponents: CanvasNode[],
     pages: CanvasNode[] = [],
-    pageRouteMap: { frameId: string; route: string; componentName: string }[] = []
+    pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
+    pageName: string = 'Page'
   ): string {
     const children = allNodes.filter(n => n.parentId === page.id);
     
@@ -754,7 +789,7 @@ export default function ${componentName}(props) {
 import { Link, useNavigate } from 'react-router-dom';
 ${imports}
 
-export default function Page() {
+export default function ${pageName}() {
   const navigate = useNavigate();
   const [scaleX, setScaleX] = useState(1);
   const [scaleY, setScaleY] = useState(1);

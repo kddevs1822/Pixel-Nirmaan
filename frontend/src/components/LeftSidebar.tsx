@@ -43,9 +43,9 @@ export const LeftSidebar: React.FC = () => {
     else if (type === 'Curve') addNode({ type: 'Line', x: localX, y: localY, points: [0, 0, 50, 0, 100, 0], tension: 0.5, stroke: '#1A1A1D', strokeWidth: 4, parentId });
     else if (type === 'Text') addNode({ type: 'Text', x: localX, y: localY, text: 'Modern Craft', fontSize: 32, fontFamily: 'Space Grotesk', fill: '#1A1A1D', parentId });
     else if (type === 'Image') fileInputRef.current?.click();
-    else if (type === 'Frame-Desktop') addNode({ type: 'Frame', x: x - 720 + 50, y: y - 450 + 50, width: 1440, height: 900, fill: '#ffffff', frameType: 'desktop' });
-    else if (type === 'Frame-Tablet') addNode({ type: 'Frame', x: x - 384 + 50, y: y - 512 + 50, width: 768, height: 1024, fill: '#ffffff', frameType: 'tablet' });
-    else if (type === 'Frame-Mobile') addNode({ type: 'Frame', x: x - 196 + 50, y: y - 426 + 50, width: 393, height: 852, fill: '#ffffff', frameType: 'mobile' });
+    else if (type === 'Frame-Desktop') addNode({ type: 'Frame', x: x - (window.innerWidth / 2) + 50, y: y - (window.innerHeight / 2) + 50, width: window.innerWidth, height: window.innerHeight, fill: '#ffffff', frameType: 'desktop', name: `Desktop ${frames.length + 1}` });
+    else if (type === 'Frame-Tablet') addNode({ type: 'Frame', x: x - 384 + 50, y: y - 512 + 50, width: 768, height: 1024, fill: '#ffffff', frameType: 'tablet', name: `Tablet ${frames.length + 1}` });
+    else if (type === 'Frame-Mobile') addNode({ type: 'Frame', x: x - 196 + 50, y: y - 426 + 50, width: 393, height: 852, fill: '#ffffff', frameType: 'mobile', name: `Mobile ${frames.length + 1}` });
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

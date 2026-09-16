@@ -225,6 +225,19 @@ export const RightSidebar: React.FC = () => {
 
       {selectedNodes.length === 1 && (
         <div className="flex flex-col gap-3 pb-4 border-b border-slate-100">
+          {primaryNode.type === 'Frame' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Frame Name</label>
+              <input 
+                type="text" 
+                value={primaryNode.name || ''} 
+                onChange={(e) => updateNodes([primaryNode.id], { name: e.target.value })}
+                className="border border-slate-300 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-[#4A3AFF]"
+                placeholder="e.g. Home Screen"
+              />
+            </div>
+          )}
+
           {primaryNode.isMasterComponent && (
             <>
               <div className="flex flex-col gap-1">
@@ -483,14 +496,6 @@ export const RightSidebar: React.FC = () => {
               />
             </div>
           </div>
-          {primaryNode.type === 'Frame' && (
-            <button 
-              onClick={() => updateNodes([primaryNode.id], { width: window.innerWidth, height: window.innerHeight }, true)}
-              className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded transition-colors text-xs flex items-center justify-center gap-1 mt-1"
-            >
-              <Monitor size={14} /> Resize Frame to match Monitor
-            </button>
-          )}
         </div>
       )}
 

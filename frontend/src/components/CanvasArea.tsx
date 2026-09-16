@@ -559,10 +559,11 @@ export const CanvasArea: React.FC = () => {
             <Text
               x={0}
               y={-20}
-              text={`Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
-              fill="#94a3b8"
+              text={resolvedNode.name ? `${resolvedNode.name} (${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)})` : `Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
+              fill="#64748b"
               fontSize={12}
-              fontFamily="Inter"
+              fontStyle="500"
+              fontFamily="Inter, sans-serif"
               listening={false}
             />
           )}
@@ -704,7 +705,7 @@ export const CanvasArea: React.FC = () => {
     return (
       <div className="fixed inset-0 bg-black z-50 flex flex-col">
         <div className="h-14 flex items-center justify-between px-6 bg-slate-900 text-white shrink-0">
-          <span className="font-semibold text-sm">Previewing: {previewFrame.frameType}</span>
+          <span className="font-semibold text-sm">Previewing: {previewFrame.name || previewFrame.frameType}</span>
           <button 
             onClick={() => setMode('select')}
             className="flex items-center gap-2 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors text-sm font-medium"
