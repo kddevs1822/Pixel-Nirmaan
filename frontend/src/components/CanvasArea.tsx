@@ -723,35 +723,91 @@ export const CanvasArea: React.FC = () => {
     );
   }
 
+  const getNodeCanvasBounds = (nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return null;
+
+    let absX = node.x;
+    let absY = node.y;
+    let curr = node;
+    while (curr.parentId) {
+      const parent = nodes.find(n => n.id === curr.parentId);
+      if (!parent) break;
+      absX += parent.x;
+      absY += parent.y;
+      curr = parent;
+    }
+    const w = node.width || (node.radius ? node.radius * 2 : 100);
+    const h = node.height || (node.radius ? node.radius * 2 : 100);
+    const isCentered = node.type === 'Circle' || node.type === 'Triangle';
+    const finalX = isCentered ? absX - w/2 : absX;
+    const finalY = isCentered ? absY - h/2 : absY;
+
+    return {
+      x: finalX,
+      y: finalY,
+      width: w,
+      height: h,
+      centerX: finalX + w / 2,
+      centerY: finalY + h / 2,
+    };
+  };
+
   const getConnectionPoints = () => {
     const lines: { id: string, points: number[] }[] = [];
+
+    const getFrameCenter = (frame: CanvasNode) => ({
+      x: frame.x + (frame.width || 0) / 2,
+      y: frame.y + (frame.height || 0) / 2,
+    });
+
+    const getEdgePoint = (frame: CanvasNode, targetCenter: { x: number, y: number }) => {
+      const cx = frame.x + (frame.width || 0) / 2;
+      const cy = frame.y + (frame.height || 0) / 2;
+      const fw = (frame.width || 0) / 2;
+      const fh = (frame.height || 0) / 2;
+      const dx = targetCenter.x - cx;
+      const dy = targetCenter.y - cy;
+      
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return { x: cx + fw, y: cy };
+      
+      // Check which edge the line crosses
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      
+      if (absDx / fw > absDy / fh) {
+        // Exits from left or right edge
+        const sign = dx > 0 ? 1 : -1;
+        return { x: cx + sign * fw, y: cy + dy * (fw / absDx) };
+      } else {
+        // Exits from top or bottom edge
+        const sign = dy > 0 ? 1 : -1;
+        return { x: cx + dx * (fh / absDy), y: cy + sign * fh };
+      }
+    };
+
     nodes.forEach(node => {
       if (node.linkTo && node.parentId) {
-        const parentFrame = nodes.find(n => n.id === node.parentId);
         const targetFrame = nodes.find(n => n.id === node.linkTo);
-        if (parentFrame && targetFrame) {
-          const startX = parentFrame.x + node.x + (node.width || 0) / 2;
-          const startY = parentFrame.y + node.y + (node.height || 0) / 2;
-          const endX = targetFrame.x;
-          const endY = targetFrame.y + (targetFrame.height || 0) / 2;
-          lines.push({ id: node.id, points: [startX, startY, endX, endY] });
+        const sourceBounds = getNodeCanvasBounds(node.id);
+        if (sourceBounds && targetFrame && targetFrame.type === 'Frame') {
+          const start = { x: sourceBounds.centerX, y: sourceBounds.centerY };
+          const end = getEdgePoint(targetFrame, start);
+          lines.push({ id: node.id, points: [start.x, start.y, end.x, end.y] });
         }
       }
     });
 
     if (mode === 'connect' && connectingSourceId && stageRef.current) {
-      const sourceNode = nodes.find(n => n.id === connectingSourceId);
-      const parentFrame = nodes.find(n => n.id === sourceNode?.parentId);
-      if (sourceNode && parentFrame) {
-        const startX = parentFrame.x + sourceNode.x + (sourceNode.width || 0) / 2;
-        const startY = parentFrame.y + sourceNode.y + (sourceNode.height || 0) / 2;
-        
+      const sourceBounds = getNodeCanvasBounds(connectingSourceId);
+      if (sourceBounds) {
         const stage = stageRef.current;
         const pointer = stage.getPointerPosition();
         if (pointer) {
-          const endX = (pointer.x - stage.x()) / stage.scaleX();
-          const endY = (pointer.y - stage.y()) / stage.scaleY();
-          lines.push({ id: 'temp', points: [startX, startY, endX, endY] });
+          const mouseX = (pointer.x - stage.x()) / stage.scaleX();
+          const mouseY = (pointer.y - stage.y()) / stage.scaleY();
+          const start = { x: sourceBounds.centerX, y: sourceBounds.centerY };
+          lines.push({ id: 'temp', points: [start.x, start.y, mouseX, mouseY] });
         }
       }
     }
@@ -853,45 +909,112 @@ export const CanvasArea: React.FC = () => {
         }}
       >
         <Layer>
+          {rootNodes.map(n => <RenderNode key={n.id} node={n} />)}
+
+          {/* Connect mode: highlight all frames as potential targets */}
+          {mode === 'connect' && nodes.filter(n => n.type === 'Frame' && !n.parentId && !n.isMasterComponent && !n.componentId).map(frame => (
+            <Rect
+              key={`frame-highlight-${frame.id}`}
+              x={frame.x}
+              y={frame.y}
+              width={frame.width || 100}
+              height={frame.height || 100}
+              stroke={connectingSourceId ? '#10B981' : '#94A3B8'}
+              strokeWidth={3}
+              cornerRadius={4}
+              dash={[8, 4]}
+              fill="transparent"
+              listening={false}
+            />
+          ))}
+
+          {/* Highlight for all elements that have connections */}
+          {mode === 'connect' && nodes.filter(n => n.linkTo && n.id !== connectingSourceId).map(connectedNode => {
+            const bounds = getNodeCanvasBounds(connectedNode.id);
+            if (!bounds) return null;
+            return (
+              <Group key={`trigger-hl-${connectedNode.id}`}>
+                <Rect
+                  x={bounds.x - 4}
+                  y={bounds.y - 4}
+                  width={bounds.width + 8}
+                  height={bounds.height + 8}
+                  cornerRadius={connectedNode.cornerRadius || (connectedNode.type === 'Circle' ? bounds.width/2 : 4)}
+                  stroke="#4A3AFF"
+                  strokeWidth={2}
+                  fill="rgba(74, 58, 255, 0.08)"
+                  dash={[4, 2]}
+                  listening={false}
+                />
+                <Circle
+                  x={bounds.centerX}
+                  y={bounds.centerY}
+                  radius={5}
+                  fill="#4A3AFF"
+                  stroke="white"
+                  strokeWidth={2}
+                  listening={false}
+                />
+              </Group>
+            );
+          })}
+
           {/* Highlight for connection source */}
           {mode === 'connect' && connectingSourceId && (() => {
             const sourceNode = nodes.find(n => n.id === connectingSourceId);
             if (!sourceNode) return null;
-            let absX = sourceNode.x;
-            let absY = sourceNode.y;
-            if (sourceNode.parentId) {
-              const parent = nodes.find(n => n.id === sourceNode.parentId);
-              if (parent) {
-                absX += parent.x;
-                absY += parent.y;
-              }
-            }
-            const w = sourceNode.width || (sourceNode.radius ? sourceNode.radius * 2 : 100);
-            const h = sourceNode.height || (sourceNode.radius ? sourceNode.radius * 2 : 100);
-            const finalX = (sourceNode.type === 'Circle' || sourceNode.type === 'Triangle') ? absX - w/2 : absX;
-            const finalY = (sourceNode.type === 'Circle' || sourceNode.type === 'Triangle') ? absY - h/2 : absY;
+            const bounds = getNodeCanvasBounds(sourceNode.id);
+            if (!bounds) return null;
             
             return (
-              <Rect
-                x={finalX - 4}
-                y={finalY - 4}
-                width={w + 8}
-                height={h + 8}
-                cornerRadius={sourceNode.cornerRadius || (sourceNode.type === 'Circle' ? w/2 : 4)}
-                stroke="#4A3AFF"
-                strokeWidth={3}
-                fill="rgba(74, 58, 255, 0.15)"
-                listening={false}
-              />
+              <>
+                <Rect
+                  x={bounds.x - 6}
+                  y={bounds.y - 6}
+                  width={bounds.width + 12}
+                  height={bounds.height + 12}
+                  cornerRadius={sourceNode.cornerRadius || (sourceNode.type === 'Circle' ? bounds.width/2 : 6)}
+                  stroke="#4A3AFF"
+                  strokeWidth={3}
+                  fill="rgba(74, 58, 255, 0.12)"
+                  dash={[6, 3]}
+                  listening={false}
+                />
+                {/* Label above source */}
+                <Group x={bounds.centerX} y={bounds.y - 28}>
+                  <Rect
+                    x={-40}
+                    y={0}
+                    width={80}
+                    height={20}
+                    fill="#4A3AFF"
+                    cornerRadius={4}
+                    listening={false}
+                  />
+                  <Text
+                    text="SOURCE"
+                    fill="white"
+                    fontSize={11}
+                    fontStyle="bold"
+                    fontFamily="Inter, sans-serif"
+                    x={-40}
+                    y={3}
+                    width={80}
+                    align="center"
+                    listening={false}
+                  />
+                </Group>
+              </>
             );
           })()}
 
-          {getConnectionPoints().map(line => (
+          {/* Connection arrows - only visible in connect mode */}
+          {mode === 'connect' && getConnectionPoints().map(line => (
             <Group key={`conn-group-${line.id}`}>
               <Arrow
                 key={`conn-${line.id}`}
                 points={line.points}
-                stroke="#4A3AFF"
+                stroke={line.id === 'temp' ? '#4A3AFF' : '#4A3AFF'}
                 strokeWidth={line.id === 'temp' ? 2 : 4}
                 fill="#4A3AFF"
                 pointerLength={15}
@@ -903,6 +1026,7 @@ export const CanvasArea: React.FC = () => {
                 shadowOpacity={0.3}
                 listening={false}
               />
+              {/* Delete button at midpoint of established connections */}
               {mode === 'connect' && line.id !== 'temp' && (
                 <Group
                   x={(line.points[0] + line.points[2]) / 2}
@@ -921,13 +1045,12 @@ export const CanvasArea: React.FC = () => {
                     if (container) container.style.cursor = 'crosshair';
                   }}
                 >
-                  <Circle radius={10} fill="#EF4444" shadowColor="rgba(0,0,0,0.2)" shadowBlur={4} shadowOffsetY={2} />
-                  <Text text="×" fill="white" fontSize={16} fontStyle="bold" x={-5} y={-8} />
+                  <Circle radius={14} fill="#EF4444" shadowColor="rgba(0,0,0,0.3)" shadowBlur={6} shadowOffsetY={2} />
+                  <Text text="✕" fill="white" fontSize={14} fontStyle="bold" fontFamily="Inter, sans-serif" x={-5} y={-7} listening={false} />
                 </Group>
               )}
             </Group>
           ))}
-          {rootNodes.map(n => <RenderNode key={n.id} node={n} />)}
 
           {selectionRect && (
             <Rect
@@ -949,6 +1072,20 @@ export const CanvasArea: React.FC = () => {
           )}
         </Layer>
       </Stage>
+
+      {/* Connect mode status bar */}
+      {mode === 'connect' && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+          <div className="bg-slate-900/90 backdrop-blur-sm text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+            <div className={`w-3 h-3 rounded-full ${connectingSourceId ? 'bg-emerald-400 animate-pulse' : 'bg-blue-400'}`} />
+            <span className="text-sm font-medium">
+              {connectingSourceId
+                ? '✨ Now click the target frame to create the connection'
+                : '👆 Click an element inside a frame to start a connection'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {errorPopup && (
         <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 backdrop-blur-sm">
