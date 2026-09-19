@@ -35,6 +35,7 @@ export interface CanvasNode {
   scaleY?: number;
   rotation?: number;
   name?: string;
+  variantOf?: string;
   // Component features
   isMasterComponent?: boolean;
   componentName?: string;
@@ -94,6 +95,7 @@ interface CanvasState {
   removePropDefinition: (masterId: string, propId: string) => void;
   updatePropOverride: (instanceId: string, propId: string, value: any) => void;
   bindProp: (nodeId: string, field: string, propId: string | null) => void;
+  generateResponsiveVariants: (frameId: string) => void;
   
   setZoom: (zoom: number) => void;
   setPan: (pan: { x: number; y: number }) => void;
@@ -554,6 +556,127 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return n;
       })
     });
+  },
+
+  generateResponsiveVariants: (frameId: string) => {
+    const { nodes, past, setToastMessage } = get();
+    const sourceFrame = nodes.find(n => n.id === frameId && n.type === 'Frame');
+    if (!sourceFrame) return;
+
+    const sourceType = sourceFrame.frameType || 'desktop';
+    const sWidth = sourceFrame.width || (sourceType === 'desktop' ? (window.innerWidth || 1440) : sourceType === 'tablet' ? 768 : 393);
+    const sHeight = sourceFrame.height || (sourceType === 'desktop' ? (window.innerHeight || 900) : sourceType === 'tablet' ? 1024 : 852);
+
+    const allTypes: ('desktop' | 'tablet' | 'mobile')[] = ['desktop', 'tablet', 'mobile'];
+    const targetTypes = allTypes.filter(t => t !== sourceType);
+
+    const getDimensions = (type: 'desktop' | 'tablet' | 'mobile') => {
+      if (type === 'desktop') return { width: window.innerWidth || 1440, height: window.innerHeight || 900 };
+      if (type === 'tablet') return { width: 768, height: 1024 };
+      return { width: 393, height: 852 };
+    };
+
+    const getDescendants = (parentId: string): CanvasNode[] => {
+      const children = nodes.filter(n => n.parentId === parentId);
+      let list = [...children];
+      children.forEach(c => list.push(...getDescendants(c.id)));
+      return list;
+    };
+
+    const descendants = getDescendants(sourceFrame.id);
+    const baseName = (sourceFrame.name || 'Screen').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
+
+    let currentNodes = [...nodes];
+    const createdFrameIds: string[] = [];
+
+    targetTypes.forEach(targetType => {
+      // Find rightmost bound among root frames to position new frame nicely
+      const rootFrames = currentNodes.filter(n => n.type === 'Frame' && !n.parentId);
+      let rightmostX = sourceFrame.x + sWidth;
+      rootFrames.forEach(f => {
+        const edge = f.x + (f.width || 0);
+        if (edge > rightmostX) rightmostX = edge;
+      });
+
+      const { width: targetWidth, height: targetHeight } = getDimensions(targetType);
+      const newFrameId = uuidv4();
+      createdFrameIds.push(newFrameId);
+
+      const targetLabel = targetType.charAt(0).toUpperCase() + targetType.slice(1);
+      const newFrame: CanvasNode = {
+        ...sourceFrame,
+        id: newFrameId,
+        frameType: targetType,
+        name: `${baseName} - ${targetLabel}`,
+        variantOf: sourceFrame.variantOf || sourceFrame.id,
+        x: rightmostX + 60,
+        y: sourceFrame.y,
+        width: targetWidth,
+        height: targetHeight,
+        parentId: undefined,
+      };
+
+      const scaleX = targetWidth / sWidth;
+      const fontScale = Math.max(0.65, Math.min(1.2, scaleX));
+
+      // Map old node IDs to newly generated IDs
+      const idMap: Record<string, string> = {};
+      idMap[sourceFrame.id] = newFrameId;
+
+      descendants.forEach(d => {
+        idMap[d.id] = uuidv4();
+      });
+
+      const clonedDescendants: CanvasNode[] = descendants.map(child => {
+        const newId = idMap[child.id];
+        const newParentId = child.parentId ? idMap[child.parentId] || newFrameId : newFrameId;
+
+        const isDirectChildOfFrame = child.parentId === sourceFrame.id;
+        const nodeScaleX = isDirectChildOfFrame ? scaleX : 1;
+        const fontS = isDirectChildOfFrame ? fontScale : 1;
+
+        const updated: CanvasNode = {
+          ...child,
+          id: newId,
+          parentId: newParentId,
+          x: Math.round(child.x * nodeScaleX),
+          y: Math.round(child.y * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)),
+        };
+
+        if (child.width !== undefined) {
+          updated.width = Math.max(10, Math.round(child.width * nodeScaleX));
+        }
+        if (child.height !== undefined && child.type !== 'Text') {
+          updated.height = Math.max(10, Math.round(child.height * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)));
+        }
+        if (child.radius !== undefined) {
+          updated.radius = Math.max(4, Math.round(child.radius * nodeScaleX));
+        }
+        if (child.fontSize !== undefined) {
+          updated.fontSize = Math.max(10, Math.round(child.fontSize * fontS));
+        }
+        if (child.strokeWidth !== undefined) {
+          updated.strokeWidth = Math.max(1, Math.round(child.strokeWidth * fontS));
+        }
+        if (child.points !== undefined) {
+          updated.points = child.points.map((p, i) => Math.round(p * nodeScaleX));
+        }
+
+        return updated;
+      });
+
+      currentNodes.push(newFrame, ...clonedDescendants);
+    });
+
+    set({
+      past: [...past, nodes],
+      future: [],
+      nodes: currentNodes,
+      selectedIds: createdFrameIds,
+    });
+
+    const labels = targetTypes.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(' & ');
+    setToastMessage(`✨ Generated ${labels} screen variants!`);
   },
 
   setZoom: (zoom) => set({ zoom }),

@@ -24,7 +24,7 @@ const URLImage = ({ node, commonProps }: any) => {
 };
 
 export const CanvasArea: React.FC = () => {
-  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId } = useCanvasStore();
+  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants } = useCanvasStore();
   
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -559,8 +559,8 @@ export const CanvasArea: React.FC = () => {
             <Text
               x={0}
               y={-20}
-              text={resolvedNode.name ? `${resolvedNode.name} (${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)})` : `Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
-              fill="#64748b"
+              text={resolvedNode.name ? `${resolvedNode.name}${resolvedNode.variantOf ? ' • Variant' : ''} (${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)})` : `Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
+              fill={resolvedNode.variantOf ? "#4A3AFF" : "#64748b"}
               fontSize={12}
               fontStyle="500"
               fontFamily="Inter, sans-serif"

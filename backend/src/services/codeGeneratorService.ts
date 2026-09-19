@@ -30,8 +30,12 @@ export class CodeGeneratorService {
     const masterComponents = nodes.filter(n => n.isMasterComponent);
     const masterIds = new Set(masterComponents.map(m => m.id));
     
-    // Root frames that are NOT master components and NOT component instances = user's "pages"
-    let pages = nodes.filter(n => n.type === 'Frame' && !n.isMasterComponent && !n.parentId && !n.componentId);
+    // Root frames that are NOT master components, NOT component instances, and NOT variants = user's primary "pages"
+    const allRootFrames = nodes.filter(n => n.type === 'Frame' && !n.isMasterComponent && !n.parentId && !n.componentId);
+    let pages = allRootFrames.filter(n => !n.variantOf);
+    if (pages.length === 0 && allRootFrames.length > 0) {
+      pages = [allRootFrames[0]];
+    }
 
     // Collect truly loose root nodes: nodes with no parentId that are NOT page frames AND NOT master components.
     // Master components already get their own component files; they don't need to appear on a virtual page.
@@ -523,9 +527,20 @@ ${routeElements.join('\n')}
     return dynamicProps;
   }
 
-  private static getRouteForTarget(targetId: string, pageRouteMap: { frameId: string; route: string; componentName: string }[]): string {
-    const match = pageRouteMap.find(p => p.frameId === targetId);
+  private static getRouteForTarget(
+    targetId: string, 
+    pageRouteMap: { frameId: string; route: string; componentName: string }[],
+    nodesById?: Record<string, CanvasNode>
+  ): string {
+    let match = pageRouteMap.find(p => p.frameId === targetId);
     if (match) return match.route;
+
+    if (nodesById && nodesById[targetId] && nodesById[targetId].variantOf) {
+      const parentFrameId = nodesById[targetId].variantOf;
+      match = pageRouteMap.find(p => p.frameId === parentFrameId);
+      if (match) return match.route;
+    }
+
     if (targetId === 'virtual_root_page') return '/';
     return `/${targetId}`;
   }
@@ -572,7 +587,7 @@ ${routeElements.join('\n')}
       }
     }
 
-    const targetRoute = targetLinkId ? this.getRouteForTarget(targetLinkId, pageRouteMap) : '';
+    const targetRoute = targetLinkId ? this.getRouteForTarget(targetLinkId, pageRouteMap, nodesById) : '';
 
     // If it's an instance of a component
     if (node.componentId) {
@@ -757,9 +772,21 @@ export default function ${componentName}(props) {
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
     pageName: string = 'Page'
   ): string {
-    const children = allNodes.filter(n => n.parentId === page.id);
-    
-    // Find imports for instances used in this page
+    // Find all variant frames for this primary page
+    const baseName = (page.name || '').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
+    const variantFrames = allNodes.filter(n => 
+      n.type === 'Frame' && 
+      !n.parentId && 
+      n.id !== page.id &&
+      (n.variantOf === page.id || (n.name && baseName && n.name.startsWith(baseName)))
+    );
+
+    // Group frames by device type
+    const desktopFrame = page.frameType === 'desktop' ? page : variantFrames.find(v => v.frameType === 'desktop') || page;
+    const tabletFrame = page.frameType === 'tablet' ? page : variantFrames.find(v => v.frameType === 'tablet');
+    const mobileFrame = page.frameType === 'mobile' ? page : variantFrames.find(v => v.frameType === 'mobile');
+
+    // Collect component instances used across all frame variants
     const instancesUsed = new Set<string>();
     const findInstances = (nodeId: string) => {
       const nodeChildren = allNodes.filter(n => n.parentId === nodeId);
@@ -776,16 +803,39 @@ export default function ${componentName}(props) {
         }
       });
     };
-    findInstances(page.id);
-    
+
+    if (desktopFrame) findInstances(desktopFrame.id);
+    if (tabletFrame) findInstances(tabletFrame.id);
+    if (mobileFrame) findInstances(mobileFrame.id);
+
     const imports = Array.from(instancesUsed).map(name => `import ${name} from '../components/${name}';`).join('\n');
-    
-    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, page, pages, pageRouteMap)).join('\n      ');
-    
-    const pageWidth = Math.round(page.width || 1440);
-    const pageHeight = Math.round(page.height || 900);
-    const bgColor = page.fill || '#ffffff';
-    return `import React, { useState, useEffect } from 'react';
+
+    // Generate JSX for children of each frame
+    const desktopChildren = allNodes.filter(n => n.parentId === desktopFrame.id);
+    const desktopJsx = desktopChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, desktopFrame, pages, pageRouteMap)).join('\n        ');
+
+    const tabletChildren = tabletFrame ? allNodes.filter(n => n.parentId === tabletFrame.id) : [];
+    const tabletJsx = tabletFrame ? tabletChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, tabletFrame, pages, pageRouteMap)).join('\n        ') : '';
+
+    const mobileChildren = mobileFrame ? allNodes.filter(n => n.parentId === mobileFrame.id) : [];
+    const mobileJsx = mobileFrame ? mobileChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, mobileFrame, pages, pageRouteMap)).join('\n        ') : '';
+
+    const dW = Math.round(desktopFrame.width || 1440);
+    const dH = Math.round(desktopFrame.height || 900);
+    const dBg = desktopFrame.fill || '#ffffff';
+
+    const tW = tabletFrame ? Math.round(tabletFrame.width || 768) : 768;
+    const tH = tabletFrame ? Math.round(tabletFrame.height || 1024) : 1024;
+    const tBg = tabletFrame ? (tabletFrame.fill || '#ffffff') : '#ffffff';
+
+    const mW = mobileFrame ? Math.round(mobileFrame.width || 393) : 393;
+    const mH = mobileFrame ? Math.round(mobileFrame.height || 852) : 852;
+    const mBg = mobileFrame ? (mobileFrame.fill || '#ffffff') : '#ffffff';
+
+    const hasVariants = !!(tabletFrame || mobileFrame);
+
+    if (!hasVariants) {
+      return `import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 ${imports}
 
@@ -796,8 +846,8 @@ export default function ${pageName}() {
 
   useEffect(() => {
     const updateScale = () => {
-      setScaleX(window.innerWidth / ${pageWidth});
-      setScaleY(window.innerHeight / ${pageHeight});
+      setScaleX(window.innerWidth / ${dW});
+      setScaleY(window.innerHeight / ${dH});
     };
     updateScale();
     window.addEventListener('resize', updateScale);
@@ -805,17 +855,111 @@ export default function ${pageName}() {
   }, []);
 
   return (
-    <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${bgColor}' }}>
+    <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${dBg}' }}>
       <div 
         className="relative" 
         style={{ 
-          width: '${pageWidth}px', 
-          height: '${pageHeight}px',
+          width: '${dW}px', 
+          height: '${dH}px',
           transform: \`scale(\${scaleX}, \${scaleY})\`,
           transformOrigin: 'top left'
         }}
       >
-        ${childrenJsx}
+        ${desktopJsx}
+      </div>
+    </div>
+  );
+}
+`;
+    }
+
+    return `import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+${imports}
+
+export default function ${pageName}() {
+  const navigate = useNavigate();
+  const [screenType, setScreenType] = useState('desktop');
+  const [scaleX, setScaleX] = useState(1);
+  const [scaleY, setScaleY] = useState(1);
+
+  useEffect(() => {
+    const updateScale = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      let currentType = 'desktop';
+      let frameW = ${dW};
+      let frameH = ${dH};
+
+      ${mobileFrame ? `if (width <= 640) {
+        currentType = 'mobile';
+        frameW = ${mW};
+        frameH = ${mH};
+      } else ` : ''}${tabletFrame ? `if (width <= 1024) {
+        currentType = 'tablet';
+        frameW = ${tW};
+        frameH = ${tH};
+      }` : ''}
+
+      setScreenType(currentType);
+      setScaleX(width / frameW);
+      setScaleY(height / frameH);
+    };
+
+    updateScale();
+    window.addEventListener('resize', updateScale);
+    return () => window.removeEventListener('resize', updateScale);
+  }, []);
+
+  ${mobileFrame ? `if (screenType === 'mobile') {
+    return (
+      <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${mBg}' }}>
+        <div 
+          className="relative" 
+          style={{ 
+            width: '${mW}px', 
+            height: '${mH}px',
+            transform: \`scale(\${scaleX}, \${scaleY})\`,
+            transformOrigin: 'top left'
+          }}
+        >
+          ${mobileJsx}
+        </div>
+      </div>
+    );
+  }` : ''}
+
+  ${tabletFrame ? `if (screenType === 'tablet') {
+    return (
+      <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${tBg}' }}>
+        <div 
+          className="relative" 
+          style={{ 
+            width: '${tW}px', 
+            height: '${tH}px',
+            transform: \`scale(\${scaleX}, \${scaleY})\`,
+            transformOrigin: 'top left'
+          }}
+        >
+          ${tabletJsx}
+        </div>
+      </div>
+    );
+  }` : ''}
+
+  return (
+    <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${dBg}' }}>
+      <div 
+        className="relative" 
+        style={{ 
+          width: '${dW}px', 
+          height: '${dH}px',
+          transform: \`scale(\${scaleX}, \${scaleY})\`,
+          transformOrigin: 'top left'
+        }}
+      >
+        ${desktopJsx}
       </div>
     </div>
   );

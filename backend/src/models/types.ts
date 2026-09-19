@@ -32,6 +32,7 @@ export interface CanvasNode {
   scaleY?: number;
   rotation?: number;
   name?: string;
+  variantOf?: string;
   // Component features
   isMasterComponent?: boolean;
   componentName?: string;

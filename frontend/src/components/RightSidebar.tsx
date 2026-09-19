@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor } from 'lucide-react';
+import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -80,6 +80,7 @@ export const RightSidebar: React.FC = () => {
   const updatePropOverride = useCanvasStore((state) => state.updatePropOverride);
   const bindProp = useCanvasStore((state) => state.bindProp);
   const updatePropDefinition = useCanvasStore((state) => state.updatePropDefinition);
+  const generateResponsiveVariants = useCanvasStore((state) => state.generateResponsiveVariants);
 
   const [activeVariantTab, setActiveVariantTab] = useState<'default' | 'hover' | 'active' | 'disabled'>('default');
   const [showCodePreview, setShowCodePreview] = useState(false);
@@ -226,15 +227,43 @@ export const RightSidebar: React.FC = () => {
       {selectedNodes.length === 1 && (
         <div className="flex flex-col gap-3 pb-4 border-b border-slate-100">
           {primaryNode.type === 'Frame' && (
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Frame Name</label>
-              <input 
-                type="text" 
-                value={primaryNode.name || ''} 
-                onChange={(e) => updateNodes([primaryNode.id], { name: e.target.value })}
-                className="border border-slate-300 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-[#4A3AFF]"
-                placeholder="e.g. Home Screen"
-              />
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Frame Name</label>
+                <input 
+                  type="text" 
+                  value={primaryNode.name || ''} 
+                  onChange={(e) => updateNodes([primaryNode.id], { name: e.target.value })}
+                  className="border border-slate-300 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-[#4A3AFF]"
+                  placeholder="e.g. Home Screen"
+                />
+                {primaryNode.variantOf && (() => {
+                  const parentPage = nodes.find(n => n.id === primaryNode.variantOf);
+                  return (
+                    <div className="flex items-center justify-between p-2 bg-indigo-50/60 border border-indigo-100 rounded-lg text-xs mt-2">
+                      <span className="text-slate-600 font-medium">Linked Screen: <strong className="text-[#4A3AFF]">{parentPage?.name || 'Primary Page'}</strong></span>
+                      <span className="px-1.5 py-0.5 bg-[#4A3AFF] text-white text-[10px] font-bold rounded uppercase">Variant</span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                  <span>Responsive Layout</span>
+                  <span className="text-[10px] text-[#4A3AFF] font-bold">Auto-Reflow</span>
+                </label>
+                <button
+                  onClick={() => generateResponsiveVariants(primaryNode.id)}
+                  className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg transition-colors text-xs flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Smartphone size={15} className="text-emerald-400" />
+                  Generate Screen Variants ({primaryNode.frameType === 'desktop' ? 'Tablet & Mobile' : primaryNode.frameType === 'tablet' ? 'Desktop & Mobile' : 'Desktop & Tablet'})
+                </button>
+                <p className="text-[11px] text-slate-400 leading-snug">
+                  Creates side-by-side adapted frames so you can visually inspect & customize your design across all screen sizes.
+                </p>
+              </div>
             </div>
           )}
 
