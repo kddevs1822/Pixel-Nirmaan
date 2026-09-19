@@ -10,16 +10,30 @@ export const TopBar: React.FC = () => {
 
   const handlePreview = () => {
     const selectedNode = selectedIds.length > 0 ? nodes.find(n => n.id === selectedIds[0]) : null;
-    let targetFrameId = null;
+    let targetFrameId: string | null = null;
     
     if (selectedNode) {
-      if (selectedNode.type === 'Frame') targetFrameId = selectedNode.id;
-      else if (selectedNode.parentId) targetFrameId = selectedNode.parentId;
+      if (selectedNode.type === 'Frame') {
+        // Resolve variants to their primary frame
+        targetFrameId = selectedNode.variantOf || selectedNode.id;
+      } else if (selectedNode.parentId) {
+        const parentFrame = nodes.find(n => n.id === selectedNode.parentId);
+        if (parentFrame) {
+          targetFrameId = parentFrame.variantOf || parentFrame.id;
+        }
+      }
     }
     
     if (!targetFrameId) {
-      const firstFrame = nodes.find(n => n.type === 'Frame');
-      if (firstFrame) targetFrameId = firstFrame.id;
+      // Prefer root non-variant frames
+      const rootFrame = nodes.find(n => n.type === 'Frame' && !n.parentId && !n.variantOf);
+      if (rootFrame) {
+        targetFrameId = rootFrame.id;
+      } else {
+        // Fallback: any frame, resolved to primary
+        const anyFrame = nodes.find(n => n.type === 'Frame' && !n.parentId);
+        if (anyFrame) targetFrameId = anyFrame.variantOf || anyFrame.id;
+      }
     }
     
     if (targetFrameId) {

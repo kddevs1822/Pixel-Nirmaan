@@ -5,7 +5,7 @@ import type { CanvasNode } from '../store/useCanvasStore';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import useImage from 'use-image';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, Monitor, Tablet, Smartphone } from 'lucide-react';
 
 const URLImage = ({ node, commonProps }: any) => {
   const [image] = useImage(node.src || '');
@@ -32,6 +32,7 @@ export const CanvasArea: React.FC = () => {
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [previewDeviceOverride, setPreviewDeviceOverride] = useState<'desktop'|'tablet'|'mobile'|null>(null);
   const [selectionRect, setSelectionRect] = useState<{ startX: number, startY: number, x: number, y: number, width: number, height: number } | null>(null);
   
   useEffect(() => {
@@ -307,7 +308,11 @@ export const CanvasArea: React.FC = () => {
     e.cancelBubble = true;
     if (mode === 'preview') {
       if (node.linkTo) {
-        setPreviewFrameId(node.linkTo);
+        const targetNode = nodes.find(n => n.id === node.linkTo);
+        if (!targetNode) return;
+        // Always resolve to the primary (non-variant) target frame
+        const primaryTargetId = targetNode.variantOf || targetNode.id;
+        setPreviewFrameId(primaryTargetId);
       }
       return;
     }
@@ -689,32 +694,109 @@ export const CanvasArea: React.FC = () => {
   };
 
   if (mode === 'preview' && previewFrameId) {
-    const previewFrame = nodes.find(n => n.id === previewFrameId);
-    if (!previewFrame) return null;
+    const selectedFrame = nodes.find(n => n.id === previewFrameId);
+    if (!selectedFrame) return null;
+
+    const primaryFrame = selectedFrame.variantOf 
+      ? nodes.find(n => n.id === selectedFrame.variantOf) || selectedFrame 
+      : selectedFrame;
+
+    const baseName = (primaryFrame.name || '').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
+    const variantFrames = nodes.filter(n =>
+      n.type === 'Frame' &&
+      !n.parentId &&
+      n.id !== primaryFrame.id &&
+      (n.variantOf === primaryFrame.id || (n.name && baseName && n.name.startsWith(baseName)))
+    );
+
+    const desktopFrame = primaryFrame.frameType === 'desktop' ? primaryFrame : variantFrames.find(v => v.frameType === 'desktop') || primaryFrame;
+    const tabletFrame = primaryFrame.frameType === 'tablet' ? primaryFrame : variantFrames.find(v => v.frameType === 'tablet');
+    const mobileFrame = primaryFrame.frameType === 'mobile' ? primaryFrame : variantFrames.find(v => v.frameType === 'mobile');
+
+    // Use manual override if set, otherwise auto-detect from window width
+    let activePreviewFrame = desktopFrame;
+    if (previewDeviceOverride === 'mobile' && mobileFrame) {
+      activePreviewFrame = mobileFrame;
+    } else if (previewDeviceOverride === 'tablet' && tabletFrame) {
+      activePreviewFrame = tabletFrame;
+    } else if (previewDeviceOverride === 'desktop') {
+      activePreviewFrame = desktopFrame;
+    } else if (!previewDeviceOverride) {
+      // Auto mode based on window width
+      if (stageSize.width <= 640 && mobileFrame) {
+        activePreviewFrame = mobileFrame;
+      } else if (stageSize.width <= 1024 && tabletFrame) {
+        activePreviewFrame = tabletFrame;
+      }
+    }
+
+    const padding = 40;
+    const previewScaleX = (stageSize.width - padding * 2) / (activePreviewFrame.width || 1);
+    const previewScaleY = ((stageSize.height - 56) - padding * 2) / (activePreviewFrame.height || 1);
+    const fitScale = Math.min(previewScaleX, previewScaleY, 1);
     
-    const padding = 60;
-    const scaleX = (window.innerWidth - padding * 2) / (previewFrame.width || 1);
-    const scaleY = (window.innerHeight - padding * 2) / (previewFrame.height || 1);
-    const fitScale = Math.min(scaleX, scaleY, 1);
-    
-    const centeredX = (window.innerWidth - (previewFrame.width || 0) * fitScale) / 2;
+    const centeredX = (stageSize.width - (activePreviewFrame.width || 0) * fitScale) / 2;
     const centeredY = 20;
 
-    const modifiedPreviewFrame = { ...previewFrame, x: 0, y: 0 };
+    const modifiedPreviewFrame = { ...activePreviewFrame, x: 0, y: 0 };
+    const activeDevice = activePreviewFrame.frameType || 'desktop';
+
+    const deviceButtons: { key: 'desktop'|'tablet'|'mobile', icon: React.ReactNode, label: string, available: boolean }[] = [
+      { key: 'desktop', icon: <Monitor size={16} />, label: 'Desktop', available: !!desktopFrame },
+      { key: 'tablet', icon: <Tablet size={16} />, label: 'Tablet', available: !!tabletFrame },
+      { key: 'mobile', icon: <Smartphone size={16} />, label: 'Mobile', available: !!mobileFrame },
+    ];
 
     return (
       <div className="fixed inset-0 bg-black z-50 flex flex-col">
         <div className="h-14 flex items-center justify-between px-6 bg-slate-900 text-white shrink-0">
-          <span className="font-semibold text-sm">Previewing: {previewFrame.name || previewFrame.frameType}</span>
-          <button 
-            onClick={() => setMode('select')}
-            className="flex items-center gap-2 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors text-sm font-medium"
-          >
-            <X size={16} /> Exit Preview
-          </button>
+          <div className="flex items-center gap-3">
+            <span className="font-semibold text-sm">Previewing: {primaryFrame.name || 'Screen'}</span>
+            <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-indigo-600 text-white uppercase tracking-wide">
+              {activeDevice.toUpperCase()} ({Math.round(activePreviewFrame.width || 0)}×{Math.round(activePreviewFrame.height || 0)})
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Device dimension toggle buttons */}
+            <div className="flex items-center bg-slate-800 rounded-lg p-0.5 gap-0.5">
+              {deviceButtons.map(btn => (
+                <button
+                  key={btn.key}
+                  onClick={() => setPreviewDeviceOverride(btn.key)}
+                  disabled={!btn.available}
+                  title={btn.available ? btn.label : `${btn.label} (no variant)`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    activeDevice === btn.key
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : btn.available
+                        ? 'text-slate-400 hover:text-white hover:bg-slate-700'
+                        : 'text-slate-600 cursor-not-allowed opacity-50'
+                  }`}
+                >
+                  {btn.icon}
+                  <span className="hidden sm:inline">{btn.label}</span>
+                </button>
+              ))}
+              {previewDeviceOverride && (
+                <button
+                  onClick={() => setPreviewDeviceOverride(null)}
+                  title="Auto (follow window size)"
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-700 transition-all ml-0.5 border-l border-slate-700 pl-2"
+                >
+                  Auto
+                </button>
+              )}
+            </div>
+            <button 
+              onClick={() => { setMode('select'); setPreviewDeviceOverride(null); }}
+              className="flex items-center gap-2 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors text-sm font-medium ml-2"
+            >
+              <X size={16} /> Exit Preview
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-hidden">
-          <Stage width={window.innerWidth} height={window.innerHeight - 56}>
+          <Stage width={stageSize.width} height={stageSize.height - 56}>
             <Layer x={centeredX} y={centeredY} scaleX={fitScale} scaleY={fitScale}>
               <RenderNode node={modifiedPreviewFrame} isPreview={true} />
             </Layer>
@@ -787,9 +869,50 @@ export const CanvasArea: React.FC = () => {
       }
     };
 
+    const drawnPairs = new Set<string>();
+
     nodes.forEach(node => {
       if (node.linkTo && node.parentId) {
-        const targetFrame = nodes.find(n => n.id === node.linkTo);
+        const sourceFrame = nodes.find(n => n.id === node.parentId);
+        if (!sourceFrame || sourceFrame.type !== 'Frame') return;
+
+        // Determine the source frame's device type
+        const sourceFrameType = sourceFrame.frameType || 'desktop';
+
+        // Resolve target: find matching variant of the target for this device type
+        let targetFrame = nodes.find(n => n.id === node.linkTo);
+        if (!targetFrame) return;
+
+        // Get the primary target ID
+        const primaryTargetId = targetFrame.variantOf || targetFrame.id;
+
+        // If source is a variant frame, try to find matching variant of the target
+        if (sourceFrame.variantOf) {
+          const matchingVariant = nodes.find(n =>
+            n.variantOf === primaryTargetId &&
+            n.frameType === sourceFrameType &&
+            n.type === 'Frame'
+          );
+          if (matchingVariant) {
+            targetFrame = matchingVariant;
+          } else {
+            // Fall back to the primary target
+            const primaryTarget = nodes.find(n => n.id === primaryTargetId);
+            if (primaryTarget) targetFrame = primaryTarget;
+          }
+        } else {
+          // Source is primary — resolve target to primary too
+          if (targetFrame.variantOf) {
+            const primaryTarget = nodes.find(n => n.id === targetFrame!.variantOf);
+            if (primaryTarget) targetFrame = primaryTarget;
+          }
+        }
+
+        // Deduplicate: only one arrow per source-frame → target-frame pair
+        const pairKey = `${sourceFrame.id}->${targetFrame.id}`;
+        if (drawnPairs.has(pairKey)) return;
+        drawnPairs.add(pairKey);
+
         const sourceBounds = getNodeCanvasBounds(node.id);
         if (sourceBounds && targetFrame && targetFrame.type === 'Frame') {
           const start = { x: sourceBounds.centerX, y: sourceBounds.centerY };
@@ -1009,22 +1132,22 @@ export const CanvasArea: React.FC = () => {
             );
           })()}
 
-          {/* Connection arrows - only visible in connect mode */}
-          {mode === 'connect' && getConnectionPoints().map(line => (
+          {/* Connection arrows - visible in both select and connect modes */}
+          {(mode === 'connect' || mode === 'select') && getConnectionPoints().map(line => (
             <Group key={`conn-group-${line.id}`}>
               <Arrow
                 key={`conn-${line.id}`}
                 points={line.points}
-                stroke={line.id === 'temp' ? '#4A3AFF' : '#4A3AFF'}
-                strokeWidth={line.id === 'temp' ? 2 : 4}
-                fill="#4A3AFF"
-                pointerLength={15}
-                pointerWidth={15}
+                stroke={line.id === 'temp' ? '#4A3AFF' : (mode === 'select' ? '#94A3B8' : '#4A3AFF')}
+                strokeWidth={line.id === 'temp' ? 2 : (mode === 'select' ? 2 : 4)}
+                fill={mode === 'select' ? '#94A3B8' : '#4A3AFF'}
+                pointerLength={mode === 'select' ? 10 : 15}
+                pointerWidth={mode === 'select' ? 10 : 15}
                 dash={line.id === 'temp' ? [6, 6] : undefined}
-                opacity={line.id === 'temp' ? 0.6 : 1}
-                shadowColor="#4A3AFF"
-                shadowBlur={line.id === 'temp' ? 0 : 8}
-                shadowOpacity={0.3}
+                opacity={line.id === 'temp' ? 0.6 : (mode === 'select' ? 0.5 : 1)}
+                shadowColor={mode === 'select' ? undefined : '#4A3AFF'}
+                shadowBlur={line.id === 'temp' ? 0 : (mode === 'select' ? 0 : 8)}
+                shadowOpacity={mode === 'select' ? 0 : 0.3}
                 listening={false}
               />
               {/* Delete button at midpoint of established connections */}
