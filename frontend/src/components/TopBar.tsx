@@ -139,6 +139,40 @@ export const TopBar: React.FC = () => {
     }
   };
 
+  const [isSelectingFolder, setIsSelectingFolder] = useState(false);
+
+  const handleBrowseFolder = async () => {
+    setIsSelectingFolder(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/select-folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.path) {
+          setOutputPath(data.path);
+          setIsSelectingFolder(false);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("Backend folder picker unavailable, checking browser API...", e);
+    }
+
+    if ('showDirectoryPicker' in window) {
+      try {
+        const handle = await (window as any).showDirectoryPicker();
+        if (handle && handle.name) {
+          setOutputPath(handle.name);
+        }
+      } catch (err) {
+        // User cancelled
+      }
+    }
+    setIsSelectingFolder(false);
+  };
+
   const handleSaveOutputPath = () => {
     localStorage.setItem('pixelnirmaan-output-path', outputPath.trim());
     setShowFolderModal(false);
@@ -295,7 +329,7 @@ export const TopBar: React.FC = () => {
       {/* Folder path modal */}
       {showFolderModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl w-[480px] p-6">
+          <div className="bg-white rounded-2xl shadow-xl w-[520px] p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{backgroundColor: '#4A3AFF20'}}>
                 <FolderOutput size={20} style={{color: '#4A3AFF'}} />
@@ -308,34 +342,48 @@ export const TopBar: React.FC = () => {
             
             <div className="mb-4">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">Output Directory Path</label>
-              <input
-                type="text"
-                value={outputPath}
-                onChange={(e) => setOutputPath(e.target.value)}
-                placeholder="e.g., D:\Projects\my-website"
-                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:border-transparent font-mono"
-                style={{ focusRingColor: '#4A3AFF' } as any}
-                onFocus={(e) => e.target.style.borderColor = '#4A3AFF'}
-                onBlur={(e) => e.target.style.borderColor = '#cbd5e1'}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveOutputPath(); }}
-                autoFocus
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={outputPath}
+                  onChange={(e) => setOutputPath(e.target.value)}
+                  placeholder="e.g., C:\Users\DEV\Downloads\pixelnirmaan-export"
+                  className="flex-1 px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:border-transparent font-mono"
+                  style={{ focusRingColor: '#4A3AFF' } as any}
+                  onFocus={(e) => e.target.style.borderColor = '#4A3AFF'}
+                  onBlur={(e) => e.target.style.borderColor = '#cbd5e1'}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveOutputPath(); }}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={handleBrowseFolder}
+                  disabled={isSelectingFolder}
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium text-sm transition-colors shrink-0 disabled:opacity-50 cursor-pointer shadow-sm"
+                  title="Browse folder from your device"
+                >
+                  <FolderOpen size={16} className="text-slate-500" />
+                  <span>{isSelectingFolder ? 'Selecting...' : 'Browse...'}</span>
+                </button>
+              </div>
               <p className="mt-1.5 text-xs text-slate-500">
-                Files will be written directly to this folder. If a dev server is running, changes will hot-reload.
+                Click <strong>Browse...</strong> to pick a folder on your device, or paste a folder path above.
               </p>
             </div>
 
             <div className="flex justify-end gap-2">
               <button
+                type="button"
                 onClick={() => setShowFolderModal(false)}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleSaveOutputPath}
                 disabled={!outputPath.trim()}
-                className="px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50"
+                className="px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer"
                 style={{backgroundColor: '#4A3AFF'}}
                 onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
                 onMouseOut={(e) => e.currentTarget.style.opacity = '1'}

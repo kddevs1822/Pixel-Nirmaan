@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CodeGeneratorService } from '../services/codeGeneratorService';
+import { FolderPickerService } from '../services/folderPickerService';
 import { CanvasNode } from '../models/types';
 
 export const generateCode = (req: Request, res: Response) => {
@@ -76,6 +77,20 @@ export const generateToFolder = (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error exporting code to folder:', error);
     return res.status(500).json({ error: 'Internal server error during code export' });
+  }
+};
+
+export const selectFolder = async (req: Request, res: Response) => {
+  try {
+    const selectedPath = await FolderPickerService.selectFolder();
+    if (selectedPath) {
+      return res.status(200).json({ path: selectedPath });
+    } else {
+      return res.status(200).json({ path: null, message: 'Selection cancelled or unavailable' });
+    }
+  } catch (error) {
+    console.error('Error selecting folder:', error);
+    return res.status(500).json({ error: 'Failed to open folder picker' });
   }
 };
 
