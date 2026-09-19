@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useCanvasStore } from '../store/useCanvasStore';
@@ -7,6 +7,23 @@ import { useCanvasStore } from '../store/useCanvasStore';
 export const TopBar: React.FC = () => {
   const { undo, redo, zoom, setZoom, past, future, selectedIds, nodes, setMode, setPreviewFrameId } = useCanvasStore();
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [outputPath, setOutputPath] = useState(() => localStorage.getItem('pixelnirmaan-output-path') || '');
+  const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
+  const [exportMessage, setExportMessage] = useState('');
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handlePreview = () => {
     const selectedNode = selectedIds.length > 0 ? nodes.find(n => n.id === selectedIds[0]) : null;
@@ -44,7 +61,8 @@ export const TopBar: React.FC = () => {
     }
   };
 
-  const handleExportCode = async () => {
+  const handleExportZip = async () => {
+    setShowExportMenu(false);
     try {
       const response = await fetch('http://localhost:5000/api/generate', {
         method: 'POST',
@@ -84,8 +102,58 @@ export const TopBar: React.FC = () => {
     }
   };
 
+  const handleExportToFolder = async () => {
+    if (!outputPath.trim()) {
+      setShowExportMenu(false);
+      setShowFolderModal(true);
+      return;
+    }
+
+    setShowExportMenu(false);
+    setExportStatus('exporting');
+    setExportMessage('');
+
+    try {
+      const response = await fetch('http://localhost:5000/api/generate-to-folder', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ nodes, outputPath: outputPath.trim() })
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `Export failed: ${response.statusText}`);
+      }
+
+      setExportStatus('success');
+      setExportMessage(`${data.fileCount} files exported`);
+      setTimeout(() => { setExportStatus('idle'); setExportMessage(''); }, 3000);
+    } catch (error: any) {
+      console.error("Export to folder error:", error);
+      setExportStatus('error');
+      setExportMessage(error.message);
+      setTimeout(() => { setExportStatus('idle'); setExportMessage(''); }, 4000);
+    }
+  };
+
+  const handleSaveOutputPath = () => {
+    localStorage.setItem('pixelnirmaan-output-path', outputPath.trim());
+    setShowFolderModal(false);
+    if (outputPath.trim()) {
+      handleExportToFolder();
+    }
+  };
+
+  const handleChangeFolder = () => {
+    setShowExportMenu(false);
+    setShowFolderModal(true);
+  };
+
   return (
-    <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-10 shadow-sm relative shrink-0">
+    <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-30 shadow-sm relative shrink-0">
       <div className="flex items-center gap-2">
         <img src="/logo.jpg" alt="PixelNirmaan Logo" className="w-8 h-8 object-contain mr-2 rounded" />
         <h1 className="font-heading font-bold text-lg text-slate-800 tracking-tight">PixelNirmaan</h1>
@@ -128,11 +196,156 @@ export const TopBar: React.FC = () => {
           <Play size={16} />
           <span>Preview</span>
         </button>
-        <button onClick={handleExportCode} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-white text-sm font-medium transition-colors" style={{backgroundColor: '#4A3AFF'}} onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'} onMouseOut={(e) => e.currentTarget.style.opacity = '1'}>
-          <Download size={16} />
-          <span>Export Code</span>
-        </button>
+
+        {/* Export button with dropdown */}
+        <div className="relative" ref={exportMenuRef}>
+          <div className="flex">
+            <button 
+              type="button"
+              onClick={outputPath ? handleExportToFolder : handleExportZip} 
+              className="flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-l-lg text-white text-sm font-medium transition-colors cursor-pointer" 
+              style={{backgroundColor: '#4A3AFF'}} 
+              onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'} 
+              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+              title={outputPath ? `Export to: ${outputPath}` : 'Download as ZIP'}
+            >
+              {outputPath ? <FolderOutput size={16} /> : <Download size={16} />}
+              <span>{exportStatus === 'exporting' ? 'Exporting...' : outputPath ? 'Export Code' : 'Download ZIP'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowExportMenu(prev => !prev);
+              }}
+              className="flex items-center px-2.5 py-1.5 rounded-r-lg text-white text-sm transition-colors border-l border-white/20 cursor-pointer hover:bg-white/10"
+              style={{backgroundColor: '#4A3AFF'}}
+              onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'} 
+              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+              title="Export Options"
+            >
+              <ChevronDown size={16} className="pointer-events-none" />
+            </button>
+          </div>
+
+          {/* Dropdown menu */}
+          {showExportMenu && (
+            <div className="absolute right-0 top-full mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden z-50">
+              <button
+                type="button"
+                onClick={handleExportZip}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <Download size={16} className="text-slate-500 shrink-0" />
+                <div>
+                  <div className="font-medium text-slate-800">Download ZIP</div>
+                  <div className="text-xs text-slate-500">Download as a zip file</div>
+                </div>
+              </button>
+              <div className="h-px bg-slate-100" />
+              <button
+                type="button"
+                onClick={outputPath ? handleExportToFolder : handleChangeFolder}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <FolderOutput size={16} className="text-slate-500 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-slate-800">Export to Folder</div>
+                  {outputPath ? (
+                    <div className="text-xs text-indigo-500 truncate">{outputPath}</div>
+                  ) : (
+                    <div className="text-xs text-slate-500">Set up output directory</div>
+                  )}
+                </div>
+              </button>
+              {outputPath && (
+                <>
+                  <div className="h-px bg-slate-100" />
+                  <button
+                    type="button"
+                    onClick={handleChangeFolder}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    <FolderOpen size={16} className="text-slate-400 shrink-0" />
+                    <span className="text-slate-600">Change Folder...</span>
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Export status toast */}
+        {exportStatus !== 'idle' && (
+          <div className={`fixed top-16 right-4 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium transition-all ${
+            exportStatus === 'success' ? 'bg-emerald-500 text-white' : 
+            exportStatus === 'error' ? 'bg-red-500 text-white' :
+            'bg-slate-800 text-white'
+          }`}>
+            {exportStatus === 'success' && <Check size={16} />}
+            {exportStatus === 'error' && <X size={16} />}
+            {exportStatus === 'exporting' && (
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            )}
+            <span>{exportMessage || 'Exporting...'}</span>
+          </div>
+        )}
       </div>
+
+      {/* Folder path modal */}
+      {showFolderModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-[480px] p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{backgroundColor: '#4A3AFF20'}}>
+                <FolderOutput size={20} style={{color: '#4A3AFF'}} />
+              </div>
+              <div>
+                <h3 className="font-heading font-bold text-lg text-slate-800">Export to Folder</h3>
+                <p className="text-xs text-slate-500">Set the output directory for your generated code</p>
+              </div>
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Output Directory Path</label>
+              <input
+                type="text"
+                value={outputPath}
+                onChange={(e) => setOutputPath(e.target.value)}
+                placeholder="e.g., D:\Projects\my-website"
+                className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:border-transparent font-mono"
+                style={{ focusRingColor: '#4A3AFF' } as any}
+                onFocus={(e) => e.target.style.borderColor = '#4A3AFF'}
+                onBlur={(e) => e.target.style.borderColor = '#cbd5e1'}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveOutputPath(); }}
+                autoFocus
+              />
+              <p className="mt-1.5 text-xs text-slate-500">
+                Files will be written directly to this folder. If a dev server is running, changes will hot-reload.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowFolderModal(false)}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveOutputPath}
+                disabled={!outputPath.trim()}
+                className="px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50"
+                style={{backgroundColor: '#4A3AFF'}}
+                onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'}
+                onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
+              >
+                Save & Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showShortcuts && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

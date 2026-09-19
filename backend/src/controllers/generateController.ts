@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import { CodeGeneratorService } from '../services/codeGeneratorService';
 import { CanvasNode } from '../models/types';
 
@@ -38,3 +40,42 @@ export const generateCode = (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Internal server error during code generation' });
   }
 };
+
+export const generateToFolder = (req: Request, res: Response) => {
+  try {
+    const { nodes, outputPath } = req.body as { nodes: CanvasNode[]; outputPath: string };
+
+    if (!nodes || !Array.isArray(nodes)) {
+      return res.status(400).json({ error: 'Invalid payload: nodes array is required' });
+    }
+
+    if (!outputPath || typeof outputPath !== 'string' || outputPath.trim() === '') {
+      return res.status(400).json({ error: 'Invalid payload: outputPath must be a non-empty string' });
+    }
+
+    const files = CodeGeneratorService.generate(nodes);
+    const fileEntries = Object.entries(files);
+
+    for (const [relativePath, content] of fileEntries) {
+      const fullPath = path.resolve(outputPath, relativePath);
+      const dir = path.dirname(fullPath);
+      fs.mkdirSync(dir, { recursive: true });
+
+      if (content.startsWith('data:image/')) {
+        const base64Data = content.split(',')[1] || '';
+        fs.writeFileSync(fullPath, Buffer.from(base64Data, 'base64'));
+      } else {
+        fs.writeFileSync(fullPath, content, 'utf-8');
+      }
+    }
+
+    return res.status(200).json({
+      message: `Code exported successfully to ${outputPath}`,
+      fileCount: fileEntries.length
+    });
+  } catch (error) {
+    console.error('Error exporting code to folder:', error);
+    return res.status(500).json({ error: 'Internal server error during code export' });
+  }
+};
+
