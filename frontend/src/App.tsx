@@ -5,19 +5,33 @@ import { RightSidebar } from './components/RightSidebar';
 import { CanvasArea } from './components/CanvasArea';
 import { AuthLockOverlay } from './components/AuthLockOverlay';
 import { AuthModal } from './components/AuthModal';
+import { ProjectModal } from './components/ProjectModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useAutoSave } from './hooks/useAutoSave';
 import { useCanvasStore } from './store/useCanvasStore';
 import { useAuthStore } from './store/useAuthStore';
+import { useProjectStore } from './store/useProjectStore';
 import { CheckCircle2 } from 'lucide-react';
 
 function App() {
   useKeyboardShortcuts();
+  useAutoSave();
+
   const toastMessage = useCanvasStore(state => state.toastMessage);
   const initAuth = useAuthStore(state => state.initAuth);
+  const user = useAuthStore(state => state.user);
+  const fetchProjects = useProjectStore(state => state.fetchProjects);
 
   useEffect(() => {
     initAuth();
   }, [initAuth]);
+
+  // Load user projects whenever authenticated
+  useEffect(() => {
+    if (user) {
+      fetchProjects();
+    }
+  }, [user, fetchProjects]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden text-slate-900 bg-[#FAF6F0]">
@@ -30,8 +44,9 @@ function App() {
         <AuthLockOverlay />
       </div>
 
-      {/* Global Auth Modal */}
+      {/* Global Modals */}
       <AuthModal />
+      <ProjectModal />
       
       {/* Toast Notification */}
       {toastMessage && (

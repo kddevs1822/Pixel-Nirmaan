@@ -100,6 +100,7 @@ interface CanvasState {
   
   setZoom: (zoom: number) => void;
   setPan: (pan: { x: number; y: number }) => void;
+  setNodes: (nodes: CanvasNode[]) => void;
   undo: () => void;
   redo: () => void;
 }
@@ -129,6 +130,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       setTimeout(() => set({ toastMessage: null }), 3000);
     }
   },
+
+  setNodes: (nodes) => set({ nodes, selectedIds: [], past: [], future: [] }),
 
   addNode: (node) => {
     const { nodes, past } = get();

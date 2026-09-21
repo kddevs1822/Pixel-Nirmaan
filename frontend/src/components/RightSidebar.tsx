@@ -578,19 +578,27 @@ export const RightSidebar: React.FC = () => {
             )}
           </div>
           <div className="flex gap-2 items-center">
-            <input 
-              type="color" 
-              value={(getValue('fill') as string) || '#ffffff'} 
-              onChange={(e) => handleChange(e, 'fill', false)}
-              onBlur={(e) => handleChange(e, 'fill', false)}
-              className="w-8 h-8 rounded cursor-pointer border-0 p-0"
-            />
+            {/* Clickable Color Swatch Box */}
+            <div 
+              className="relative w-9 h-9 shrink-0 rounded-lg border border-slate-300 shadow-sm cursor-pointer overflow-hidden transition-all hover:scale-105 hover:ring-2 hover:ring-indigo-500/30"
+              style={{ backgroundColor: (getValue('fill') as string) || '#ffffff' }}
+              title="Click to choose color"
+            >
+              <input 
+                type="color" 
+                value={(getValue('fill') as string) || '#ffffff'} 
+                onChange={(e) => handleChange(e, 'fill', false)}
+                onBlur={(e) => handleChange(e, 'fill', false)}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              />
+            </div>
             <input 
               type="text"
               value={(getValue('fill') as string) || ''}
               onChange={(e) => handleChange(e, 'fill', false)}
               onBlur={(e) => handleChange(e, 'fill', false)}
-              className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50 font-mono flex-1 uppercase"
+              className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm bg-slate-50 font-mono flex-1 uppercase focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              placeholder="#FFFFFF"
             />
           </div>
         </div>
@@ -600,19 +608,27 @@ export const RightSidebar: React.FC = () => {
         <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Stroke Color</label>
           <div className="flex gap-2 items-center">
-            <input 
-              type="color" 
-              value={(getValue('stroke') as string) || '#000000'} 
-              onChange={(e) => handleChange(e, 'stroke', false)}
-              onBlur={(e) => handleChange(e, 'stroke', false)}
-              className="w-8 h-8 rounded cursor-pointer border-0 p-0"
-            />
+            {/* Clickable Color Swatch Box */}
+            <div 
+              className="relative w-9 h-9 shrink-0 rounded-lg border border-slate-300 shadow-sm cursor-pointer overflow-hidden transition-all hover:scale-105 hover:ring-2 hover:ring-indigo-500/30"
+              style={{ backgroundColor: (getValue('stroke') as string) || '#000000' }}
+              title="Click to choose stroke color"
+            >
+              <input 
+                type="color" 
+                value={(getValue('stroke') as string) || '#000000'} 
+                onChange={(e) => handleChange(e, 'stroke', false)}
+                onBlur={(e) => handleChange(e, 'stroke', false)}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              />
+            </div>
             <input 
               type="text"
               value={(getValue('stroke') as string) || ''}
               onChange={(e) => handleChange(e, 'stroke', false)}
               onBlur={(e) => handleChange(e, 'stroke', false)}
-              className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50 font-mono flex-1 uppercase"
+              className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm bg-slate-50 font-mono flex-1 uppercase focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              placeholder="#000000"
             />
           </div>
         </div>

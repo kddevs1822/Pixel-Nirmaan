@@ -1,13 +1,23 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X, LogOut } from 'lucide-react';
+import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X, LogOut, Folder, Cloud, CloudOff, Plus, Search } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useCanvasStore } from '../store/useCanvasStore';
 import { useAuthStore } from '../store/useAuthStore';
+import { useProjectStore } from '../store/useProjectStore';
 
 export const TopBar: React.FC = () => {
   const { undo, redo, zoom, setZoom, past, future, selectedIds, nodes, setMode, setPreviewFrameId } = useCanvasStore();
   const { user, logout, openAuthModal } = useAuthStore();
+  const {
+    projects,
+    activeProject,
+    saveStatus,
+    openProjectModal,
+    updateProjectMeta,
+    selectProject,
+    createProject,
+  } = useProjectStore();
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -17,6 +27,22 @@ export const TopBar: React.FC = () => {
   const [exportMessage, setExportMessage] = useState('');
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Project Dropdown states
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+  const [dropdownSearch, setDropdownSearch] = useState('');
+  const [isCreatingInDropdown, setIsCreatingInDropdown] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectFolder, setNewProjectFolder] = useState('Websites');
+
+  // Sync outputPath when activeProject changes
+  useEffect(() => {
+    if (activeProject) {
+      const pPath = activeProject.outputPath || localStorage.getItem('pixelnirmaan-output-path') || '';
+      setOutputPath(pPath);
+    }
+  }, [activeProject?.id, activeProject?.outputPath]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -27,10 +53,21 @@ export const TopBar: React.FC = () => {
       if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
         setShowProfileMenu(false);
       }
+      if (projectDropdownRef.current && !projectDropdownRef.current.contains(e.target as Node)) {
+        setShowProjectDropdown(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const handleQuickCreate = async () => {
+    if (!newProjectName.trim()) return;
+    await createProject(newProjectName.trim(), newProjectFolder.trim() || 'General');
+    setNewProjectName('');
+    setIsCreatingInDropdown(false);
+    setShowProjectDropdown(false);
+  };
 
   const handlePreview = () => {
     if (!user) {
@@ -192,10 +229,14 @@ export const TopBar: React.FC = () => {
     setIsSelectingFolder(false);
   };
 
-  const handleSaveOutputPath = () => {
-    localStorage.setItem('pixelnirmaan-output-path', outputPath.trim());
+  const handleSaveOutputPath = async () => {
+    const trimmed = outputPath.trim();
+    localStorage.setItem('pixelnirmaan-output-path', trimmed);
+    if (activeProject) {
+      await updateProjectMeta(activeProject.id, { outputPath: trimmed });
+    }
     setShowFolderModal(false);
-    if (outputPath.trim()) {
+    if (trimmed) {
       handleExportToFolder();
     }
   };
@@ -208,8 +249,191 @@ export const TopBar: React.FC = () => {
   return (
     <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-30 shadow-sm relative shrink-0">
       <div className="flex items-center gap-2">
-        <img src="/logo.jpg" alt="PixelNirmaan Logo" className="w-8 h-8 object-contain mr-2 rounded" />
+        <img src="/logo.jpg" alt="PixelNirmaan Logo" className="w-8 h-8 object-contain mr-1 rounded" />
         <h1 className="font-heading font-bold text-lg text-slate-800 tracking-tight">PixelNirmaan</h1>
+
+        {user && (
+          <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-slate-200">
+            {/* Project Switcher Dropdown Container */}
+            <div className="relative" ref={projectDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setShowProjectDropdown((prev) => !prev)}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all group cursor-pointer border ${
+                  showProjectDropdown
+                    ? 'bg-indigo-50/80 border-indigo-200 text-indigo-700 shadow-sm'
+                    : 'border-transparent hover:bg-slate-100 hover:border-slate-200 text-slate-700'
+                }`}
+                title="Click to switch or manage website projects and folders"
+              >
+                <Folder size={15} className="text-indigo-600 shrink-0" />
+                <span className="truncate max-w-[150px] font-medium text-slate-800">
+                  {activeProject?.name || 'My First Website'}
+                </span>
+                <ChevronDown
+                  size={13}
+                  className={`text-slate-400 group-hover:text-slate-600 transition-transform duration-150 ${
+                    showProjectDropdown ? 'rotate-180 text-indigo-600' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Dropdown Menu */}
+              {showProjectDropdown && (
+                <div className="absolute left-0 top-full mt-2 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
+                  {/* Dropdown Header */}
+                  <div className="px-3.5 py-2.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                      Projects & Folders
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsCreatingInDropdown(!isCreatingInDropdown)}
+                      className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 font-semibold cursor-pointer"
+                    >
+                      <Plus size={13} />
+                      <span>New</span>
+                    </button>
+                  </div>
+
+                  {/* Inline quick creation form */}
+                  {isCreatingInDropdown && (
+                    <div className="p-3 bg-indigo-50/60 border-b border-indigo-100 flex flex-col gap-2">
+                      <input
+                        type="text"
+                        placeholder="Project Name (e.g. Portfolio)"
+                        value={newProjectName}
+                        onChange={(e) => setNewProjectName(e.target.value)}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleQuickCreate();
+                        }}
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-indigo-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Folder (e.g. Websites)"
+                          value={newProjectFolder}
+                          onChange={(e) => setNewProjectFolder(e.target.value)}
+                          className="flex-1 px-2 py-1 text-[11px] bg-white border border-indigo-200 rounded-lg focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleQuickCreate}
+                          disabled={!newProjectName.trim()}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium cursor-pointer"
+                        >
+                          Create
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsCreatingInDropdown(false)}
+                          className="px-2 py-1 text-slate-500 hover:text-slate-700 text-xs cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quick Search */}
+                  <div className="p-2 border-b border-slate-100">
+                    <div className="relative">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search projects..."
+                        value={dropdownSearch}
+                        onChange={(e) => setDropdownSearch(e.target.value)}
+                        className="w-full pl-7 pr-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Projects List */}
+                  <div className="max-h-60 overflow-y-auto p-1 divide-y divide-slate-50">
+                    {projects
+                      .filter((p) => {
+                        if (!dropdownSearch.trim()) return true;
+                        const q = dropdownSearch.toLowerCase();
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          (p.folder && p.folder.toLowerCase().includes(q))
+                        );
+                      })
+                      .map((p) => {
+                        const isActive = activeProject?.id === p.id;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => {
+                              if (!isActive) selectProject(p.id);
+                              setShowProjectDropdown(false);
+                            }}
+                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs cursor-pointer transition-colors group ${
+                              isActive
+                                ? 'bg-indigo-50/80 text-indigo-700 font-semibold'
+                                : 'text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <Folder
+                                size={14}
+                                className={isActive ? 'text-indigo-600 shrink-0' : 'text-slate-400 shrink-0'}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate font-medium">{p.name}</div>
+                                <div className="text-[10px] text-slate-400">{p.folder || 'General'}</div>
+                              </div>
+                            </div>
+                            {isActive && <Check size={14} className="text-indigo-600 ml-2 shrink-0" />}
+                          </div>
+                        );
+                      })}
+                  </div>
+
+                  {/* Dropdown Footer: Manage all in modal */}
+                  <div className="p-2 bg-slate-50/80 border-t border-slate-100 text-center">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowProjectDropdown(false);
+                        openProjectModal();
+                      }}
+                      className="w-full py-1.5 text-xs text-indigo-600 hover:text-indigo-700 font-semibold cursor-pointer rounded hover:bg-indigo-50/50 transition-colors"
+                    >
+                      Manage Folders & All Projects...
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Cloud Save status badge */}
+            <div className="flex items-center gap-1 text-[11px] font-medium ml-1">
+              {saveStatus === 'saving' && (
+                <span className="flex items-center gap-1 text-indigo-500 animate-pulse" title="Saving to database...">
+                  <div className="w-2.5 h-2.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  <span>Saving...</span>
+                </span>
+              )}
+              {saveStatus === 'saved' && (
+                <span className="flex items-center gap-1 text-emerald-600" title="All changes saved to database">
+                  <Cloud size={13} className="text-emerald-500" />
+                  <span className="text-[10px] text-slate-400">Saved</span>
+                </span>
+              )}
+              {saveStatus === 'error' && (
+                <span className="flex items-center gap-1 text-red-500" title="Error saving changes">
+                  <CloudOff size={13} />
+                  <span>Offline</span>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       
       <div className="flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
