@@ -1,11 +1,16 @@
 import { useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
+import { useAuthStore } from '../store/useAuthStore';
 
 export const useKeyboardShortcuts = () => {
   const { deleteNodes, duplicateNodes, copyNodes, pasteNodes, undo, redo } = useCanvasStore();
+  const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Disable shortcuts if not logged in
+      if (!user) return;
+
       // Ignore if typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 

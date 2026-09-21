@@ -1,24 +1,31 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X } from 'lucide-react';
+import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X, LogOut } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useCanvasStore } from '../store/useCanvasStore';
+import { useAuthStore } from '../store/useAuthStore';
 
 export const TopBar: React.FC = () => {
   const { undo, redo, zoom, setZoom, past, future, selectedIds, nodes, setMode, setPreviewFrameId } = useCanvasStore();
+  const { user, logout, openAuthModal } = useAuthStore();
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [outputPath, setOutputPath] = useState(() => localStorage.getItem('pixelnirmaan-output-path') || '');
   const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
   const [exportMessage, setExportMessage] = useState('');
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close export dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
         setShowExportMenu(false);
+      }
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setShowProfileMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -26,6 +33,10 @@ export const TopBar: React.FC = () => {
   }, []);
 
   const handlePreview = () => {
+    if (!user) {
+      openAuthModal();
+      return;
+    }
     const selectedNode = selectedIds.length > 0 ? nodes.find(n => n.id === selectedIds[0]) : null;
     let targetFrameId: string | null = null;
     
@@ -62,6 +73,10 @@ export const TopBar: React.FC = () => {
   };
 
   const handleExportZip = async () => {
+    if (!user) {
+      openAuthModal();
+      return;
+    }
     setShowExportMenu(false);
     try {
       const response = await fetch('http://localhost:5000/api/generate', {
@@ -103,6 +118,10 @@ export const TopBar: React.FC = () => {
   };
 
   const handleExportToFolder = async () => {
+    if (!user) {
+      openAuthModal();
+      return;
+    }
     if (!outputPath.trim()) {
       setShowExportMenu(false);
       setShowFolderModal(true);
@@ -308,6 +327,98 @@ export const TopBar: React.FC = () => {
             </div>
           )}
         </div>
+
+        <div className="w-px h-6 bg-slate-200 mx-0.5" />
+
+        {/* User Auth: Profile Avatar or Sign In button */}
+        {user ? (
+          <div className="relative" ref={profileMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowProfileMenu(!showProfileMenu)}
+              className="flex items-center gap-2 p-0.5 rounded-full hover:ring-2 hover:ring-indigo-500/20 transition-all cursor-pointer focus:outline-none"
+              title={`${user.name} (${user.email})`}
+            >
+              {user.picture ? (
+                <img
+                  src={user.picture}
+                  alt={user.name}
+                  className="w-8 h-8 rounded-full object-cover border border-slate-200 shadow-sm"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-indigo-600 text-white font-semibold text-xs flex items-center justify-center shadow-sm">
+                  {user.name.charAt(0).toUpperCase()}
+                </div>
+              )}
+            </button>
+
+            {/* Profile Dropdown */}
+            {showProfileMenu && (
+              <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-4 py-3 bg-slate-50/80 border-b border-slate-100 flex items-center gap-3">
+                  {user.picture ? (
+                    <img
+                      src={user.picture}
+                      alt={user.name}
+                      className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold text-sm flex items-center justify-center shrink-0">
+                      {user.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-sm text-slate-800 truncate">{user.name}</div>
+                    <div className="text-xs text-slate-500 truncate">{user.email}</div>
+                  </div>
+                </div>
+
+                <div className="p-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      logout();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <LogOut size={16} />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={openAuthModal}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-sm font-medium transition-colors shadow-sm cursor-pointer shrink-0"
+            title="Sign in with Google"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24">
+              <path
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+              />
+            </svg>
+            <span>Sign In</span>
+          </button>
+        )}
 
         {/* Export status toast */}
         {exportStatus !== 'idle' && (

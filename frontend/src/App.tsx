@@ -1,15 +1,23 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { TopBar } from './components/TopBar';
 import { LeftSidebar } from './components/LeftSidebar';
 import { RightSidebar } from './components/RightSidebar';
 import { CanvasArea } from './components/CanvasArea';
+import { AuthLockOverlay } from './components/AuthLockOverlay';
+import { AuthModal } from './components/AuthModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useCanvasStore } from './store/useCanvasStore';
+import { useAuthStore } from './store/useAuthStore';
 import { CheckCircle2 } from 'lucide-react';
 
 function App() {
   useKeyboardShortcuts();
   const toastMessage = useCanvasStore(state => state.toastMessage);
+  const initAuth = useAuthStore(state => state.initAuth);
+
+  useEffect(() => {
+    initAuth();
+  }, [initAuth]);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden text-slate-900 bg-[#FAF6F0]">
@@ -18,7 +26,12 @@ function App() {
         <LeftSidebar />
         <CanvasArea />
         <RightSidebar />
+        {/* Full feature locking overlay when not signed in */}
+        <AuthLockOverlay />
       </div>
+
+      {/* Global Auth Modal */}
+      <AuthModal />
       
       {/* Toast Notification */}
       {toastMessage && (

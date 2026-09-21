@@ -253,15 +253,21 @@ export const RightSidebar: React.FC = () => {
                   <span>Responsive Layout</span>
                   <span className="text-[10px] text-[#4A3AFF] font-bold">Auto-Reflow</span>
                 </label>
-                <button
-                  onClick={() => generateResponsiveVariants(primaryNode.id)}
-                  className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg transition-colors text-xs flex items-center justify-center gap-2 shadow-sm"
-                >
-                  <Smartphone size={15} className="text-emerald-400" />
-                  Generate Screen Variants ({primaryNode.frameType === 'desktop' ? 'Tablet & Mobile' : primaryNode.frameType === 'tablet' ? 'Desktop & Mobile' : 'Desktop & Tablet'})
-                </button>
+                {(() => {
+                  const targetPrimaryId = primaryNode.variantOf || primaryNode.id;
+                  const hasVariants = nodes.some(n => n.type === 'Frame' && n.variantOf === targetPrimaryId);
+                  return (
+                    <button
+                      onClick={() => generateResponsiveVariants(primaryNode.id)}
+                      className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg transition-colors text-xs flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                    >
+                      <Smartphone size={15} className="text-emerald-400" />
+                      {hasVariants ? 'Update Screen Variants' : 'Generate Screen Variants'} ({primaryNode.frameType === 'desktop' ? 'Tablet & Mobile' : primaryNode.frameType === 'tablet' ? 'Desktop & Mobile' : 'Desktop & Tablet'})
+                    </button>
+                  );
+                })()}
                 <p className="text-[11px] text-slate-400 leading-snug">
-                  Creates side-by-side adapted frames so you can visually inspect & customize your design across all screen sizes.
+                  Creates or syncs side-by-side adapted frames so you can visually inspect & customize your design across all screen sizes.
                 </p>
               </div>
             </div>

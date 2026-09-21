@@ -36,6 +36,7 @@ export interface CanvasNode {
   rotation?: number;
   name?: string;
   variantOf?: string;
+  sourceNodeId?: string; // References the primary frame node ID that this variant node was cloned/synced from
   // Component features
   isMasterComponent?: boolean;
   componentName?: string;
@@ -563,12 +564,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const sourceFrame = nodes.find(n => n.id === frameId && n.type === 'Frame');
     if (!sourceFrame) return;
 
-    const sourceType = sourceFrame.frameType || 'desktop';
-    const sWidth = sourceFrame.width || (sourceType === 'desktop' ? (window.innerWidth || 1440) : sourceType === 'tablet' ? 768 : 393);
-    const sHeight = sourceFrame.height || (sourceType === 'desktop' ? (window.innerHeight || 900) : sourceType === 'tablet' ? 1024 : 852);
+    const primaryFrameId = sourceFrame.variantOf || sourceFrame.id;
+    const primaryFrame = nodes.find(n => n.id === primaryFrameId && n.type === 'Frame') || sourceFrame;
+
+    const primaryType = primaryFrame.frameType || 'desktop';
+    const sWidth = primaryFrame.width || (primaryType === 'desktop' ? (window.innerWidth || 1440) : primaryType === 'tablet' ? 768 : 393);
 
     const allTypes: ('desktop' | 'tablet' | 'mobile')[] = ['desktop', 'tablet', 'mobile'];
-    const targetTypes = allTypes.filter(t => t !== sourceType);
+    const targetTypes = allTypes.filter(t => t !== primaryType);
 
     const getDimensions = (type: 'desktop' | 'tablet' | 'mobile') => {
       if (type === 'desktop') return { width: window.innerWidth || 1440, height: window.innerHeight || 900 };
@@ -576,107 +579,218 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return { width: 393, height: 852 };
     };
 
-    const getDescendants = (parentId: string): CanvasNode[] => {
-      const children = nodes.filter(n => n.parentId === parentId);
+    const getDescendants = (parentId: string, currentNodesList: CanvasNode[]): CanvasNode[] => {
+      const children = currentNodesList.filter(n => n.parentId === parentId);
       let list = [...children];
-      children.forEach(c => list.push(...getDescendants(c.id)));
+      children.forEach(c => list.push(...getDescendants(c.id, currentNodesList)));
       return list;
     };
 
-    const descendants = getDescendants(sourceFrame.id);
-    const baseName = (sourceFrame.name || 'Screen').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
+    const primaryDescendants = getDescendants(primaryFrame.id, nodes);
+    const baseName = (primaryFrame.name || 'Screen').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
 
-    let currentNodes = [...nodes];
-    const createdFrameIds: string[] = [];
+    let updatedNodes = [...nodes];
+    const affectedFrameIds: string[] = [];
+    let isUpdateMode = false;
 
     targetTypes.forEach(targetType => {
-      // Find rightmost bound among root frames to position new frame nicely
-      const rootFrames = currentNodes.filter(n => n.type === 'Frame' && !n.parentId);
-      let rightmostX = sourceFrame.x + sWidth;
-      rootFrames.forEach(f => {
-        const edge = f.x + (f.width || 0);
-        if (edge > rightmostX) rightmostX = edge;
-      });
-
       const { width: targetWidth, height: targetHeight } = getDimensions(targetType);
-      const newFrameId = uuidv4();
-      createdFrameIds.push(newFrameId);
-
-      const targetLabel = targetType.charAt(0).toUpperCase() + targetType.slice(1);
-      const newFrame: CanvasNode = {
-        ...sourceFrame,
-        id: newFrameId,
-        frameType: targetType,
-        name: `${baseName} - ${targetLabel}`,
-        variantOf: sourceFrame.variantOf || sourceFrame.id,
-        x: rightmostX + 60,
-        y: sourceFrame.y,
-        width: targetWidth,
-        height: targetHeight,
-        parentId: undefined,
-      };
-
       const scaleX = targetWidth / sWidth;
       const fontScale = Math.max(0.65, Math.min(1.2, scaleX));
 
-      // Map old node IDs to newly generated IDs
-      const idMap: Record<string, string> = {};
-      idMap[sourceFrame.id] = newFrameId;
+      // Look for an existing variant frame for this primary frame and device type
+      let existingFrame = updatedNodes.find(n => 
+        n.type === 'Frame' && 
+        n.variantOf === primaryFrame.id && 
+        n.frameType === targetType
+      );
 
-      descendants.forEach(d => {
-        idMap[d.id] = uuidv4();
-      });
+      if (!existingFrame) {
+        // --- CREATE NEW VARIANT FRAME ---
+        const rootFrames = updatedNodes.filter(n => n.type === 'Frame' && !n.parentId);
+        let rightmostX = primaryFrame.x + sWidth;
+        rootFrames.forEach(f => {
+          const edge = f.x + (f.width || 0);
+          if (edge > rightmostX) rightmostX = edge;
+        });
 
-      const clonedDescendants: CanvasNode[] = descendants.map(child => {
-        const newId = idMap[child.id];
-        const newParentId = child.parentId ? idMap[child.parentId] || newFrameId : newFrameId;
+        const newFrameId = uuidv4();
+        affectedFrameIds.push(newFrameId);
+        const targetLabel = targetType.charAt(0).toUpperCase() + targetType.slice(1);
 
-        const isDirectChildOfFrame = child.parentId === sourceFrame.id;
-        const nodeScaleX = isDirectChildOfFrame ? scaleX : 1;
-        const fontS = isDirectChildOfFrame ? fontScale : 1;
-
-        const updated: CanvasNode = {
-          ...child,
-          id: newId,
-          parentId: newParentId,
-          x: Math.round(child.x * nodeScaleX),
-          y: Math.round(child.y * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)),
+        const newFrame: CanvasNode = {
+          ...primaryFrame,
+          id: newFrameId,
+          frameType: targetType,
+          name: `${baseName} - ${targetLabel}`,
+          variantOf: primaryFrame.id,
+          x: rightmostX + 60,
+          y: primaryFrame.y,
+          width: targetWidth,
+          height: targetHeight,
+          parentId: undefined,
         };
 
-        if (child.width !== undefined) {
-          updated.width = Math.max(10, Math.round(child.width * nodeScaleX));
-        }
-        if (child.height !== undefined && child.type !== 'Text') {
-          updated.height = Math.max(10, Math.round(child.height * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)));
-        }
-        if (child.radius !== undefined) {
-          updated.radius = Math.max(4, Math.round(child.radius * nodeScaleX));
-        }
-        if (child.fontSize !== undefined) {
-          updated.fontSize = Math.max(10, Math.round(child.fontSize * fontS));
-        }
-        if (child.strokeWidth !== undefined) {
-          updated.strokeWidth = Math.max(1, Math.round(child.strokeWidth * fontS));
-        }
-        if (child.points !== undefined) {
-          updated.points = child.points.map((p, i) => Math.round(p * nodeScaleX));
-        }
+        const idMap: Record<string, string> = {};
+        idMap[primaryFrame.id] = newFrameId;
+        primaryDescendants.forEach(d => {
+          idMap[d.id] = uuidv4();
+        });
 
-        return updated;
-      });
+        const clonedDescendants: CanvasNode[] = primaryDescendants.map(child => {
+          const newId = idMap[child.id];
+          const newParentId = child.parentId ? idMap[child.parentId] || newFrameId : newFrameId;
+          const isDirectChildOfFrame = child.parentId === primaryFrame.id;
+          const nodeScaleX = isDirectChildOfFrame ? scaleX : 1;
+          const fontS = isDirectChildOfFrame ? fontScale : 1;
 
-      currentNodes.push(newFrame, ...clonedDescendants);
+          const updated: CanvasNode = {
+            ...child,
+            id: newId,
+            parentId: newParentId,
+            sourceNodeId: child.id,
+            x: Math.round(child.x * nodeScaleX),
+            y: Math.round(child.y * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)),
+          };
+
+          if (child.width !== undefined) updated.width = Math.max(10, Math.round(child.width * nodeScaleX));
+          if (child.height !== undefined && child.type !== 'Text') {
+            updated.height = Math.max(10, Math.round(child.height * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)));
+          }
+          if (child.radius !== undefined) updated.radius = Math.max(4, Math.round(child.radius * nodeScaleX));
+          if (child.fontSize !== undefined) updated.fontSize = Math.max(10, Math.round(child.fontSize * fontS));
+          if (child.strokeWidth !== undefined) updated.strokeWidth = Math.max(1, Math.round(child.strokeWidth * fontS));
+          if (child.points !== undefined) updated.points = child.points.map(p => Math.round(p * nodeScaleX));
+
+          return updated;
+        });
+
+        updatedNodes.push(newFrame, ...clonedDescendants);
+      } else {
+        // --- UPDATE EXISTING VARIANT FRAME (DO NOT CREATE DUPLICATE) ---
+        isUpdateMode = true;
+        affectedFrameIds.push(existingFrame.id);
+
+        const existingDescendants = getDescendants(existingFrame.id, updatedNodes);
+        
+        const idMap: Record<string, string> = {};
+        idMap[primaryFrame.id] = existingFrame.id;
+
+        const matchedVariantChildIds = new Set<string>();
+
+        // 1. Match primary children to existing variant children strictly
+        primaryDescendants.forEach(pChild => {
+          let match = existingDescendants.find(eChild => eChild.sourceNodeId === pChild.id);
+          if (!match) {
+            match = existingDescendants.find(eChild => 
+              !matchedVariantChildIds.has(eChild.id) &&
+              !eChild.sourceNodeId &&
+              eChild.type === pChild.type &&
+              eChild.name === pChild.name
+            );
+          }
+
+          if (match) {
+            idMap[pChild.id] = match.id;
+            matchedVariantChildIds.add(match.id);
+          } else {
+            idMap[pChild.id] = uuidv4();
+          }
+        });
+
+        // 2. Identify nodes to remove (only remove if cloned from primary and deleted from primary)
+        const primaryDescendantIdSet = new Set(primaryDescendants.map(p => p.id));
+        const nodesToRemoveIds = new Set<string>();
+
+        existingDescendants.forEach(eChild => {
+          if (eChild.sourceNodeId && !primaryDescendantIdSet.has(eChild.sourceNodeId)) {
+            nodesToRemoveIds.add(eChild.id);
+          }
+        });
+
+        updatedNodes = updatedNodes.filter(n => !nodesToRemoveIds.has(n.id));
+
+        // 3. Update existing variant children or add newly added primary children
+        primaryDescendants.forEach(pChild => {
+          const isDirectChildOfFrame = pChild.parentId === primaryFrame.id;
+          const nodeScaleX = isDirectChildOfFrame ? scaleX : 1;
+          const fontS = isDirectChildOfFrame ? fontScale : 1;
+          const targetParentId = idMap[pChild.parentId] || existingFrame!.id;
+
+          const existingVariantChild = existingDescendants.find(e => matchedVariantChildIds.has(e.id) && idMap[pChild.id] === e.id);
+
+          if (existingVariantChild) {
+            // Update existing variant child in-place
+            const updatedChild: CanvasNode = {
+              ...existingVariantChild,
+              sourceNodeId: pChild.id,
+              parentId: targetParentId,
+              name: pChild.name,
+              fill: pChild.fill,
+              stroke: pChild.stroke,
+              text: pChild.text,
+              src: pChild.src,
+              linkTo: pChild.linkTo,
+              opacity: pChild.opacity,
+              fontFamily: pChild.fontFamily,
+              fontWeight: pChild.fontWeight,
+              textAlign: pChild.textAlign,
+            };
+
+            // Sync layout changes from primary
+            updatedChild.x = Math.round(pChild.x * nodeScaleX);
+            updatedChild.y = Math.round(pChild.y * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1));
+            if (pChild.width !== undefined) updatedChild.width = Math.max(10, Math.round(pChild.width * nodeScaleX));
+            if (pChild.height !== undefined && pChild.type !== 'Text') {
+              updatedChild.height = Math.max(10, Math.round(pChild.height * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)));
+            }
+            if (pChild.radius !== undefined) updatedChild.radius = Math.max(4, Math.round(pChild.radius * nodeScaleX));
+            if (pChild.fontSize !== undefined) updatedChild.fontSize = Math.max(10, Math.round(pChild.fontSize * fontS));
+            if (pChild.strokeWidth !== undefined) updatedChild.strokeWidth = Math.max(1, Math.round(pChild.strokeWidth * fontS));
+
+            const idx = updatedNodes.findIndex(n => n.id === existingVariantChild.id);
+            if (idx !== -1) {
+              updatedNodes[idx] = updatedChild;
+            }
+          } else {
+            // Newly added element in primary frame! Add to variant frame
+            const newVariantChild: CanvasNode = {
+              ...pChild,
+              id: idMap[pChild.id],
+              parentId: targetParentId,
+              sourceNodeId: pChild.id,
+              x: Math.round(pChild.x * nodeScaleX),
+              y: Math.round(pChild.y * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)),
+            };
+
+            if (pChild.width !== undefined) newVariantChild.width = Math.max(10, Math.round(pChild.width * nodeScaleX));
+            if (pChild.height !== undefined && pChild.type !== 'Text') {
+              newVariantChild.height = Math.max(10, Math.round(pChild.height * (isDirectChildOfFrame ? Math.min(scaleX, 1) : 1)));
+            }
+            if (pChild.radius !== undefined) newVariantChild.radius = Math.max(4, Math.round(pChild.radius * nodeScaleX));
+            if (pChild.fontSize !== undefined) newVariantChild.fontSize = Math.max(10, Math.round(pChild.fontSize * fontS));
+            if (pChild.strokeWidth !== undefined) newVariantChild.strokeWidth = Math.max(1, Math.round(pChild.strokeWidth * fontS));
+            if (pChild.points !== undefined) newVariantChild.points = pChild.points.map(p => Math.round(p * nodeScaleX));
+
+            updatedNodes.push(newVariantChild);
+          }
+        });
+      }
     });
 
     set({
       past: [...past, nodes],
       future: [],
-      nodes: currentNodes,
-      selectedIds: createdFrameIds,
+      nodes: updatedNodes,
+      selectedIds: affectedFrameIds.length > 0 ? affectedFrameIds : [primaryFrame.id],
     });
 
     const labels = targetTypes.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(' & ');
-    setToastMessage(`✨ Generated ${labels} screen variants!`);
+    if (isUpdateMode) {
+      setToastMessage(`🔄 Updated existing ${labels} screen variants!`);
+    } else {
+      setToastMessage(`✨ Generated ${labels} screen variants!`);
+    }
   },
 
   setZoom: (zoom) => set({ zoom }),
