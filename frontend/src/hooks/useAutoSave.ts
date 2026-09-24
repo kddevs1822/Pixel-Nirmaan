@@ -9,7 +9,7 @@ export const useAutoSave = () => {
   const saveCurrentProjectNodes = useProjectStore((state) => state.saveCurrentProjectNodes);
   const user = useAuthStore((state) => state.user);
 
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitialMount = useRef(true);
   const lastSavedNodesJson = useRef<string>('');
 

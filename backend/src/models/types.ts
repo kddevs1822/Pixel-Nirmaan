@@ -21,6 +21,8 @@ export interface CanvasNode {
   text?: string;
   fontSize?: number;
   fontFamily?: string;
+  fontWeight?: string;
+  textAlign?: string;
   cornerRadius?: number;
   src?: string;
   parentId?: string;
@@ -46,4 +48,30 @@ export interface CanvasNode {
   propsDefinition?: ComponentPropDef[];
   propOverrides?: Record<string, any>;
   boundProps?: Record<string, string>; // Maps node field (e.g. 'text') to propId
+
+  // Effects
+  opacity?: number;
+  boxShadow?: {
+    enabled: boolean;
+    x: number;
+    y: number;
+    blur: number;
+    spread: number;
+    color: string;
+  };
+  filterBlur?: number;
+
+  // Transitions
+  transitionDuration?: number;
+  transitionTimingFunction?: 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out';
+  hoverEffect?: 'none' | 'scale-up' | 'scale-down' | 'lift' | 'glow' | 'darken' | 'brighten';
+
+  // Animations
+  animation?: {
+    type: 'none' | 'bounce' | 'pulse' | 'spin' | 'fade-in' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right';
+    duration: number;
+    infinite: boolean;
+    trigger?: 'auto' | 'click' | 'dblclick' | 'hover' | 'focus' | 'scroll';
+    triggerNodeId?: string;
+  };
 }

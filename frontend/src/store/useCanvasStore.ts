@@ -24,6 +24,8 @@ export interface CanvasNode {
   text?: string;
   fontSize?: number;
   fontFamily?: string;
+  fontWeight?: string;
+  textAlign?: string;
   cornerRadius?: number;
   src?: string;
   parentId?: string;
@@ -36,7 +38,7 @@ export interface CanvasNode {
   rotation?: number;
   name?: string;
   variantOf?: string;
-  sourceNodeId?: string; // References the primary frame node ID that this variant node was cloned/synced from
+  sourceNodeId?: string;
   // Component features
   isMasterComponent?: boolean;
   componentName?: string;
@@ -49,7 +51,33 @@ export interface CanvasNode {
   };
   propsDefinition?: ComponentPropDef[];
   propOverrides?: Record<string, any>;
-  boundProps?: Record<string, string>; // Maps node field (e.g. 'text') to propId
+  boundProps?: Record<string, string>;
+
+  // Effects
+  opacity?: number;           // 0–100 (default 100)
+  boxShadow?: {
+    enabled: boolean;
+    x: number;
+    y: number;
+    blur: number;
+    spread: number;
+    color: string;
+  };
+  filterBlur?: number;        // Gaussian blur in px (0 = none)
+
+  // Transitions
+  transitionDuration?: number; // ms (default 300)
+  transitionTimingFunction?: 'linear' | 'ease' | 'ease-in' | 'ease-out' | 'ease-in-out';
+  hoverEffect?: 'none' | 'scale-up' | 'scale-down' | 'lift' | 'glow' | 'darken' | 'brighten';
+
+  // Animations
+  animation?: {
+    type: 'none' | 'bounce' | 'pulse' | 'spin' | 'fade-in' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right';
+    duration: number;   // ms
+    infinite: boolean;
+    trigger?: 'auto' | 'click' | 'dblclick' | 'hover' | 'focus' | 'scroll';
+    triggerNodeId?: string;
+  };
 }
 
 export type AppMode = 'select' | 'connect' | 'preview';
@@ -68,9 +96,12 @@ interface CanvasState {
   connectingSourceId: string | null;
   previewFrameId: string | null;
 
+  pickingTriggerForNodeId: string | null;
+
   setMode: (mode: AppMode) => void;
   setConnectingSourceId: (id: string | null) => void;
   setPreviewFrameId: (id: string | null) => void;
+  setPickingTriggerForNodeId: (id: string | null) => void;
   
   toastMessage: string | null;
   setToastMessage: (msg: string | null) => void;
@@ -91,6 +122,7 @@ interface CanvasState {
   updateVariant: (masterId: string, variantName: 'hover' | 'active' | 'disabled', properties: Partial<CanvasNode>) => void;
   propagateComponent: (masterId: string) => void;
   detachInstance: (id: string) => void;
+  deleteComponent: (id: string) => void;
   addPropDefinition: (masterId: string, propDef: ComponentPropDef) => void;
   updatePropDefinition: (masterId: string, propId: string, propDef: Partial<ComponentPropDef>) => void;
   removePropDefinition: (masterId: string, propId: string) => void;
@@ -118,10 +150,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   mode: 'select',
   connectingSourceId: null,
   previewFrameId: null,
+  pickingTriggerForNodeId: null,
 
-  setMode: (mode) => set({ mode, connectingSourceId: null }),
+  setMode: (mode) => set({ mode, connectingSourceId: null, pickingTriggerForNodeId: null }),
   setConnectingSourceId: (connectingSourceId) => set({ connectingSourceId }),
   setPreviewFrameId: (previewFrameId) => set({ previewFrameId }),
+  setPickingTriggerForNodeId: (pickingTriggerForNodeId) => set({ pickingTriggerForNodeId }),
   
   toastMessage: null,
   setToastMessage: (toastMessage) => {
@@ -470,6 +504,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  deleteComponent: (id: string) => {
+    const { nodes, past } = get();
+    const idsToDelete = new Set<string>();
+    const markDelete = (targetId: string) => {
+      idsToDelete.add(targetId);
+      nodes.filter(n => n.parentId === targetId).forEach(c => markDelete(c.id));
+    };
+    nodes.filter(n => n.id === id || n.componentId === id).forEach(n => markDelete(n.id));
+    set({
+      past: [...past, nodes],
+      future: [],
+      nodes: nodes.filter(n => !idsToDelete.has(n.id)),
+      selectedIds: [],
+    });
+  },
+
   addPropDefinition: (masterId, propDef) => {
     const { nodes, past } = get();
     set({
@@ -718,7 +768,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           const isDirectChildOfFrame = pChild.parentId === primaryFrame.id;
           const nodeScaleX = isDirectChildOfFrame ? scaleX : 1;
           const fontS = isDirectChildOfFrame ? fontScale : 1;
-          const targetParentId = idMap[pChild.parentId] || existingFrame!.id;
+          const targetParentId = (pChild.parentId ? idMap[pChild.parentId] : undefined) || existingFrame!.id;
 
           const existingVariantChild = existingDescendants.find(e => matchedVariantChildIds.has(e.id) && idMap[pChild.id] === e.id);
 

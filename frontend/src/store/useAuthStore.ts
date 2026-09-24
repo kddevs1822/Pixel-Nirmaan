@@ -26,7 +26,7 @@ interface AuthState {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 const TOKEN_KEY = 'pixelnirmaan_auth_token';
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set, _get) => ({
   user: null,
   token: localStorage.getItem(TOKEN_KEY),
   isLoading: true,

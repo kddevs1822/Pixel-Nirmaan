@@ -2,6 +2,11 @@ import { CanvasNode } from '../models/types';
 
 export class CodeGeneratorService {
   static generate(nodes: CanvasNode[]): Record<string, string> {
+    const hasFrame = nodes.some(n => n.type === 'Frame');
+    if (!hasFrame) {
+      throw new Error('Cannot export: No Frame found on canvas. Please add at least one Frame before exporting.');
+    }
+
     const files: Record<string, string> = {};
 
     // Base config files
@@ -221,7 +226,13 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        'space-grotesk': ['"Space Grotesk"', 'sans-serif'],
+        'jetbrains-mono': ['"JetBrains Mono"', 'monospace'],
+        'inter': ['Inter', 'sans-serif'],
+      },
+    },
   },
   plugins: [],
 }`;
@@ -229,7 +240,7 @@ export default {
 
   private static generateViteConfig(): string {
     return `import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+    import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -245,6 +256,9 @@ export default defineConfig({
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PixelNirmaan Export</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
   <body>
     <div id="root"></div>
@@ -276,6 +290,132 @@ body {
 
 .clip-path-triangle {
   clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slideLeft {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideRight {
+  from { transform: translateX(-24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes bounceSubtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-16px); }
+}
+
+@keyframes pulseSubtle {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.85; }
+}
+
+@keyframes spinSmooth {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes scaleUp {
+  from { transform: scale(1); }
+  to { transform: scale(1.05); }
+}
+
+@keyframes scaleDown {
+  from { transform: scale(1); }
+  to { transform: scale(0.95); }
+}
+
+@keyframes lift {
+  from { transform: translateY(0); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  to { transform: translateY(-6px); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+}
+
+@keyframes glow {
+  from { box-shadow: 0 0 0 rgba(74,58,255,0); }
+  to { box-shadow: 0 0 20px rgba(74,58,255,0.6); }
+}
+
+@keyframes darken {
+  from { filter: brightness(1); }
+  to { filter: brightness(0.75); }
+}
+
+@keyframes brighten {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.25); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 1000ms ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUp 1000ms ease-out forwards;
+}
+
+.animate-slide-down {
+  animation: slideDown 1000ms ease-out forwards;
+}
+
+.animate-slide-left {
+  animation: slideLeft 1000ms ease-out forwards;
+}
+
+.animate-slide-right {
+  animation: slideRight 1000ms ease-out forwards;
+}
+
+.animate-bounce-subtle {
+  animation: bounceSubtle 1000ms ease-in-out infinite;
+}
+
+.animate-pulse-subtle {
+  animation: pulseSubtle 1000ms ease-in-out infinite;
+}
+
+.animate-spin-smooth {
+  animation: spinSmooth 1000ms linear infinite;
+}
+
+.animate-scale-up {
+  animation: scaleUp 1000ms ease-out forwards;
+}
+
+.animate-scale-down {
+  animation: scaleDown 1000ms ease-out forwards;
+}
+
+.animate-lift {
+  animation: lift 1000ms ease-out forwards;
+}
+
+.animate-glow {
+  animation: glow 1000ms ease-out forwards;
+}
+
+.animate-darken {
+  animation: darken 1000ms ease-out forwards;
+}
+
+.animate-brighten {
+  animation: brighten 1000ms ease-out forwards;
 }
 `;
   }
@@ -325,8 +465,155 @@ ${routeElements.join('\n')}
 `;
   }
 
-  private static generateNodeTailwindClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
-    const classes = [];
+  private static generateNodeAnimationClasses(node: CanvasNode): string {
+    if (!node.animation || node.animation.type === 'none') return '';
+    const animType = node.animation.type;
+    const trigger = node.animation.trigger || 'auto';
+    
+    // If this node's animation is triggered by ANOTHER element, do not attach self-trigger classes
+    if (node.animation.triggerNodeId && node.animation.triggerNodeId !== node.id) {
+      return '';
+    }
+
+    let baseClass = '';
+    switch (animType) {
+      case 'bounce':
+        baseClass = 'animate-bounce-subtle';
+        break;
+      case 'pulse':
+        baseClass = 'animate-pulse-subtle';
+        break;
+      case 'spin':
+        baseClass = 'animate-spin-smooth';
+        break;
+      case 'fade-in':
+        baseClass = 'animate-fade-in';
+        break;
+      case 'slide-up':
+        baseClass = 'animate-slide-up';
+        break;
+      case 'slide-down':
+        baseClass = 'animate-slide-down';
+        break;
+      case 'slide-left':
+        baseClass = 'animate-slide-left';
+        break;
+      case 'slide-right':
+        baseClass = 'animate-slide-right';
+        break;
+      default:
+        return '';
+    }
+
+    if (trigger === 'hover') {
+      return `hover:${baseClass} cursor-pointer`;
+    }
+    if (trigger === 'focus') {
+      return `focus:${baseClass} active:${baseClass} cursor-pointer outline-none`;
+    }
+    if (trigger === 'click' || trigger === 'dblclick') {
+      return `cursor-pointer`;
+    }
+    if (trigger === 'scroll') {
+      return `transition-all`;
+    }
+    return baseClass;
+  }
+
+  private static generateNodeAnimationClickProps(node: CanvasNode): string {
+    if (!node.animation || node.animation.type === 'none') return '';
+    if (node.animation.triggerNodeId && node.animation.triggerNodeId !== node.id) return '';
+    const trigger = node.animation.trigger || 'auto';
+    const animType = node.animation.type;
+
+    let baseClass = '';
+    switch (animType) {
+      case 'bounce': baseClass = 'animate-bounce-subtle'; break;
+      case 'pulse': baseClass = 'animate-pulse-subtle'; break;
+      case 'spin': baseClass = 'animate-spin-smooth'; break;
+      case 'fade-in': baseClass = 'animate-fade-in'; break;
+      case 'slide-up': baseClass = 'animate-slide-up'; break;
+      case 'slide-down': baseClass = 'animate-slide-down'; break;
+      case 'slide-left': baseClass = 'animate-slide-left'; break;
+      case 'slide-right': baseClass = 'animate-slide-right'; break;
+    }
+
+    if (trigger === 'click') {
+      return ` onClick={(e) => { const el = e.currentTarget.querySelector('[data-anim]') || e.currentTarget; el.classList.remove('${baseClass}'); void el.offsetWidth; el.classList.add('${baseClass}'); }}`;
+    }
+    if (trigger === 'dblclick') {
+      return ` onDoubleClick={(e) => { const el = e.currentTarget.querySelector('[data-anim]') || e.currentTarget; el.classList.remove('${baseClass}'); void el.offsetWidth; el.classList.add('${baseClass}'); }}`;
+    }
+    if (trigger === 'focus') {
+      return ` tabIndex={0}`;
+    }
+    if (trigger === 'scroll') {
+      return ` ref={(el) => { if (!el) return; const obs = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { el.classList.add('${baseClass}'); } }); obs.observe(el); }}`;
+    }
+    return '';
+  }
+
+  private static generateCrossElementTriggerProps(node: CanvasNode, allNodes: CanvasNode[]): string {
+    const triggeredNodes = allNodes.filter(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
+    if (triggeredNodes.length === 0) return '';
+
+    const props: string[] = [];
+
+    triggeredNodes.forEach(targetNode => {
+      const animType = targetNode.animation!.type;
+      const trigger = targetNode.animation!.trigger || 'click';
+      let baseClass = '';
+      switch (animType) {
+        case 'bounce': baseClass = 'animate-bounce-subtle'; break;
+        case 'pulse': baseClass = 'animate-pulse-subtle'; break;
+        case 'spin': baseClass = 'animate-spin-smooth'; break;
+        case 'fade-in': baseClass = 'animate-fade-in'; break;
+        case 'slide-up': baseClass = 'animate-slide-up'; break;
+        case 'slide-down': baseClass = 'animate-slide-down'; break;
+        case 'slide-left': baseClass = 'animate-slide-left'; break;
+        case 'slide-right': baseClass = 'animate-slide-right'; break;
+      }
+      if (!baseClass) return;
+
+      const targetIdStr = `node-${targetNode.id}`;
+
+      if (trigger === 'click') {
+        props.push(`onClick={(e) => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }}`);
+      } else if (trigger === 'dblclick') {
+        props.push(`onDoubleClick={(e) => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }}`);
+      } else if (trigger === 'hover') {
+        props.push(`onMouseEnter={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.add('${baseClass}'); } }}`);
+        props.push(`onMouseLeave={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); } }}`);
+      } else if (trigger === 'focus') {
+        props.push(`onFocus={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.add('${baseClass}'); } }}`);
+        props.push(`onBlur={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); } }}`);
+      }
+    });
+
+    if (props.length === 0) return '';
+    return ' ' + props.join(' ');
+  }
+
+  private static generateNodeAnimationStyles(node: CanvasNode): string {
+    if (!node.animation || node.animation.type === 'none') return '';
+    const animDur = node.animation.duration || 1000;
+    const isInf = node.animation.infinite ?? true;
+    const animType = node.animation.type;
+
+    const styleProps: string[] = [];
+    styleProps.push(`animationDuration: '${animDur}ms'`);
+
+    if (!isInf) {
+      styleProps.push(`animationIterationCount: 1`);
+    } else if (animType === 'fade-in' || animType === 'slide-up' || animType === 'slide-down' || animType === 'slide-left' || animType === 'slide-right') {
+      styleProps.push(`animationIterationCount: 'infinite'`);
+    }
+
+    return ` style={{ ${styleProps.join(', ')} }}`;
+  }
+
+  private static generateNodePositionClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
+    const classes: string[] = [];
     const round = (val: number) => Math.round(val);
     
     const scaleX = node.scaleX || 1;
@@ -396,26 +683,21 @@ ${routeElements.join('\n')}
       } else {
         classes.push(`top-[${round(cssY)}px]`);
       }
-    } else {
-      classes.push('relative');
-      if (node.isMasterComponent) {
-        if (node.width) classes.push(`w-[${round(node.width)}px]`);
-        if (node.height) classes.push(`h-[${round(node.height)}px]`);
+
+      if (node.type === 'Circle' || node.type === 'Triangle') {
+        if (node.radius) {
+          classes.push(`w-[${round(node.radius * 2 * scaleX)}px]`);
+          classes.push(`h-[${round(node.radius * 2 * scaleY)}px]`);
+        }
+      } else if (node.type === 'Line') {
+        let lineW = node.width;
+        if (node.points && node.points.length >= 4) {
+          const dx = node.points[2] - node.points[0];
+          const dy = node.points[3] - node.points[1];
+          lineW = Math.sqrt(dx * dx + dy * dy);
+        }
+        classes.push(`w-[${round(lineW || 0)}px]`);
       } else {
-        classes.push('w-full');
-        classes.push('min-h-screen');
-      }
-    }
-    
-    if (node.rotation) {
-      classes.push(`rotate-[${round(node.rotation)}deg]`);
-      if (node.type !== 'Circle' && node.type !== 'Triangle') {
-        classes.push('origin-top-left');
-      }
-    }
-    
-    if (node.type !== 'Circle' && node.type !== 'Triangle') {
-      if (!isRoot) {
         if (isFullWidth) {
           classes.push('w-full');
         } else if (node.width) {
@@ -428,12 +710,42 @@ ${routeElements.join('\n')}
           classes.push(`h-[${round(node.height)}px]`);
         }
       }
+
+      let lineRot = 0;
+      if (node.type === 'Line' && node.points && node.points.length >= 4) {
+        const dx = node.points[2] - node.points[0];
+        const dy = node.points[3] - node.points[1];
+        lineRot = Math.atan2(dy, dx) * (180 / Math.PI);
+      }
+      const rot = node.rotation || lineRot;
+      if (rot) {
+        classes.push(`rotate-[${round(rot)}deg]`);
+        if (node.type !== 'Circle' && node.type !== 'Triangle') {
+          classes.push('origin-top-left');
+        }
+      }
+    } else {
+      classes.push('relative');
+      if (node.isMasterComponent) {
+        if (node.width) classes.push(`w-[${round(node.width)}px]`);
+        if (node.height) classes.push(`h-[${round(node.height)}px]`);
+      } else {
+        classes.push('w-full');
+        classes.push('min-h-screen');
+      }
     }
+
+    return classes.join(' ');
+  }
+
+  private static generateNodeStyleClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
+    const classes: string[] = [];
+    const round = (val: number) => Math.round(val);
     
-    if (node.fill) classes.push(`bg-[${node.fill}]`);
+    if (node.fill) classes.push(`bg-[${node.fill.replace(/\s+/g, '')}]`);
     
     if (node.stroke && node.type !== 'Line') {
-      classes.push(`border-[${node.stroke}]`);
+      classes.push(`border-[${node.stroke.replace(/\s+/g, '')}]`);
       if (node.strokeWidth) {
         classes.push(`border-[${round(node.strokeWidth)}px]`);
       } else {
@@ -442,49 +754,14 @@ ${routeElements.join('\n')}
     }
     
     if (node.type === 'Line') {
-      let lineW = node.width;
-      let lineRot = node.rotation;
-      let lineLeft = cssX;
-      let lineTop = cssY;
-      
-      if (node.points && node.points.length >= 4) {
-        const p1x = node.points[0];
-        const p1y = node.points[1];
-        const p2x = node.points[2];
-        const p2y = node.points[3];
-        const dx = p2x - p1x;
-        const dy = p2y - p1y;
-        lineW = Math.sqrt(dx * dx + dy * dy);
-        lineRot = Math.atan2(dy, dx) * (180 / Math.PI);
-        lineLeft = p1x;
-        lineTop = p1y;
-      }
-      
       classes.push(`border-t-[${round(node.strokeWidth || 1)}px]`);
-      classes.push(`border-[${node.stroke || '#000000'}]`);
-      classes.push(`w-[${round(lineW || 0)}px]`);
-      classes.push('origin-top-left');
-      
-      cssX = lineLeft;
-      cssY = lineTop;
-      
-      if (lineRot) {
-        classes.push(`rotate-[${round(lineRot)}deg]`);
-      }
+      classes.push(`border-[${(node.stroke || '#000000').replace(/\s+/g, '')}]`);
     }
     
     if (node.type === 'Circle') {
       classes.push('rounded-full');
-      if (node.radius) {
-        classes.push(`w-[${round(node.radius * 2 * scaleX)}px]`);
-        classes.push(`h-[${round(node.radius * 2 * scaleY)}px]`);
-      }
     } else if (node.type === 'Triangle') {
-      if (node.radius) {
-        classes.push(`w-[${round(node.radius * 2 * scaleX)}px]`);
-        classes.push(`h-[${round(node.radius * 2 * scaleY)}px]`);
-        classes.push('clip-path-triangle');
-      }
+      classes.push('clip-path-triangle');
     } else if (node.cornerRadius) {
       classes.push(`rounded-[${round(node.cornerRadius)}px]`);
     }
@@ -496,13 +773,94 @@ ${routeElements.join('\n')}
         if (bgIndex !== -1) {
           classes.splice(bgIndex, 1);
         }
-        classes.push(`text-[${node.fill}]`);
+        classes.push(`text-[${node.fill.replace(/\s+/g, '')}]`);
+      }
+      if (node.fontFamily) {
+        const fam = node.fontFamily.toLowerCase().replace(/['"\s]+/g, '-');
+        if (fam.includes('space')) {
+          classes.push('font-space-grotesk');
+        } else if (fam.includes('mono') || fam.includes('jetbrains')) {
+          classes.push('font-jetbrains-mono');
+        } else {
+          classes.push('font-inter');
+        }
+      }
+      if (node.fontWeight) {
+        classes.push(`font-[${node.fontWeight}]`);
+      }
+      if (node.textAlign) {
+        classes.push(`text-${node.textAlign}`);
       }
       classes.push('leading-none');
       classes.push('whitespace-nowrap');
     }
 
+    // Effects
+    if (node.opacity !== undefined && node.opacity < 100) {
+      const opVal = Math.round(node.opacity) / 100;
+      classes.push(`opacity-[${opVal}]`);
+    }
+
+    if (node.boxShadow?.enabled) {
+      const s = node.boxShadow;
+      const col = (s.color || 'rgba(0,0,0,0.25)').replace(/\s+/g, '');
+      const sx = s.x ?? 0;
+      const sy = s.y ?? 4;
+
+      if (node.type === 'Text' || node.type === 'Triangle') {
+        classes.push(`drop-shadow-[${sx}px_${sy}px_${s.blur ?? 10}px_${col}]`);
+      } else {
+        classes.push(`shadow-[${sx}px_${sy}px_${s.blur ?? 10}px_${s.spread ?? 0}px_${col}]`);
+      }
+    }
+
+    if (node.filterBlur && node.filterBlur > 0) {
+      classes.push(`blur-[${round(node.filterBlur)}px]`);
+    }
+
+    // Transitions & Hover Effects
+    if (node.hoverEffect && node.hoverEffect !== 'none') {
+      classes.push('transition-all');
+      const dur = node.transitionDuration || 300;
+      classes.push(`duration-[${dur}ms]`);
+
+      const timing = node.transitionTimingFunction || 'ease';
+      if (timing === 'linear') classes.push('ease-linear');
+      else if (timing === 'ease-in') classes.push('ease-in');
+      else if (timing === 'ease-out') classes.push('ease-out');
+      else if (timing === 'ease-in-out') classes.push('ease-in-out');
+
+      switch (node.hoverEffect) {
+        case 'scale-up':
+          classes.push('hover:scale-105');
+          break;
+        case 'scale-down':
+          classes.push('hover:scale-95');
+          break;
+        case 'lift':
+          classes.push('hover:-translate-y-1.5', 'hover:shadow-xl');
+          break;
+        case 'glow':
+          const glowCol = (node.fill || '#4A3AFF').replace(/\s+/g, '');
+          classes.push(`hover:shadow-[0_0_20px_${glowCol}]`);
+          break;
+        case 'darken':
+          classes.push('hover:brightness-75');
+          break;
+        case 'brighten':
+          classes.push('hover:brightness-125');
+          break;
+      }
+    }
+
     return classes.join(' ');
+  }
+
+  private static generateNodeTailwindClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
+    const pos = this.generateNodePositionClasses(node, isRoot, parentNode);
+    const style = this.generateNodeStyleClasses(node, isRoot, parentNode);
+    const anim = this.generateNodeAnimationClasses(node);
+    return [pos, style, anim].filter(Boolean).join(' ');
   }
 
   private static resolveBoundProps(node: CanvasNode, isMasterComponentDef: boolean): Record<string, { expression: string; defaultValue: string }> {
@@ -510,7 +868,6 @@ ${routeElements.join('\n')}
     if (isMasterComponentDef && node.boundProps) {
       Object.keys(node.boundProps).forEach(field => {
         const propId = node.boundProps![field];
-        // Get the node's current value as a default fallback
         let defaultVal = '';
         if (field === 'fill') defaultVal = node.fill || '#000000';
         else if (field === 'text') defaultVal = node.text || '';
@@ -557,17 +914,14 @@ ${routeElements.join('\n')}
   ): string {
     const round = (val: number) => Math.round(val);
 
-    // Resolve target route if this node (or for components, any child) has a linkTo
     let targetLinkId = '';
     if (!isMasterComponentDef) {
       targetLinkId = node.linkTo || '';
       if (!targetLinkId && (node.componentId || node.isMasterComponent)) {
-        // Check if any direct child has linkTo
         const childWithLink = allNodes.find(c => c.parentId === node.id && c.linkTo);
         if (childWithLink && childWithLink.linkTo) {
           targetLinkId = childWithLink.linkTo;
         }
-        // If it was placed on a page and master's child has linkTo, only link if the target is not this page
         if (!targetLinkId && node.componentId) {
           const master = masterComponents.find(m => m.id === node.componentId);
           if (master?.linkTo) {
@@ -581,7 +935,6 @@ ${routeElements.join('\n')}
         }
       }
 
-      // If the target is the page we are already inside, do not link to self
       if (targetLinkId && parentNode && parentNode.id === targetLinkId) {
         targetLinkId = '';
       }
@@ -589,149 +942,126 @@ ${routeElements.join('\n')}
 
     const targetRoute = targetLinkId ? this.getRouteForTarget(targetLinkId, pageRouteMap, nodesById) : '';
 
-    // If it's an instance of a component
-    if (node.componentId) {
-      const master = masterComponents.find(m => m.id === node.componentId);
-      if (master) {
-        const compName = this.getComponentName(master);
-        
-        let propsStr = '';
-        if (node.propOverrides) {
-          Object.keys(node.propOverrides).forEach(propId => {
-            const val = node.propOverrides![propId];
-            if (typeof val === 'string') {
-              propsStr += ` {...{'${propId}': "${val}"}}`;
-            } else {
-              propsStr += ` {...{'${propId}': ${JSON.stringify(val)}}}`;
-            }
-          });
-        }
-        
-        const positioningClasses = `absolute left-[${round(node.x)}px] top-[${round(node.y)}px]`;
-        
-        let styleStr = '';
-        let sx = node.scaleX !== undefined ? node.scaleX : 1;
-        let sy = node.scaleY !== undefined ? node.scaleY : 1;
-        
-        if (node.width !== undefined && master.width) {
-          sx *= (node.width / master.width);
-        }
-        if (node.height !== undefined && master.height) {
-          sy *= (node.height / master.height);
-        }
-        
-        const rot = node.rotation || 0;
-        if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01 || rot !== 0) {
-          styleStr = ` style={{ transform: 'scale(${sx}, ${sy}) rotate(${rot}deg)', transformOrigin: 'top left' }}`;
-        }
-        
-        if (targetRoute) {
-          return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer"${styleStr}>
-      <${compName}${propsStr} />
-    </Link>`;
-        }
-        
-        return `<div className="${positioningClasses}"${styleStr}>
-      <${compName}${propsStr} />
-    </div>`;
-      }
-    }
+    if (node.componentId || (node.isMasterComponent && !isMasterComponentDef)) {
+      const master = masterComponents.find(m => m.id === (node.componentId || node.id)) || node;
+      const compName = this.getComponentName(master);
 
-    if (node.isMasterComponent && !isMasterComponentDef) {
-      // If the user placed the Master Component directly inside a layout frame, render it as an instance!
-      const compName = this.getComponentName(node);
-      const positioningClasses = `absolute left-[${round(node.x)}px] top-[${round(node.y)}px]`;
-      
-      let styleStr = '';
+      let propsStr = '';
+      if (node.propOverrides) {
+        Object.keys(node.propOverrides).forEach(propId => {
+          const val = node.propOverrides![propId];
+          if (typeof val === 'string') {
+            propsStr += ` {...{'${propId}': "${val}"}}`;
+          } else {
+            propsStr += ` {...{'${propId}': ${JSON.stringify(val)}}}`;
+          }
+        });
+      }
+
+      const posClasses = this.generateNodePositionClasses(node, false, parentNode);
+      const animClasses = this.generateNodeAnimationClasses(node);
+      const animStyleStr = this.generateNodeAnimationStyles(node);
+      const animClickProps = this.generateNodeAnimationClickProps(node);
+
+      const isTriggerSource = allNodes.some(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
+      const crossTriggerProps = this.generateCrossElementTriggerProps(node, allNodes);
+      const cursorClass = (targetRoute || isTriggerSource) ? ' cursor-pointer' : '';
+      const elemIdAttr = ` id="node-${node.id}"`;
+
+      let scaleStyleStr = '';
       let sx = node.scaleX !== undefined ? node.scaleX : 1;
       let sy = node.scaleY !== undefined ? node.scaleY : 1;
       
-      const master = masterComponents.find(m => m.id === node.id);
-      if (master) {
-        if (node.width !== undefined && master.width) {
-          sx *= (node.width / master.width);
-        }
-        if (node.height !== undefined && master.height) {
-          sy *= (node.height / master.height);
-        }
+      if (node.width !== undefined && master.width) {
+        sx *= (node.width / master.width);
       }
-      
-      const rot = node.rotation || 0;
-      if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01 || rot !== 0) {
-        styleStr = ` style={{ transform: 'scale(${sx}, ${sy}) rotate(${rot}deg)', transformOrigin: 'top left' }}`;
+      if (node.height !== undefined && master.height) {
+        sy *= (node.height / master.height);
       }
-      
+
+      if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01) {
+        scaleStyleStr = ` style={{ transform: 'scale(${sx}, ${sy})', transformOrigin: 'top left' }}`;
+      }
+
+      const innerClasses = `w-full h-full ${animClasses}`.trim();
+      const animAttrStr = `${animStyleStr}${animClickProps}`;
+
       if (targetRoute) {
-        return `<Link to="${targetRoute}" className="${positioningClasses} block cursor-pointer"${styleStr}>
-      <${compName} />
+        return `<Link${elemIdAttr} to="${targetRoute}" className="${posClasses}${cursorClass} block"${crossTriggerProps}>
+      <div data-anim="true" className="${innerClasses}"${animAttrStr}>
+        <div${scaleStyleStr}>
+          <${compName}${propsStr} />
+        </div>
+      </div>
     </Link>`;
       }
-      
-      return `<div className="${positioningClasses}"${styleStr}>
-      <${compName} />
+      return `<div${elemIdAttr} className="${posClasses}${cursorClass}"${crossTriggerProps}>
+      <div data-anim="true" className="${innerClasses}"${animAttrStr}>
+        <div${scaleStyleStr}>
+          <${compName}${propsStr} />
+        </div>
+      </div>
     </div>`;
     }
 
-    let twClasses = this.generateNodeTailwindClasses(node, false, parentNode);
+    const posClasses = this.generateNodePositionClasses(node, false, parentNode);
+    let styleClasses = this.generateNodeStyleClasses(node, false, parentNode);
+    const animClasses = this.generateNodeAnimationClasses(node);
+    const animStyleStr = this.generateNodeAnimationStyles(node);
+    const animClickProps = this.generateNodeAnimationClickProps(node);
+
+    const isTriggerSource = allNodes.some(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
+    const crossTriggerProps = this.generateCrossElementTriggerProps(node, allNodes);
+    const cursorClass = (targetRoute || isTriggerSource) ? ' cursor-pointer' : '';
+    const elemIdAttr = ` id="node-${node.id}"`;
+
     const dynamicProps = this.resolveBoundProps(node, isMasterComponentDef);
     
-    // For bound fill props, use inline style with fallback instead of Tailwind dynamic classes.
     let fillStyle = '';
     if (dynamicProps.fill && node.type !== 'Text') {
-      twClasses = twClasses.replace(/bg-\[[^\]]+\]/g, '');
+      styleClasses = styleClasses.replace(/bg-\[[^\]]+\]/g, '');
       fillStyle = ` style={{ backgroundColor: ${dynamicProps.fill.expression} || '${dynamicProps.fill.defaultValue}' }}`;
     }
     let textColorStyle = '';
     if (dynamicProps.fill && node.type === 'Text') {
-      twClasses = twClasses.replace(/text-\[#[^\]]+\]/g, '');
+      styleClasses = styleClasses.replace(/text-\[#[^\]]+\]/g, '');
       textColorStyle = ` style={{ color: ${dynamicProps.fill.expression} || '${dynamicProps.fill.defaultValue}' }}`;
     }
 
-    let jsx = '';
-    const cursorClass = targetRoute ? ' cursor-pointer' : '';
+    const inlineStyle = fillStyle || textColorStyle || '';
+
+    let innerContent = '';
 
     if (node.type === 'Frame') {
       const children = allNodes.filter(n => n.parentId === node.id);
-      const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap)).join('\n      ');
-      
-      if (targetRoute) {
-        jsx = `<Link to="${targetRoute}" className="${twClasses}${cursorClass} block"${fillStyle}>
-      ${childrenJsx}
-    </Link>`;
-      } else {
-        jsx = `<div className="${twClasses}"${fillStyle}>
-      ${childrenJsx}
-    </div>`;
-      }
+      innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap)).join('\n      ');
     } else if (node.type === 'Text') {
-      const textContent = dynamicProps.text 
+      innerContent = dynamicProps.text 
         ? `{${dynamicProps.text.expression} || "${dynamicProps.text.defaultValue}"}` 
         : (node.text || '');
-      
-      if (targetRoute) {
-        jsx = `<Link to="${targetRoute}" className="${twClasses}${cursorClass} block"${textColorStyle}>${textContent}</Link>`;
-      } else {
-        jsx = `<div className="${twClasses}"${textColorStyle}>${textContent}</div>`;
-      }
     } else if (node.type === 'Image') {
       const imgSrc = dynamicProps.src 
         ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue}"}`
         : `"${node.src || ''}"`;
-      if (targetRoute) {
-        jsx = `<Link to="${targetRoute}" className="block cursor-pointer"><img src=${imgSrc} className="${twClasses}" alt="image" /></Link>`;
-      } else {
-        jsx = `<img src=${imgSrc} className="${twClasses}" alt="image" />`;
-      }
-    } else {
-      // Rect, Circle, etc
-      if (targetRoute) {
-        jsx = `<Link to="${targetRoute}" className="${twClasses}${cursorClass} block"${fillStyle}></Link>`;
-      } else {
-        jsx = `<div className="${twClasses}"${fillStyle}></div>`;
-      }
+      innerContent = `<img src=${imgSrc} className="w-full h-full object-cover" alt="image" />`;
     }
 
-    return jsx;
+    const animAttrStr = `${animStyleStr}${inlineStyle}${animClickProps}`;
+    const innerClasses = `w-full h-full ${styleClasses} ${animClasses}`.trim();
+
+    if (targetRoute) {
+      return `<Link${elemIdAttr} to="${targetRoute}" className="${posClasses}${cursorClass} block"${crossTriggerProps}>
+      <div data-anim="true" className="${innerClasses}"${animAttrStr}>
+        ${innerContent}
+      </div>
+    </Link>`;
+    }
+
+    return `<div${elemIdAttr} className="${posClasses}${cursorClass}"${crossTriggerProps}>
+      <div data-anim="true" className="${innerClasses}"${animAttrStr}>
+        ${innerContent}
+      </div>
+    </div>`;
   }
 
   private static generateComponentCode(
@@ -832,6 +1162,24 @@ export default function ${componentName}(props) {
     const mH = mobileFrame ? Math.round(mobileFrame.height || 852) : 852;
     const mBg = mobileFrame ? (mobileFrame.fill || '#ffffff') : '#ffffff';
 
+    const getFrameEffectStyles = (f?: CanvasNode): string => {
+      if (!f) return '';
+      const styles: string[] = [];
+      if (f.opacity !== undefined && f.opacity < 100) {
+        styles.push(`opacity: ${Math.round(f.opacity) / 100}`);
+      }
+      if (f.filterBlur && f.filterBlur > 0) {
+        styles.push(`filter: 'blur(${Math.round(f.filterBlur)}px)'`);
+      }
+      if (f.boxShadow?.enabled) {
+        const s = f.boxShadow;
+        const col = (s.color || 'rgba(0,0,0,0.25)').replace(/\s+/g, '');
+        styles.push(`boxShadow: '${s.x ?? 0}px ${s.y ?? 4}px ${s.blur ?? 10}px ${s.spread ?? 0}px ${col}'`);
+      }
+      if (styles.length === 0) return '';
+      return ',\n          ' + styles.join(',\n          ');
+    };
+
     const hasVariants = !!(tabletFrame || mobileFrame);
 
     if (!hasVariants) {
@@ -862,7 +1210,7 @@ export default function ${pageName}() {
           width: '${dW}px', 
           height: '${dH}px',
           transform: \`scale(\${scaleX}, \${scaleY})\`,
-          transformOrigin: 'top left'
+          transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
         }}
       >
         ${desktopJsx}
@@ -921,7 +1269,7 @@ export default function ${pageName}() {
             width: '${mW}px', 
             height: '${mH}px',
             transform: \`scale(\${scaleX}, \${scaleY})\`,
-            transformOrigin: 'top left'
+            transformOrigin: 'top left'${getFrameEffectStyles(mobileFrame)}
           }}
         >
           ${mobileJsx}
@@ -939,7 +1287,7 @@ export default function ${pageName}() {
             width: '${tW}px', 
             height: '${tH}px',
             transform: \`scale(\${scaleX}, \${scaleY})\`,
-            transformOrigin: 'top left'
+            transformOrigin: 'top left'${getFrameEffectStyles(tabletFrame)}
           }}
         >
           ${tabletJsx}
@@ -956,7 +1304,7 @@ export default function ${pageName}() {
           width: '${dW}px', 
           height: '${dH}px',
           transform: \`scale(\${scaleX}, \${scaleY})\`,
-          transformOrigin: 'top left'
+          transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
         }}
       >
         ${desktopJsx}

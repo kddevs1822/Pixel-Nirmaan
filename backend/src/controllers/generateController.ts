@@ -13,6 +13,11 @@ export const generateCode = (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid payload: nodes array is required' });
     }
 
+    const hasFrame = nodes.some(n => n.type === 'Frame');
+    if (!hasFrame) {
+      return res.status(400).json({ error: 'Cannot export: No Frame found on canvas. Please add at least one Frame before exporting.' });
+    }
+
     // DEBUG: Log what nodes we receive
     console.log('=== CODE GENERATION DEBUG ===');
     console.log(`Total nodes received: ${nodes.length}`);
@@ -52,6 +57,11 @@ export const generateToFolder = (req: Request, res: Response) => {
 
     if (!outputPath || typeof outputPath !== 'string' || outputPath.trim() === '') {
       return res.status(400).json({ error: 'Invalid payload: outputPath must be a non-empty string' });
+    }
+
+    const hasFrame = nodes.some(n => n.type === 'Frame');
+    if (!hasFrame) {
+      return res.status(400).json({ error: 'Cannot export: No Frame found on canvas. Please add at least one Frame before exporting.' });
     }
 
     const files = CodeGeneratorService.generate(nodes);

@@ -1,5 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
+declare global {
+  interface Window {
+    google: any;
+  }
+}
 
 interface GoogleSignInButtonProps {
   text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';

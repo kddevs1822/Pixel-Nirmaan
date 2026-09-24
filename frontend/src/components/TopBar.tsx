@@ -109,9 +109,16 @@ export const TopBar: React.FC = () => {
     }
   };
 
+  const hasFrame = nodes.some(n => n.type === 'Frame');
+
   const handleExportZip = async () => {
     if (!user) {
       openAuthModal();
+      return;
+    }
+    if (!hasFrame) {
+      setShowExportMenu(false);
+      alert("Cannot export: Please add at least one Frame to the canvas before exporting.");
       return;
     }
     setShowExportMenu(false);
@@ -157,6 +164,11 @@ export const TopBar: React.FC = () => {
   const handleExportToFolder = async () => {
     if (!user) {
       openAuthModal();
+      return;
+    }
+    if (!hasFrame) {
+      setShowExportMenu(false);
+      alert("Cannot export: Please add at least one Frame to the canvas before exporting.");
       return;
     }
     if (!outputPath.trim()) {
@@ -480,11 +492,14 @@ export const TopBar: React.FC = () => {
             <button 
               type="button"
               onClick={outputPath ? handleExportToFolder : handleExportZip} 
-              className="flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-l-lg text-white text-sm font-medium transition-colors cursor-pointer" 
+              disabled={!hasFrame}
+              className={`flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-l-lg text-white text-sm font-medium transition-colors ${
+                !hasFrame ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+              }`} 
               style={{backgroundColor: '#4A3AFF'}} 
-              onMouseOver={(e) => e.currentTarget.style.opacity = '0.9'} 
-              onMouseOut={(e) => e.currentTarget.style.opacity = '1'}
-              title={outputPath ? `Export to: ${outputPath}` : 'Download as ZIP'}
+              onMouseOver={(e) => { if (hasFrame) e.currentTarget.style.opacity = '0.9'; }} 
+              onMouseOut={(e) => { if (hasFrame) e.currentTarget.style.opacity = '1'; }}
+              title={!hasFrame ? 'Cannot export: Please add at least one Frame to the canvas' : outputPath ? `Export to: ${outputPath}` : 'Download as ZIP'}
             >
               {outputPath ? <FolderOutput size={16} /> : <Download size={16} />}
               <span>{exportStatus === 'exporting' ? 'Exporting...' : outputPath ? 'Export Code' : 'Download ZIP'}</span>
@@ -511,24 +526,36 @@ export const TopBar: React.FC = () => {
               <button
                 type="button"
                 onClick={handleExportZip}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 transition-colors cursor-pointer"
+                disabled={!hasFrame}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors ${
+                  !hasFrame ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'hover:bg-slate-50 cursor-pointer'
+                }`}
+                title={!hasFrame ? 'Cannot export: Please add at least one Frame to the canvas' : undefined}
               >
                 <Download size={16} className="text-slate-500 shrink-0" />
                 <div>
                   <div className="font-medium text-slate-800">Download ZIP</div>
-                  <div className="text-xs text-slate-500">Download as a zip file</div>
+                  <div className="text-xs text-slate-500">
+                    {!hasFrame ? 'Requires at least one Frame' : 'Download as a zip file'}
+                  </div>
                 </div>
               </button>
               <div className="h-px bg-slate-100" />
               <button
                 type="button"
                 onClick={outputPath ? handleExportToFolder : handleChangeFolder}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 transition-colors cursor-pointer"
+                disabled={!hasFrame}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors ${
+                  !hasFrame ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'hover:bg-slate-50 cursor-pointer'
+                }`}
+                title={!hasFrame ? 'Cannot export: Please add at least one Frame to the canvas' : undefined}
               >
                 <FolderOutput size={16} className="text-slate-500 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-slate-800">Export to Folder</div>
-                  {outputPath ? (
+                  {!hasFrame ? (
+                    <div className="text-xs text-slate-400">Requires at least one Frame</div>
+                  ) : outputPath ? (
                     <div className="text-xs text-indigo-500 truncate">{outputPath}</div>
                   ) : (
                     <div className="text-xs text-slate-500">Set up output directory</div>

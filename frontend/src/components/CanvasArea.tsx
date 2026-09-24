@@ -5,26 +5,793 @@ import type { CanvasNode } from '../store/useCanvasStore';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import useImage from 'use-image';
-import { X, AlertCircle, Monitor, Tablet, Smartphone } from 'lucide-react';
+import { X, AlertCircle, Monitor, Tablet, Smartphone, Target } from 'lucide-react';
 
-const URLImage = ({ node, commonProps }: any) => {
+const URLImage = ({ node, commonProps, shapeRef, shadowProps }: any) => {
   const [image] = useImage(node.src || '');
+  const { shadowEnabled, shadowColor, shadowBlur, shadowOffsetX, shadowOffsetY, shadowOpacity, ...groupProps } = commonProps;
   return (
-    <Group {...commonProps} width={node.width} height={node.height}>
+    <Group ref={shapeRef} {...groupProps} width={node.width} height={node.height}>
       {!image ? (
         <>
-          <Rect width={node.width} height={node.height} fill="#e2e8f0" stroke="#cbd5e1" strokeWidth={2} dash={[5, 5]} />
+          <Rect 
+            width={node.width} 
+            height={node.height} 
+            fill="#e2e8f0" 
+            stroke="#cbd5e1" 
+            strokeWidth={2} 
+            dash={[5, 5]} 
+            cornerRadius={node.cornerRadius}
+            {...shadowProps}
+          />
           <Text text="Loading..." width={node.width} height={node.height} verticalAlign="middle" align="center" fontSize={14} fill="#64748b" fontFamily="Inter" />
         </>
       ) : (
-        <KonvaImage image={image} width={node.width} height={node.height} />
+        <KonvaImage 
+          image={image} 
+          width={node.width} 
+          height={node.height} 
+          cornerRadius={node.cornerRadius}
+          {...shadowProps}
+        />
       )}
     </Group>
   );
 };
 
+interface NodeContext {
+  nodes: CanvasNode[];
+  selectedIds: string[];
+  mode: any;
+  selectNodes: (ids: string[]) => void;
+  toggleNodeSelection: (id: string) => void;
+  handleNodeClick: (e: any, node: CanvasNode, isDoubleClick?: boolean) => void;
+  handleDragEnd: (e: KonvaEventObject<DragEvent>, id: string) => void;
+  handleTransformEnd: (e: KonvaEventObject<Event>, id: string) => void;
+  handleLineDblClick: (e: KonvaEventObject<MouseEvent>, nodeId: string) => void;
+  handleAnchorDragMove: (e: KonvaEventObject<DragEvent>, nodeId: string, index: number) => void;
+  handleAnchorDragEnd: (e: KonvaEventObject<DragEvent>, nodeId: string, index: number) => void;
+  handleAnchorDblClick: (e: KonvaEventObject<MouseEvent>, nodeId: string, index: number) => void;
+}
+
+const getKonvaEasing = (timing?: string) => {
+  switch (timing) {
+    case 'linear': return Konva.Easings.Linear;
+    case 'ease-in': return Konva.Easings.EaseIn;
+    case 'ease-out': return Konva.Easings.EaseOut;
+    case 'ease-in-out': return Konva.Easings.EaseInOut;
+    default: return Konva.Easings.EaseInOut;
+  }
+};
+
+const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: NodeContext }> = ({ node, isPreview = false, context }) => {
+  const { nodes, selectedIds, mode, selectNodes, toggleNodeSelection, handleNodeClick, handleDragEnd, handleTransformEnd, handleLineDblClick, handleAnchorDragMove, handleAnchorDragEnd, handleAnchorDblClick } = context;
+  const [interactiveState, setInteractiveState] = useState<'default'|'hover'|'active'|'disabled'>('default');
+  const shapeRef = useRef<any>(null);
+  const hoverTweenRef = useRef<Konva.Tween | null>(null);
+  const shadowTweenRef = useRef<Konva.Tween | null>(null);
+
+  let resolvedNode = { ...node };
+  let masterNode = node.isMasterComponent ? node : undefined;
+  
+  let rootInstance: CanvasNode | undefined = undefined;
+
+  if (node.componentId) {
+    masterNode = nodes.find(n => n.id === node.componentId);
+    if (masterNode) {
+      rootInstance = node;
+      let curr = node;
+      while (curr.parentId) {
+        const parent = nodes.find(n => n.id === curr.parentId);
+        if (!parent || !parent.componentId) break;
+        rootInstance = parent;
+        curr = parent;
+      }
+
+      resolvedNode = {
+        ...masterNode,
+        ...node,
+        id: node.id,
+        x: node.x,
+        y: node.y,
+        parentId: node.parentId,
+        componentId: node.componentId,
+        variant: node.variant,
+        linkTo: node.linkTo,
+        isMasterComponent: false,
+        propOverrides: node.propOverrides
+      };
+
+      if (masterNode.boundProps && rootInstance.propOverrides) {
+        Object.entries(masterNode.boundProps).forEach(([field, propId]) => {
+          if (rootInstance!.propOverrides![propId] !== undefined) {
+            (resolvedNode as any)[field] = rootInstance!.propOverrides![propId];
+          }
+        });
+      }
+    }
+  }
+
+  if (masterNode && masterNode.variants) {
+    let activeVariant = isPreview ? interactiveState : (rootInstance?.variant || node.variant || 'default');
+    if (activeVariant !== 'default' && masterNode.variants[activeVariant]) {
+      resolvedNode = { ...resolvedNode, ...masterNode.variants[activeVariant] };
+    } else if (isPreview && interactiveState !== 'default') {
+      activeVariant = 'default';
+    }
+  }
+
+  const isInteractive = mode === 'preview' && (resolvedNode.linkTo || masterNode || (resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none'));
+  
+  let inComponent = false;
+  let currCheck = node;
+  while (currCheck.parentId) {
+    const parent = nodes.find(n => n.id === currCheck.parentId);
+    if (!parent) break;
+    if (parent.isMasterComponent || parent.componentId) {
+      inComponent = true;
+      break;
+    }
+    currCheck = parent;
+  }
+
+  // Cleanup hover tween on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTweenRef.current) {
+        hoverTweenRef.current.destroy();
+      }
+      if (shadowTweenRef.current) {
+        shadowTweenRef.current.destroy();
+      }
+    };
+  }, []);
+
+  // Filter blur caching (Gaussian blur)
+  useEffect(() => {
+    if (shapeRef.current) {
+      if (resolvedNode.filterBlur && resolvedNode.filterBlur > 0) {
+        try {
+          shapeRef.current.clearCache();
+          shapeRef.current.cache({ pixelRatio: 1 });
+        } catch {
+          // ignore cache errors during rapid changes
+        }
+      } else {
+        try {
+          shapeRef.current.clearCache();
+        } catch {}
+      }
+    }
+  }, [
+    resolvedNode.filterBlur,
+    resolvedNode.width,
+    resolvedNode.height,
+    resolvedNode.radius,
+    resolvedNode.fill,
+    resolvedNode.text,
+    resolvedNode.fontSize,
+    resolvedNode.fontFamily,
+    resolvedNode.boxShadow?.enabled,
+    resolvedNode.boxShadow?.x,
+    resolvedNode.boxShadow?.y,
+    resolvedNode.boxShadow?.blur,
+    resolvedNode.boxShadow?.spread,
+    resolvedNode.boxShadow?.color,
+    resolvedNode.opacity
+  ]);
+
+  // Entrance and continuous animations in preview mode
+  useEffect(() => {
+    if (!isPreview || !resolvedNode.animation || resolvedNode.animation.type === 'none' || !shapeRef.current) return;
+    
+    const animConfig = resolvedNode.animation;
+    const durMs = animConfig.duration || 1000;
+    const trigger = animConfig.trigger || 'auto';
+    const konvaEl = shapeRef.current;
+    const initialX = resolvedNode.x;
+    const initialY = resolvedNode.y;
+    const initialOpacity = resolvedNode.opacity !== undefined ? Math.max(0, Math.min(1, resolvedNode.opacity / 100)) : 1;
+    let anim: Konva.Animation | null = null;
+    let currentTween: Konva.Tween | null = null;
+
+    const resetKonvaEl = () => {
+      if (anim) anim.stop();
+      if (currentTween) currentTween.destroy();
+      if (konvaEl) {
+        konvaEl.x(initialX);
+        konvaEl.y(initialY);
+        konvaEl.scaleX(resolvedNode.scaleX || 1);
+        konvaEl.scaleY(resolvedNode.scaleY || 1);
+        konvaEl.rotation(resolvedNode.rotation || 0);
+        konvaEl.opacity(initialOpacity);
+      }
+    };
+
+    const runAnimation = () => {
+      resetKonvaEl();
+
+      if (animConfig.type === 'spin') {
+        anim = new Konva.Animation((frame) => {
+          if (!frame) return;
+          const progress = (frame.time % durMs) / durMs;
+          konvaEl.rotation((resolvedNode.rotation || 0) + progress * 360);
+        }, konvaEl.getLayer());
+        anim.start();
+      } else if (animConfig.type === 'pulse') {
+        anim = new Konva.Animation((frame) => {
+          if (!frame) return;
+          const progress = (frame.time % durMs) / durMs;
+          const s = 1 + 0.08 * Math.sin(progress * Math.PI * 2);
+          konvaEl.scaleX((resolvedNode.scaleX || 1) * s);
+          konvaEl.scaleY((resolvedNode.scaleY || 1) * s);
+        }, konvaEl.getLayer());
+        anim.start();
+      } else if (animConfig.type === 'bounce') {
+        anim = new Konva.Animation((frame) => {
+          if (!frame) return;
+          const progress = (frame.time % durMs) / durMs;
+          const bounce = -Math.abs(Math.sin(progress * Math.PI * 2)) * 18;
+          konvaEl.y(initialY + bounce);
+        }, konvaEl.getLayer());
+        anim.start();
+      } else if (animConfig.type === 'fade-in') {
+        konvaEl.opacity(0);
+        currentTween = new Konva.Tween({
+          node: konvaEl,
+          duration: durMs / 1000,
+          opacity: initialOpacity,
+          easing: Konva.Easings.EaseOut,
+        });
+        currentTween.play();
+      } else if (animConfig.type === 'slide-up') {
+        konvaEl.y(initialY + 30);
+        konvaEl.opacity(0);
+        currentTween = new Konva.Tween({
+          node: konvaEl,
+          duration: durMs / 1000,
+          y: initialY,
+          opacity: initialOpacity,
+          easing: Konva.Easings.EaseOut,
+        });
+        currentTween.play();
+      } else if (animConfig.type === 'slide-down') {
+        konvaEl.y(initialY - 30);
+        konvaEl.opacity(0);
+        currentTween = new Konva.Tween({
+          node: konvaEl,
+          duration: durMs / 1000,
+          y: initialY,
+          opacity: initialOpacity,
+          easing: Konva.Easings.EaseOut,
+        });
+        currentTween.play();
+      } else if (animConfig.type === 'slide-left') {
+        konvaEl.x(initialX + 30);
+        konvaEl.opacity(0);
+        currentTween = new Konva.Tween({
+          node: konvaEl,
+          duration: durMs / 1000,
+          x: initialX,
+          opacity: initialOpacity,
+          easing: Konva.Easings.EaseOut,
+        });
+        currentTween.play();
+      } else if (animConfig.type === 'slide-right') {
+        konvaEl.x(initialX - 30);
+        konvaEl.opacity(0);
+        currentTween = new Konva.Tween({
+          node: konvaEl,
+          duration: durMs / 1000,
+          x: initialX,
+          opacity: initialOpacity,
+          easing: Konva.Easings.EaseOut,
+        });
+        currentTween.play();
+      }
+    };
+
+    let boundTriggerEl: Konva.Node | null = null;
+
+    const timerId = setTimeout(() => {
+      const stage = konvaEl.getStage();
+      let triggerEl: Konva.Node | null = null;
+      if (animConfig.triggerNodeId && stage) {
+        triggerEl = stage.findOne('#node-' + animConfig.triggerNodeId) || null;
+      }
+      if (!triggerEl) {
+        triggerEl = konvaEl;
+      }
+      boundTriggerEl = triggerEl;
+
+      if (triggerEl) {
+        if (trigger === 'auto' || trigger === 'scroll') {
+          runAnimation();
+        } else if (trigger === 'click') {
+          triggerEl.on('click tap', runAnimation);
+        } else if (trigger === 'dblclick') {
+          triggerEl.on('dblclick dbltap', runAnimation);
+        } else if (trigger === 'hover') {
+          triggerEl.on('mouseenter', runAnimation);
+          triggerEl.on('mouseleave', resetKonvaEl);
+        } else if (trigger === 'focus') {
+          triggerEl.on('mouseenter click tap', runAnimation);
+          triggerEl.on('mouseleave', resetKonvaEl);
+        }
+      }
+    }, 50);
+
+    return () => {
+      clearTimeout(timerId);
+      if (boundTriggerEl) {
+        boundTriggerEl.off('click tap', runAnimation);
+        boundTriggerEl.off('dblclick dbltap', runAnimation);
+        boundTriggerEl.off('mouseenter', runAnimation);
+        boundTriggerEl.off('mouseleave', resetKonvaEl);
+      }
+      resetKonvaEl();
+    };
+  }, [isPreview, resolvedNode.animation?.type, resolvedNode.animation?.duration, resolvedNode.animation?.trigger, resolvedNode.animation?.triggerNodeId]);
+
+  const hasShadow = !!resolvedNode.boxShadow?.enabled;
+  const hasBlur = !!(resolvedNode.filterBlur && resolvedNode.filterBlur > 0);
+  const resolvedOpacity = resolvedNode.opacity !== undefined ? Math.max(0, Math.min(1, resolvedNode.opacity / 100)) : 1;
+
+  const shadowProps = {
+    shadowEnabled: hasShadow,
+    shadowColor: hasShadow ? (resolvedNode.boxShadow?.color || 'rgba(0,0,0,0.25)') : undefined,
+    shadowBlur: hasShadow ? (resolvedNode.boxShadow?.blur ?? 10) : 0,
+    shadowOffsetX: hasShadow ? (resolvedNode.boxShadow?.x ?? 0) : 0,
+    shadowOffsetY: hasShadow ? (resolvedNode.boxShadow?.y ?? 4) : 0,
+    shadowOpacity: hasShadow ? 1 : 0,
+  };
+
+  const commonProps: any = {
+    id: `node-${resolvedNode.id}`,
+    x: resolvedNode.x,
+    y: resolvedNode.y,
+    scaleX: resolvedNode.scaleX || 1,
+    scaleY: resolvedNode.scaleY || 1,
+    rotation: resolvedNode.rotation || 0,
+    fill: resolvedNode.fill,
+    opacity: resolvedOpacity,
+    ...shadowProps,
+    filters: hasBlur ? [Konva.Filters.Blur] : undefined,
+    blurRadius: hasBlur ? (resolvedNode.filterBlur || 0) : 0,
+    draggable: mode === 'select' && (!inComponent || selectedIds.includes(node.id)),
+    listening: (mode === 'preview' || isPreview) 
+      ? (resolvedNode.type === 'Frame' ? true : !!resolvedNode.linkTo || !!masterNode || !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none') || !!(resolvedNode.animation && resolvedNode.animation.type !== 'none') || nodes.some(n => n.animation?.triggerNodeId === resolvedNode.id && n.animation?.type !== 'none')) 
+      : true,
+    onClick: (e: any) => handleNodeClick(e, node, false),
+    onTap: (e: any) => handleNodeClick(e, node, false),
+    onDblClick: (e: any) => handleNodeClick(e, node, true),
+    onDblTap: (e: any) => handleNodeClick(e, node, true),
+    onDragStart: (e: any) => { 
+      if (mode === 'select') { 
+        e.cancelBubble = true; 
+        let targetNode = node;
+        if (!selectedIds.includes(node.id)) {
+          let rootComponent = null;
+          let curr = node;
+          while (curr.parentId) {
+            const parent = nodes.find(n => n.id === curr.parentId);
+            if (!parent) break;
+            if (parent.isMasterComponent || parent.componentId) {
+              rootComponent = parent;
+            }
+            curr = parent;
+          }
+          if (rootComponent) targetNode = rootComponent;
+          
+          if (e.evt.shiftKey) toggleNodeSelection(targetNode.id);
+          else selectNodes([targetNode.id]); 
+        }
+      } 
+    },
+    onDragEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleDragEnd(e, node.id); } },
+    onTransformEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleTransformEnd(e, node.id); } },
+    onMouseEnter: (e: any) => {
+      const hasHover = !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none');
+      if (isInteractive || mode === 'connect' || hasHover) {
+        const container = e.target.getStage()?.container();
+        if (container) container.style.cursor = 'pointer';
+      }
+      if (mode === 'preview' || isPreview) {
+        if (masterNode?.variants?.hover) {
+          setInteractiveState('hover');
+        }
+        if (hasHover) {
+          const konvaNode = shapeRef.current || e.target;
+          const shadowTarget = (konvaNode instanceof Konva.Group && konvaNode.children?.length)
+            ? (konvaNode.findOne('Image') || konvaNode.findOne('Rect') || konvaNode.children[0])
+            : konvaNode;
+
+          const duration = (resolvedNode.transitionDuration || 300) / 1000;
+          const easing = getKonvaEasing(resolvedNode.transitionTimingFunction);
+
+          if (hoverTweenRef.current) hoverTweenRef.current.destroy();
+
+          const targetProps: any = {
+            node: konvaNode,
+            duration,
+            easing,
+          };
+
+          const baseScaleX = resolvedNode.scaleX || 1;
+          const baseScaleY = resolvedNode.scaleY || 1;
+          const isCenterBased = resolvedNode.type === 'Circle' || resolvedNode.type === 'Triangle';
+          const w = resolvedNode.width || (typeof konvaNode.width === 'function' ? konvaNode.width() : 100);
+          const h = resolvedNode.height || (typeof konvaNode.height === 'function' ? konvaNode.height() : 40);
+          const isGroupTarget = shadowTarget && shadowTarget !== konvaNode;
+
+          switch (resolvedNode.hoverEffect) {
+            case 'scale-up':
+              targetProps.scaleX = baseScaleX * 1.08;
+              targetProps.scaleY = baseScaleY * 1.08;
+              if (!isCenterBased) {
+                targetProps.x = resolvedNode.x - (w * (baseScaleX * 0.08)) / 2;
+                targetProps.y = resolvedNode.y - (h * (baseScaleY * 0.08)) / 2;
+              }
+              break;
+            case 'scale-down':
+              targetProps.scaleX = baseScaleX * 0.92;
+              targetProps.scaleY = baseScaleY * 0.92;
+              if (!isCenterBased) {
+                targetProps.x = resolvedNode.x + (w * (baseScaleX * 0.08)) / 2;
+                targetProps.y = resolvedNode.y + (h * (baseScaleY * 0.08)) / 2;
+              }
+              break;
+            case 'lift':
+              targetProps.y = resolvedNode.y - 8;
+              if (shadowTarget && shadowTarget.shadowEnabled) {
+                shadowTarget.shadowEnabled(true);
+                shadowTarget.shadowColor(resolvedNode.boxShadow?.color || 'rgba(0,0,0,0.35)');
+              }
+              targetProps.shadowOffsetY = (resolvedNode.boxShadow?.y || 4) + 12;
+              targetProps.shadowBlur = (resolvedNode.boxShadow?.blur || 10) + 16;
+              targetProps.shadowOpacity = 1;
+              break;
+            case 'glow':
+              if (shadowTarget && shadowTarget.shadowEnabled) {
+                shadowTarget.shadowEnabled(true);
+                const glowCol = resolvedNode.fill && resolvedNode.fill !== '#ffffff' ? resolvedNode.fill : '#4A3AFF';
+                shadowTarget.shadowColor(glowCol);
+              }
+              targetProps.shadowBlur = 32;
+              targetProps.shadowOffsetX = 0;
+              targetProps.shadowOffsetY = 0;
+              targetProps.shadowOpacity = 1;
+              break;
+            case 'darken':
+              targetProps.opacity = Math.max(0.1, resolvedOpacity * 0.55);
+              break;
+            case 'brighten':
+              if (resolvedOpacity < 0.9) {
+                targetProps.opacity = Math.min(1, resolvedOpacity * 1.4);
+              } else {
+                if (shadowTarget && shadowTarget.shadowEnabled) {
+                  shadowTarget.shadowEnabled(true);
+                  shadowTarget.shadowColor('#ffffff');
+                }
+                targetProps.shadowBlur = 24;
+                targetProps.shadowOffsetX = 0;
+                targetProps.shadowOffsetY = 0;
+                targetProps.shadowOpacity = 0.9;
+                targetProps.scaleX = baseScaleX * 1.02;
+                targetProps.scaleY = baseScaleY * 1.02;
+                if (!isCenterBased) {
+                  targetProps.x = resolvedNode.x - (w * (baseScaleX * 0.02)) / 2;
+                  targetProps.y = resolvedNode.y - (h * (baseScaleY * 0.02)) / 2;
+                }
+              }
+              break;
+          }
+
+          if (isGroupTarget) {
+            const shadowAnimProps: any = {
+              node: shadowTarget,
+              duration,
+              easing,
+            };
+            if (targetProps.shadowOffsetY !== undefined) shadowAnimProps.shadowOffsetY = targetProps.shadowOffsetY;
+            if (targetProps.shadowOffsetX !== undefined) shadowAnimProps.shadowOffsetX = targetProps.shadowOffsetX;
+            if (targetProps.shadowBlur !== undefined) shadowAnimProps.shadowBlur = targetProps.shadowBlur;
+            if (targetProps.shadowOpacity !== undefined) shadowAnimProps.shadowOpacity = targetProps.shadowOpacity;
+
+            delete targetProps.shadowOffsetY;
+            delete targetProps.shadowOffsetX;
+            delete targetProps.shadowBlur;
+            delete targetProps.shadowOpacity;
+
+            if (shadowTweenRef.current) shadowTweenRef.current.destroy();
+            shadowTweenRef.current = new Konva.Tween(shadowAnimProps);
+            shadowTweenRef.current.play();
+          }
+
+          hoverTweenRef.current = new Konva.Tween(targetProps);
+          hoverTweenRef.current.play();
+        }
+      }
+    },
+    onMouseLeave: (e: any) => {
+      const hasHover = !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none');
+      if (isInteractive || mode === 'connect' || hasHover) {
+        const container = e.target.getStage()?.container();
+        if (container) container.style.cursor = 'default';
+      }
+      if (mode === 'preview' || isPreview) {
+        setInteractiveState('default');
+        if (hasHover) {
+          const konvaNode = shapeRef.current || e.target;
+          const shadowTarget = (konvaNode instanceof Konva.Group && konvaNode.children?.length)
+            ? (konvaNode.findOne('Image') || konvaNode.findOne('Rect') || konvaNode.children[0])
+            : konvaNode;
+
+          const duration = (resolvedNode.transitionDuration || 300) / 1000;
+          const easing = getKonvaEasing(resolvedNode.transitionTimingFunction);
+          const isGroupTarget = shadowTarget && shadowTarget !== konvaNode;
+
+          if (hoverTweenRef.current) hoverTweenRef.current.destroy();
+          if (shadowTweenRef.current) shadowTweenRef.current.destroy();
+
+          const resetProps: any = {
+            node: konvaNode,
+            duration,
+            easing,
+            scaleX: resolvedNode.scaleX || 1,
+            scaleY: resolvedNode.scaleY || 1,
+            x: resolvedNode.x,
+            y: resolvedNode.y,
+            opacity: resolvedOpacity,
+            shadowColor: hasShadow ? (resolvedNode.boxShadow?.color || 'rgba(0,0,0,0.25)') : undefined,
+            shadowBlur: hasShadow ? (resolvedNode.boxShadow?.blur ?? 10) : 0,
+            shadowOffsetX: hasShadow ? (resolvedNode.boxShadow?.x ?? 0) : 0,
+            shadowOffsetY: hasShadow ? (resolvedNode.boxShadow?.y ?? 4) : 0,
+            shadowOpacity: hasShadow ? 1 : 0,
+            onFinish: () => {
+              if (!hasShadow && !isGroupTarget && shadowTarget && shadowTarget.shadowEnabled) {
+                shadowTarget.shadowEnabled(false);
+                shadowTarget.getLayer()?.batchDraw();
+              }
+            }
+          };
+
+          if (isGroupTarget) {
+            delete resetProps.shadowColor;
+            delete resetProps.shadowBlur;
+            delete resetProps.shadowOffsetX;
+            delete resetProps.shadowOffsetY;
+            delete resetProps.shadowOpacity;
+
+            const shadowResetProps: any = {
+              node: shadowTarget,
+              duration,
+              easing,
+              shadowColor: hasShadow ? (resolvedNode.boxShadow?.color || 'rgba(0,0,0,0.25)') : undefined,
+              shadowBlur: hasShadow ? (resolvedNode.boxShadow?.blur ?? 10) : 0,
+              shadowOffsetX: hasShadow ? (resolvedNode.boxShadow?.x ?? 0) : 0,
+              shadowOffsetY: hasShadow ? (resolvedNode.boxShadow?.y ?? 4) : 0,
+              shadowOpacity: hasShadow ? 1 : 0,
+              onFinish: () => {
+                if (!hasShadow && shadowTarget.shadowEnabled) {
+                  shadowTarget.shadowEnabled(false);
+                  shadowTarget.getLayer()?.batchDraw();
+                }
+              }
+            };
+            shadowTweenRef.current = new Konva.Tween(shadowResetProps);
+            shadowTweenRef.current.play();
+          }
+
+          hoverTweenRef.current = new Konva.Tween(resetProps);
+          hoverTweenRef.current.play();
+        }
+      }
+    },
+    onMouseDown: (e: any) => {
+      if (mode === 'select') {
+        if (e.target === e.target.getStage()) {
+          if (!e.evt.shiftKey) selectNodes([]);
+        }
+      }
+      if (mode === 'preview' && masterNode?.variants?.active) {
+        setInteractiveState('active');
+      }
+    },
+    onMouseUp: (e: any) => {
+      if (mode === 'preview' && interactiveState === 'active') {
+        setInteractiveState('hover');
+      }
+    }
+  };
+
+  const isComponentIndicator = (mode === 'select' && !isPreview && (node.isMasterComponent || node.componentId));
+  const indicatorStroke = node.isMasterComponent ? '#4A3AFF' : '#C65D3B';
+
+  let content = null;
+
+  if (resolvedNode.type === 'Frame') {
+    const childNodes = nodes.filter(n => n.parentId === node.id);
+    const { shadowEnabled, shadowColor, shadowBlur, shadowOffsetX, shadowOffsetY, shadowOpacity, ...groupProps } = commonProps;
+    content = (
+      <Group 
+        ref={shapeRef}
+        key={node.id} 
+        {...groupProps} 
+        width={resolvedNode.width}
+        height={resolvedNode.height}
+        draggable={mode === 'select' && !isPreview}
+      >
+        <Rect
+          x={0}
+          y={0}
+          width={resolvedNode.width}
+          height={resolvedNode.height}
+          fill={resolvedNode.fill || '#ffffff'}
+          cornerRadius={resolvedNode.cornerRadius}
+          stroke={isComponentIndicator ? indicatorStroke : "#cbd5e1"}
+          strokeWidth={isComponentIndicator ? 2 : 1}
+          dash={node.componentId ? [5, 5] : undefined}
+          shadowEnabled={hasShadow}
+          shadowColor={shadowProps.shadowColor}
+          shadowBlur={shadowProps.shadowBlur}
+          shadowOffsetX={shadowProps.shadowOffsetX}
+          shadowOffsetY={shadowProps.shadowOffsetY}
+          shadowOpacity={shadowProps.shadowOpacity}
+        />
+        {!isPreview && (
+          <Text
+            x={0}
+            y={-20}
+            text={resolvedNode.name ? `${resolvedNode.name}${resolvedNode.variantOf ? ' • Variant' : ''} (${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)})` : `Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
+            fill={resolvedNode.variantOf ? "#4A3AFF" : "#64748b"}
+            fontSize={12}
+            fontStyle="500"
+            fontFamily="Inter, sans-serif"
+            listening={false}
+          />
+        )}
+        <Group
+          clipX={0} 
+          clipY={0} 
+          clipWidth={resolvedNode.width} 
+          clipHeight={resolvedNode.height}
+        >
+          {childNodes.map(n => <RenderNode key={n.id} node={n} isPreview={isPreview} context={context} />)}
+        </Group>
+      </Group>
+    );
+  } else if (resolvedNode.type === 'Rect') {
+    content = (
+      <Rect
+        ref={shapeRef}
+        key={node.id}
+        {...commonProps}
+        width={resolvedNode.width}
+        height={resolvedNode.height}
+        cornerRadius={resolvedNode.cornerRadius}
+        stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
+        strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
+        dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
+      />
+    );
+  } else if (resolvedNode.type === 'Circle') {
+    content = (
+      <Circle
+        ref={shapeRef}
+        key={node.id}
+        {...commonProps}
+        radius={resolvedNode.radius}
+        stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
+        strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
+        dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
+      />
+    );
+  } else if (resolvedNode.type === 'Triangle') {
+    content = (
+      <RegularPolygon
+        ref={shapeRef}
+        key={node.id}
+        {...commonProps}
+        sides={3}
+        radius={resolvedNode.radius || 50}
+        stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
+        strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
+        dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
+      />
+    );
+  } else if (resolvedNode.type === 'Line') {
+    const { shadowEnabled, shadowColor, shadowBlur, shadowOffsetX, shadowOffsetY, shadowOpacity, ...groupProps } = commonProps;
+    content = (
+      <Group ref={shapeRef} key={node.id} {...groupProps}>
+        <Line
+          points={resolvedNode.points}
+          stroke={isComponentIndicator ? indicatorStroke : resolvedNode.stroke}
+          strokeWidth={resolvedNode.strokeWidth}
+          tension={resolvedNode.tension || 0}
+          fillEnabled={false}
+          hitStrokeWidth={15}
+          listening={true}
+          dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
+          onDblClick={(e) => { e.cancelBubble = true; handleLineDblClick(e, node.id); }}
+          shadowEnabled={hasShadow}
+          shadowColor={shadowProps.shadowColor}
+          shadowBlur={shadowProps.shadowBlur}
+          shadowOffsetX={shadowProps.shadowOffsetX}
+          shadowOffsetY={shadowProps.shadowOffsetY}
+          shadowOpacity={shadowProps.shadowOpacity}
+        />
+        {mode === 'select' && selectedIds.includes(node.id) && resolvedNode.points && (
+          <>
+            {Array.from({ length: resolvedNode.points.length / 2 }).map((_, i) => (
+              <Circle
+                key={`anchor-${i}`}
+                name="anchor"
+                x={resolvedNode.points![i * 2]}
+                y={resolvedNode.points![i * 2 + 1]}
+                radius={6}
+                fill="#ffffff"
+                stroke="#4A3AFF"
+                strokeWidth={2}
+                draggable={mode === 'select'}
+                onDragMove={(e) => handleAnchorDragMove(e, node.id, i)}
+                onDragEnd={(e) => handleAnchorDragEnd(e, node.id, i)}
+                onDblClick={(e) => { e.cancelBubble = true; handleAnchorDblClick(e, node.id, i); }}
+                onMouseEnter={(e) => {
+                  const container = e.target.getStage()?.container();
+                  if (container) container.style.cursor = 'pointer';
+                }}
+                onMouseLeave={(e) => {
+                  const container = e.target.getStage()?.container();
+                  if (container) container.style.cursor = 'default';
+                }}
+              />
+            ))}
+          </>
+        )}
+      </Group>
+    );
+  } else if (resolvedNode.type === 'Text') {
+    content = (
+      <Text
+        ref={shapeRef}
+        key={node.id}
+        {...commonProps}
+        text={resolvedNode.text}
+        fontSize={resolvedNode.fontSize}
+        fontFamily={resolvedNode.fontFamily}
+        stroke={isComponentIndicator ? indicatorStroke : undefined}
+        strokeWidth={isComponentIndicator ? 1 : 0}
+      />
+    );
+  } else if (resolvedNode.type === 'Image') {
+    content = <URLImage shapeRef={shapeRef} key={node.id} node={resolvedNode} commonProps={commonProps} shadowProps={shadowProps} />;
+  }
+
+  // Add component indicator label in select mode
+  if (isComponentIndicator) {
+    return (
+      <Group key={node.id}>
+        {content}
+        <Text
+          x={resolvedNode.x}
+          y={resolvedNode.y - 14}
+          text={node.isMasterComponent ? `❖ ${node.componentName || 'Component'}` : `◇ Instance`}
+          fill={indicatorStroke}
+          fontSize={10}
+          fontFamily="Inter"
+          fontStyle="bold"
+          listening={false}
+        />
+      </Group>
+    );
+  }
+
+  return content;
+};
+
 export const CanvasArea: React.FC = () => {
-  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants } = useCanvasStore();
+  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants, pickingTriggerForNodeId, setPickingTriggerForNodeId, setToastMessage } = useCanvasStore();
   
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -55,11 +822,22 @@ export const CanvasArea: React.FC = () => {
 
     if (transformerRef.current && stageRef.current) {
       if (selectedIds.length > 0) {
-        const selectedKonvaNodes = selectedIds.map(id => stageRef.current?.findOne(`#node-${id}`)).filter(Boolean) as Konva.Node[];
+        const filteredIds = selectedIds.filter(id => {
+          const node = nodes.find(n => n.id === id);
+          if (!node) return false;
+          let curr = node;
+          while (curr.parentId) {
+            if (selectedIds.includes(curr.parentId)) return false;
+            curr = nodes.find(n => n.id === curr.parentId) || ({} as any);
+          }
+          return true;
+        });
+
+        const selectedKonvaNodes = filteredIds.map(id => stageRef.current?.findOne(`#node-${id}`)).filter(Boolean) as Konva.Node[];
         
         // Don't attach transformer to Line directly if it's the only one selected (we use custom anchors)
-        if (selectedIds.length === 1) {
-          const storeNode = nodes.find(n => n.id === selectedIds[0]);
+        if (filteredIds.length === 1) {
+          const storeNode = nodes.find(n => n.id === filteredIds[0]);
           if (storeNode && storeNode.type === 'Line') {
             transformerRef.current.nodes([]);
             return;
@@ -227,7 +1005,7 @@ export const CanvasArea: React.FC = () => {
       updates.scaleX = scaleX;
       updates.scaleY = scaleY;
     } else if (storeNode.type === 'Text') {
-      const fs = node.fontSize ? node.fontSize() : (storeNode.fontSize || 16);
+      const fs = (node as any).fontSize ? (node as any).fontSize() : (storeNode.fontSize || 16);
       node.scaleX(1);
       node.scaleY(1);
       updates.fontSize = Math.max(8, Math.abs(fs * scaleX));
@@ -306,6 +1084,41 @@ export const CanvasArea: React.FC = () => {
 
   const handleNodeClick = (e: any, node: CanvasNode, isDoubleClick: boolean = false) => {
     e.cancelBubble = true;
+    (document.activeElement as HTMLElement)?.blur();
+
+    if (pickingTriggerForNodeId) {
+      const animatedNode = nodes.find(n => n.id === pickingTriggerForNodeId);
+      if (animatedNode) {
+        if (node.id === animatedNode.id) {
+          // User clicked self -> reset trigger to self
+          updateNode(pickingTriggerForNodeId, {
+            animation: {
+              ...animatedNode.animation,
+              type: animatedNode.animation?.type || 'bounce',
+              duration: animatedNode.animation?.duration || 1000,
+              infinite: animatedNode.animation?.infinite ?? true,
+              triggerNodeId: undefined,
+            }
+          }, true);
+          setToastMessage(`Trigger source set to self for "${animatedNode.name}"`);
+        } else {
+          // User clicked trigger element -> bind triggerNodeId
+          updateNode(pickingTriggerForNodeId, {
+            animation: {
+              ...animatedNode.animation,
+              type: animatedNode.animation?.type || 'bounce',
+              duration: animatedNode.animation?.duration || 1000,
+              infinite: animatedNode.animation?.infinite ?? true,
+              triggerNodeId: node.id,
+            }
+          }, true);
+          setToastMessage(`Animation trigger set to "${node.name}"`);
+        }
+      }
+      setPickingTriggerForNodeId(null);
+      return;
+    }
+
     if (mode === 'preview') {
       if (node.linkTo) {
         const targetNode = nodes.find(n => n.id === node.linkTo);
@@ -382,315 +1195,26 @@ export const CanvasArea: React.FC = () => {
       }
     }
 
-    if (e.evt.shiftKey) {
+    if (e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey) {
       toggleNodeSelection(targetNode.id);
     } else {
       selectNodes([targetNode.id]);
     }
   };
 
-  const RenderNode = ({ node, isPreview = false }: { node: CanvasNode, isPreview?: boolean }) => {
-    const [interactiveState, setInteractiveState] = useState<'default'|'hover'|'active'|'disabled'>('default');
-
-    let resolvedNode = { ...node };
-    let masterNode = node.isMasterComponent ? node : undefined;
-    
-    let rootInstance: CanvasNode | undefined = undefined;
-    let rootMaster: CanvasNode | undefined = undefined;
-
-    if (node.componentId) {
-      masterNode = nodes.find(n => n.id === node.componentId);
-      if (masterNode) {
-        rootInstance = node;
-        let curr = node;
-        while (curr.parentId) {
-          const parent = nodes.find(n => n.id === curr.parentId);
-          if (!parent || !parent.componentId) break;
-          rootInstance = parent;
-          curr = parent;
-        }
-
-        rootMaster = rootInstance.componentId ? nodes.find(n => n.id === rootInstance!.componentId) : undefined;
-
-        resolvedNode = {
-          ...masterNode,
-          id: node.id,
-          x: node.x,
-          y: node.y,
-          parentId: node.parentId,
-          componentId: node.componentId,
-          variant: node.variant,
-          linkTo: node.linkTo,
-          isMasterComponent: false,
-          propOverrides: node.propOverrides
-        };
-
-        if (masterNode.boundProps && rootInstance.propOverrides) {
-          Object.entries(masterNode.boundProps).forEach(([field, propId]) => {
-            if (rootInstance!.propOverrides![propId] !== undefined) {
-              (resolvedNode as any)[field] = rootInstance!.propOverrides![propId];
-            }
-          });
-        }
-      }
-    }
-
-    if (masterNode && masterNode.variants) {
-      let activeVariant = isPreview ? interactiveState : (rootInstance?.variant || node.variant || 'default');
-      if (activeVariant !== 'default' && masterNode.variants[activeVariant]) {
-        resolvedNode = { ...resolvedNode, ...masterNode.variants[activeVariant] };
-      } else if (isPreview && interactiveState !== 'default') {
-        activeVariant = 'default';
-      }
-    }
-
-    const isInteractive = mode === 'preview' && (resolvedNode.linkTo || masterNode);
-    
-    let inComponent = false;
-    let currCheck = node;
-    while (currCheck.parentId) {
-      const parent = nodes.find(n => n.id === currCheck.parentId);
-      if (!parent) break;
-      if (parent.isMasterComponent || parent.componentId) {
-        inComponent = true;
-        break;
-      }
-      currCheck = parent;
-    }
-    
-    const commonProps = {
-      id: `node-${resolvedNode.id}`,
-      x: resolvedNode.x,
-      y: resolvedNode.y,
-      scaleX: resolvedNode.scaleX || 1,
-      scaleY: resolvedNode.scaleY || 1,
-      rotation: resolvedNode.rotation || 0,
-      fill: resolvedNode.fill,
-      draggable: mode === 'select' && (!inComponent || selectedIds.includes(node.id)),
-      listening: mode === 'preview' ? (resolvedNode.type === 'Frame' ? true : !!resolvedNode.linkTo || !!masterNode) : true,
-      onClick: (e: any) => handleNodeClick(e, node, false),
-      onTap: (e: any) => handleNodeClick(e, node, false),
-      onDblClick: (e: any) => handleNodeClick(e, node, true),
-      onDblTap: (e: any) => handleNodeClick(e, node, true),
-      onDragStart: (e: any) => { 
-        if (mode === 'select') { 
-          e.cancelBubble = true; 
-          let targetNode = node;
-          if (!selectedIds.includes(node.id)) {
-            let rootComponent = null;
-            let curr = node;
-            while (curr.parentId) {
-              const parent = nodes.find(n => n.id === curr.parentId);
-              if (!parent) break;
-              if (parent.isMasterComponent || parent.componentId) {
-                rootComponent = parent;
-              }
-              curr = parent;
-            }
-            if (rootComponent) targetNode = rootComponent;
-            
-            if (e.evt.shiftKey) toggleNodeSelection(targetNode.id);
-            else selectNodes([targetNode.id]); 
-          }
-        } 
-      },
-      onDragEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleDragEnd(e, node.id); } },
-      onTransformEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleTransformEnd(e, node.id); } },
-      onMouseEnter: (e: any) => {
-        if (isInteractive || mode === 'connect') {
-          const container = e.target.getStage()?.container();
-          if (container) container.style.cursor = 'pointer';
-        }
-        if (mode === 'preview' && masterNode?.variants?.hover) {
-          setInteractiveState('hover');
-        }
-      },
-      onMouseLeave: (e: any) => {
-        if (isInteractive || mode === 'connect') {
-          const container = e.target.getStage()?.container();
-          if (container) container.style.cursor = 'default';
-        }
-        if (mode === 'preview') {
-          setInteractiveState('default');
-        }
-      },
-      onMouseDown: (e: any) => {
-        if (mode === 'select') {
-          if (e.target === e.target.getStage()) {
-            if (!e.evt.shiftKey) selectNodes([]);
-          }
-        }
-        if (mode === 'preview' && masterNode?.variants?.active) {
-          setInteractiveState('active');
-        }
-      },
-      onMouseUp: (e: any) => {
-        if (mode === 'preview' && interactiveState === 'active') {
-          setInteractiveState('hover');
-        }
-      }
-    };
-
-    const isComponentIndicator = (mode === 'select' && !isPreview && (node.isMasterComponent || node.componentId));
-    const indicatorStroke = node.isMasterComponent ? '#4A3AFF' : '#C65D3B';
-
-    let content = null;
-
-    if (resolvedNode.type === 'Frame') {
-      const childNodes = nodes.filter(n => n.parentId === node.id);
-      content = (
-        <Group 
-          key={node.id} 
-          {...commonProps} 
-          width={resolvedNode.width}
-          height={resolvedNode.height}
-          clipX={0} 
-          clipY={0} 
-          clipWidth={resolvedNode.width} 
-          clipHeight={resolvedNode.height}
-          draggable={mode === 'select' && !isPreview}
-        >
-          <Rect
-            x={0}
-            y={0}
-            width={resolvedNode.width}
-            height={resolvedNode.height}
-            fill={resolvedNode.fill || '#ffffff'}
-            stroke={isComponentIndicator ? indicatorStroke : "#cbd5e1"}
-            strokeWidth={isComponentIndicator ? 2 : 1}
-            dash={node.componentId ? [5, 5] : undefined}
-          />
-          {!isPreview && (
-            <Text
-              x={0}
-              y={-20}
-              text={resolvedNode.name ? `${resolvedNode.name}${resolvedNode.variantOf ? ' • Variant' : ''} (${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)})` : `Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
-              fill={resolvedNode.variantOf ? "#4A3AFF" : "#64748b"}
-              fontSize={12}
-              fontStyle="500"
-              fontFamily="Inter, sans-serif"
-              listening={false}
-            />
-          )}
-          {childNodes.map(n => <RenderNode key={n.id} node={n} isPreview={isPreview} />)}
-        </Group>
-      );
-    } else if (resolvedNode.type === 'Rect') {
-      content = (
-        <Rect
-          key={node.id}
-          {...commonProps}
-          width={resolvedNode.width}
-          height={resolvedNode.height}
-          cornerRadius={resolvedNode.cornerRadius}
-          stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
-          strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
-          dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
-        />
-      );
-    } else if (resolvedNode.type === 'Circle') {
-      content = (
-        <Circle
-          key={node.id}
-          {...commonProps}
-          radius={resolvedNode.radius}
-          stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
-          strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
-          dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
-        />
-      );
-    } else if (resolvedNode.type === 'Triangle') {
-      content = (
-        <RegularPolygon
-          key={node.id}
-          {...commonProps}
-          sides={3}
-          radius={resolvedNode.radius}
-          stroke={isComponentIndicator && !resolvedNode.stroke ? indicatorStroke : resolvedNode.stroke}
-          strokeWidth={isComponentIndicator && !resolvedNode.strokeWidth ? 2 : (resolvedNode.strokeWidth || 0)}
-          dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
-        />
-      );
-    } else if (resolvedNode.type === 'Line') {
-      content = (
-        <Group key={node.id} {...commonProps}>
-          <Line
-            points={resolvedNode.points}
-            stroke={isComponentIndicator ? indicatorStroke : resolvedNode.stroke}
-            strokeWidth={resolvedNode.strokeWidth}
-            tension={resolvedNode.tension || 0}
-            fillEnabled={false}
-            hitStrokeWidth={15}
-            listening={true}
-            dash={node.componentId && isComponentIndicator ? [5, 5] : undefined}
-            onDblClick={(e) => { e.cancelBubble = true; handleLineDblClick(e, node.id); }}
-          />
-          {mode === 'select' && selectedIds.includes(node.id) && resolvedNode.points && (
-            <>
-              {Array.from({ length: resolvedNode.points.length / 2 }).map((_, i) => (
-                <Circle
-                  key={`anchor-${i}`}
-                  name="anchor"
-                  x={resolvedNode.points![i * 2]}
-                  y={resolvedNode.points![i * 2 + 1]}
-                  radius={6}
-                  fill="#ffffff"
-                  stroke="#4A3AFF"
-                  strokeWidth={2}
-                  draggable={mode === 'select'}
-                  onDragMove={(e) => handleAnchorDragMove(e, node.id, i)}
-                  onDragEnd={(e) => handleAnchorDragEnd(e, node.id, i)}
-                  onDblClick={(e) => { e.cancelBubble = true; handleAnchorDblClick(e, node.id, i); }}
-                  onMouseEnter={(e) => {
-                    const container = e.target.getStage()?.container();
-                    if (container) container.style.cursor = 'pointer';
-                  }}
-                  onMouseLeave={(e) => {
-                    const container = e.target.getStage()?.container();
-                    if (container) container.style.cursor = 'default';
-                  }}
-                />
-              ))}
-            </>
-          )}
-        </Group>
-      );
-    } else if (resolvedNode.type === 'Text') {
-      content = (
-        <Text
-          key={node.id}
-          {...commonProps}
-          text={resolvedNode.text}
-          fontSize={resolvedNode.fontSize}
-          fontFamily={resolvedNode.fontFamily}
-          stroke={isComponentIndicator ? indicatorStroke : undefined}
-          strokeWidth={isComponentIndicator ? 1 : 0}
-        />
-      );
-    } else if (resolvedNode.type === 'Image') {
-      content = <URLImage key={node.id} node={resolvedNode} commonProps={commonProps} />;
-    }
-
-    // Add component indicator label in select mode
-    if (isComponentIndicator) {
-      return (
-        <Group key={node.id}>
-          {content}
-          <Text
-            x={resolvedNode.x}
-            y={resolvedNode.y - 14}
-            text={node.isMasterComponent ? `❖ ${node.componentName || 'Component'}` : `◇ Instance`}
-            fill={indicatorStroke}
-            fontSize={10}
-            fontFamily="Inter"
-            fontStyle="bold"
-            listening={false}
-          />
-        </Group>
-      );
-    }
-
-    return content;
+  const nodeContext: NodeContext = {
+    nodes,
+    selectedIds,
+    mode,
+    selectNodes,
+    toggleNodeSelection,
+    handleNodeClick,
+    handleDragEnd,
+    handleTransformEnd,
+    handleLineDblClick,
+    handleAnchorDragMove,
+    handleAnchorDragEnd,
+    handleAnchorDblClick,
   };
 
   if (mode === 'preview' && previewFrameId) {
@@ -798,7 +1322,7 @@ export const CanvasArea: React.FC = () => {
         <div className="flex-1 overflow-hidden">
           <Stage width={stageSize.width} height={stageSize.height - 56}>
             <Layer x={centeredX} y={centeredY} scaleX={fitScale} scaleY={fitScale}>
-              <RenderNode node={modifiedPreviewFrame} isPreview={true} />
+              <RenderNode node={modifiedPreviewFrame} isPreview={true} context={nodeContext} />
             </Layer>
           </Stage>
         </div>
@@ -978,9 +1502,19 @@ export const CanvasArea: React.FC = () => {
           }
         }}
         onMouseDown={(e) => {
-          if (e.target === e.target.getStage()) {
+          (document.activeElement as HTMLElement)?.blur();
+          const target = e.target;
+          const isStage = target === target.getStage();
+          const clickedKonvaId = target.attrs?.id || target.parent?.attrs?.id || '';
+          const clickedNodeId = clickedKonvaId.replace('node-', '');
+          const clickedNode = nodes.find(n => n.id === clickedNodeId);
+          const isFrameBg = clickedNode?.type === 'Frame' && !clickedNode.componentId && !clickedNode.isMasterComponent;
+
+          if (isStage || isFrameBg) {
             if (mode === 'select') {
-              if (!e.evt.shiftKey) selectNodes([]);
+              if (!e.evt.shiftKey && !e.evt.ctrlKey && !e.evt.metaKey) {
+                if (isStage) selectNodes([]);
+              }
               const pointer = stageRef.current?.getPointerPosition();
               if (pointer && stageRef.current) {
                 const unscaledX = (pointer.x - stageRef.current.x()) / zoom;
@@ -993,47 +1527,55 @@ export const CanvasArea: React.FC = () => {
         }}
         onMouseUp={(e) => {
           if (selectionRect && stageRef.current) {
-            // Find intersected nodes
-            const newSelectedIds = e.evt.shiftKey ? [...selectedIds] : [];
             const r1 = selectionRect;
-            
-            nodes.forEach(node => {
-              if (node.type === 'Frame') return; // Don't marquee select frames
-              // Basic bounding box check using unscaled absolute coords
-              let absX = node.x;
-              let absY = node.y;
-              if (node.parentId) {
-                const parent = nodes.find(n => n.id === node.parentId);
-                if (parent) {
+            setSelectionRect(null);
+
+            if (r1.width > 5 || r1.height > 5) {
+              const newSelectedIds = (e.evt.shiftKey || e.evt.ctrlKey || e.evt.metaKey) ? [...selectedIds] : [];
+              
+              nodes.forEach(node => {
+                if (node.type === 'Frame') return; // Don't marquee select layout frames
+                
+                // Recursively compute absolute canvas coords for nested nodes inside frames
+                let absX = node.x;
+                let absY = node.y;
+                let currParentId = node.parentId;
+                while (currParentId) {
+                  const parent = nodes.find(n => n.id === currParentId);
+                  if (!parent) break;
                   absX += parent.x;
                   absY += parent.y;
+                  currParentId = parent.parentId;
                 }
-              }
+                
+                const scaleX = node.scaleX || 1;
+                const scaleY = node.scaleY || 1;
+                const w = (node.width || (node.radius ? node.radius * 2 : 100)) * scaleX;
+                const h = (node.height || (node.radius ? node.radius * 2 : 100)) * scaleY;
+                const r2 = { x: absX, y: absY, width: w, height: h };
+
+                if (node.type === 'Circle' || node.type === 'Triangle') {
+                  r2.x -= w / 2;
+                  r2.y -= h / 2;
+                }
+
+                if (r1.x < r2.x + r2.width && r1.x + r1.width > r2.x &&
+                    r1.y < r2.y + r2.height && r1.y + r1.height > r2.y) {
+                  if (!newSelectedIds.includes(node.id)) {
+                    newSelectedIds.push(node.id);
+                  }
+                }
+              });
               
-              const w = node.width || (node.radius ? node.radius * 2 : 100);
-              const h = node.height || (node.radius ? node.radius * 2 : 100);
-              const r2 = { x: absX, y: absY, width: w, height: h };
-
-              if (node.type === 'Circle' || node.type === 'Triangle') {
-                r2.x -= w/2;
-                r2.y -= h/2;
+              if (newSelectedIds.length > 0) {
+                selectNodes(newSelectedIds);
               }
-
-              if (r1.x < r2.x + r2.width && r1.x + r1.width > r2.x &&
-                  r1.y < r2.y + r2.height && r1.y + r1.height > r2.y) {
-                if (!newSelectedIds.includes(node.id)) {
-                  newSelectedIds.push(node.id);
-                }
-              }
-            });
-            
-            selectNodes(newSelectedIds);
-            setSelectionRect(null);
+            }
           }
         }}
       >
         <Layer>
-          {rootNodes.map(n => <RenderNode key={n.id} node={n} />)}
+          {rootNodes.map(n => <RenderNode key={n.id} node={n} context={nodeContext} />)}
 
           {/* Connect mode: highlight all frames as potential targets */}
           {mode === 'connect' && nodes.filter(n => n.type === 'Frame' && !n.parentId && !n.isMasterComponent && !n.componentId).map(frame => (
@@ -1176,6 +1718,120 @@ export const CanvasArea: React.FC = () => {
             </Group>
           ))}
 
+          {/* Animation Trigger Connectors */}
+          {(mode === 'select' || pickingTriggerForNodeId) && nodes
+            .filter(targetNode => targetNode.animation?.triggerNodeId && targetNode.animation?.type !== 'none')
+            .map(targetNode => {
+              const triggerNodeId = targetNode.animation!.triggerNodeId!;
+              const triggerNode = nodes.find(n => n.id === triggerNodeId);
+              if (!triggerNode) return null;
+
+              const isTargetSelected = selectedIds.includes(targetNode.id);
+              const isTriggerSelected = selectedIds.includes(triggerNode.id);
+              const isPickingThis = pickingTriggerForNodeId === targetNode.id;
+              
+              // Display connector line if either element is selected or when picking mode is active for targetNode
+              if (!isTargetSelected && !isTriggerSelected && !isPickingThis) return null;
+
+              const sourceBounds = getNodeCanvasBounds(triggerNode.id);
+              const targetBounds = getNodeCanvasBounds(targetNode.id);
+              if (!sourceBounds || !targetBounds) return null;
+
+              const points = [sourceBounds.centerX, sourceBounds.centerY, targetBounds.centerX, targetBounds.centerY];
+              const midX = (sourceBounds.centerX + targetBounds.centerX) / 2;
+              const midY = (sourceBounds.centerY + targetBounds.centerY) / 2;
+
+              const actionText = targetNode.animation?.trigger?.toUpperCase() || 'CLICK';
+
+              return (
+                <Group key={`anim-trigger-link-${targetNode.id}`}>
+                  {/* Source outline highlight box */}
+                  <Rect
+                    x={sourceBounds.x - 4}
+                    y={sourceBounds.y - 4}
+                    width={sourceBounds.width + 8}
+                    height={sourceBounds.height + 8}
+                    cornerRadius={triggerNode.cornerRadius || 6}
+                    stroke="#8B5CF6"
+                    strokeWidth={2}
+                    fill="rgba(139, 92, 246, 0.08)"
+                    dash={[5, 3]}
+                    listening={false}
+                  />
+                  {/* Source badge pill overlay */}
+                  <Group x={sourceBounds.centerX} y={sourceBounds.y - 24} listening={false}>
+                    <Rect
+                      x={-60}
+                      y={0}
+                      width={120}
+                      height={20}
+                      fill="#8B5CF6"
+                      cornerRadius={10}
+                      shadowColor="rgba(0,0,0,0.2)"
+                      shadowBlur={4}
+                    />
+                    <Text
+                      text={`⚡ ON ${actionText}: ${(targetNode.name || 'Element').toUpperCase()}`}
+                      fill="white"
+                      fontSize={9}
+                      fontStyle="bold"
+                      fontFamily="Inter, sans-serif"
+                      x={-60}
+                      y={4}
+                      width={120}
+                      align="center"
+                    />
+                  </Group>
+
+                  {/* Connector Arrow Line */}
+                  <Arrow
+                    points={points}
+                    stroke="#8B5CF6"
+                    strokeWidth={2.5}
+                    fill="#8B5CF6"
+                    pointerLength={12}
+                    pointerWidth={10}
+                    dash={[8, 4]}
+                    shadowColor="#8B5CF6"
+                    shadowBlur={6}
+                    shadowOpacity={0.4}
+                    listening={false}
+                  />
+
+                  {/* Delete button at center of line */}
+                  <Group
+                    x={midX}
+                    y={midY}
+                    listening={true}
+                    onClick={(e) => {
+                      e.cancelBubble = true;
+                      updateNode(targetNode.id, {
+                        animation: {
+                          ...targetNode.animation,
+                          type: targetNode.animation?.type || 'bounce',
+                          duration: targetNode.animation?.duration || 1000,
+                          infinite: targetNode.animation?.infinite ?? true,
+                          triggerNodeId: undefined,
+                        }
+                      }, true);
+                      setToastMessage(`Reset trigger source to self for "${targetNode.name}"`);
+                    }}
+                    onMouseEnter={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'pointer';
+                    }}
+                    onMouseLeave={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'default';
+                    }}
+                  >
+                    <Circle radius={13} fill="#EF4444" shadowColor="rgba(0,0,0,0.3)" shadowBlur={4} shadowOffsetY={1} />
+                    <Text text="✕" fill="white" fontSize={12} fontStyle="bold" fontFamily="Inter, sans-serif" x={-4} y={-6} listening={false} />
+                  </Group>
+                </Group>
+              );
+            })}
+
           {selectionRect && (
             <Rect
               x={selectionRect.x}
@@ -1196,6 +1852,25 @@ export const CanvasArea: React.FC = () => {
           )}
         </Layer>
       </Stage>
+
+      {/* Picking trigger target mode banner */}
+      {pickingTriggerForNodeId && (() => {
+        const animNode = nodes.find(n => n.id === pickingTriggerForNodeId);
+        return (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-indigo-900/90 text-white px-5 py-2.5 rounded-full shadow-xl border border-indigo-400/40 flex items-center gap-3 backdrop-blur-md">
+            <div className="flex items-center gap-2 text-xs font-semibold">
+              <Target size={16} className="text-indigo-300 animate-spin" />
+              <span>Click any element to trigger <span className="text-indigo-200 underline font-bold">{animNode?.name || 'Element'}</span>'s animation</span>
+            </div>
+            <button 
+              onClick={() => setPickingTriggerForNodeId(null)}
+              className="text-xs bg-indigo-700/70 hover:bg-indigo-700 px-2.5 py-1 rounded-full font-medium transition-colors flex items-center gap-1"
+            >
+              <X size={12} /> Cancel (Esc)
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Connect mode status bar */}
       {mode === 'connect' && (
