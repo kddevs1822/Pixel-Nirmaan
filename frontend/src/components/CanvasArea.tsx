@@ -64,6 +64,73 @@ const getKonvaEasing = (timing?: string) => {
   }
 };
 
+const getSlideTrajectory = (
+  type: string,
+  initialX: number,
+  initialY: number,
+  width: number,
+  height: number,
+  parentW: number,
+  parentH: number,
+  startDist: number,
+  endDist: number,
+  fromEdge: boolean = false
+) => {
+  let startX = initialX;
+  let startY = initialY;
+  let endX = initialX;
+  let endY = initialY;
+
+  const isOutsideBottom = initialY >= parentH - height || initialY >= parentH - 20;
+  const isOutsideTop = initialY < 0;
+  const isOutsideRight = initialX >= parentW - width || initialX >= parentW - 20;
+  const isOutsideLeft = initialX < 0;
+
+  let effectiveStartDist = startDist;
+  if (fromEdge) {
+    if (type === 'slide-up') effectiveStartDist = Math.max(startDist, parentH - initialY + 20);
+    else if (type === 'slide-down') effectiveStartDist = Math.max(startDist, initialY + height + 20);
+    else if (type === 'slide-left') effectiveStartDist = Math.max(startDist, parentW - initialX + 20);
+    else if (type === 'slide-right') effectiveStartDist = Math.max(startDist, initialX + width + 20);
+  }
+
+  if (type === 'slide-up') {
+    if (isOutsideBottom) {
+      startY = initialY + (effectiveStartDist > 0 ? effectiveStartDist : 0);
+      endY = parentH - height - endDist;
+    } else {
+      startY = initialY + effectiveStartDist;
+      endY = initialY - endDist;
+    }
+  } else if (type === 'slide-down') {
+    if (isOutsideTop) {
+      startY = initialY - (effectiveStartDist > 0 ? effectiveStartDist : 0);
+      endY = 0 + endDist;
+    } else {
+      startY = initialY - effectiveStartDist;
+      endY = initialY + endDist;
+    }
+  } else if (type === 'slide-left') {
+    if (isOutsideRight) {
+      startX = initialX + (effectiveStartDist > 0 ? effectiveStartDist : 0);
+      endX = parentW - width - endDist;
+    } else {
+      startX = initialX + effectiveStartDist;
+      endX = initialX - endDist;
+    }
+  } else if (type === 'slide-right') {
+    if (isOutsideLeft) {
+      startX = initialX - (effectiveStartDist > 0 ? effectiveStartDist : 0);
+      endX = 0 + endDist;
+    } else {
+      startX = initialX - effectiveStartDist;
+      endX = initialX + endDist;
+    }
+  }
+
+  return { startX, startY, endX, endY, isOutsideBottom, isOutsideTop, isOutsideRight, isOutsideLeft };
+};
+
 const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: NodeContext }> = ({ node, isPreview = false, context }) => {
   const { nodes, selectedIds, mode, selectNodes, toggleNodeSelection, handleNodeClick, handleDragEnd, handleTransformEnd, handleLineDblClick, handleAnchorDragMove, handleAnchorDragEnd, handleAnchorDblClick } = context;
   const [interactiveState, setInteractiveState] = useState<'default'|'hover'|'active'|'disabled'>('default');
@@ -181,21 +248,187 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
     resolvedNode.opacity
   ]);
 
-  // Entrance and continuous animations in preview mode
+  // Entrance and continuous animations
   useEffect(() => {
-    if (!isPreview || !resolvedNode.animation || resolvedNode.animation.type === 'none' || !shapeRef.current) return;
+    if (!resolvedNode.animation || resolvedNode.animation.type === 'none') return;
     
     const animConfig = resolvedNode.animation;
     const durMs = animConfig.duration || 1000;
     const trigger = animConfig.trigger || 'auto';
-    const konvaEl = shapeRef.current;
     const initialX = resolvedNode.x;
     const initialY = resolvedNode.y;
     const initialOpacity = resolvedNode.opacity !== undefined ? Math.max(0, Math.min(1, resolvedNode.opacity / 100)) : 1;
     let anim: Konva.Animation | null = null;
     let currentTween: Konva.Tween | null = null;
+    let boundTriggerEl: Konva.Node | null = null;
+    let boundRunAnim: (() => void) | null = null;
+    let boundResetAnim: (() => void) | null = null;
 
-    const resetKonvaEl = () => {
+    // Click/dblclick triggers are handled exclusively by handleNodeClick → playNodeAnimation.
+    // Do NOT bind Konva .on('click') here to avoid double-firing.
+    if (trigger === 'click' || trigger === 'dblclick') return;
+
+    const timerId = setTimeout(() => {
+      const konvaEl = shapeRef.current;
+      if (!konvaEl) return;
+
+      if (animConfig.initiallyHidden && (mode === 'preview' || isPreview)) {
+        konvaEl.opacity(0);
+      }
+
+      const resetKonvaEl = () => {
+        if (anim) anim.stop();
+        if (currentTween) currentTween.destroy();
+        if (konvaEl) {
+          konvaEl.x(initialX);
+          konvaEl.y(initialY);
+          konvaEl.scaleX(resolvedNode.scaleX || 1);
+          konvaEl.scaleY(resolvedNode.scaleY || 1);
+          konvaEl.rotation(resolvedNode.rotation || 0);
+          konvaEl.opacity(animConfig.initiallyHidden ? 0 : initialOpacity);
+        }
+      };
+
+      const runAnimation = () => {
+        resetKonvaEl();
+        const startDist = animConfig.startDistance ?? animConfig.distance ?? 50;
+        const endDist = animConfig.endDistance ?? 0;
+        const isInitiallyHidden = !!animConfig.initiallyHidden;
+        const startOpacity = isInitiallyHidden 
+          ? (animConfig.startOpacity !== undefined ? Math.max(0, Math.min(1, animConfig.startOpacity / 100)) : 0)
+          : initialOpacity;
+        const pulseScale = animConfig.scale ?? 1.15;
+        const spinDeg = animConfig.degrees ?? 360;
+        const isInfinite = !!animConfig.infinite;
+
+        if (isInitiallyHidden) {
+          konvaEl.opacity(initialOpacity);
+        }
+
+        if (animConfig.type === 'spin') {
+          anim = new Konva.Animation((frame) => {
+            if (!frame) return;
+            if (!isInfinite && frame.time >= durMs) {
+              konvaEl.rotation((resolvedNode.rotation || 0) + spinDeg);
+              anim?.stop();
+              return;
+            }
+            const progress = Math.min(1, (frame.time % durMs) / durMs);
+            konvaEl.rotation((resolvedNode.rotation || 0) + progress * spinDeg);
+          }, konvaEl.getLayer());
+          anim.start();
+        } else if (animConfig.type === 'pulse') {
+          anim = new Konva.Animation((frame) => {
+            if (!frame) return;
+            if (!isInfinite && frame.time >= durMs) {
+              konvaEl.scaleX(resolvedNode.scaleX || 1);
+              konvaEl.scaleY(resolvedNode.scaleY || 1);
+              anim?.stop();
+              return;
+            }
+            const progress = Math.min(1, (frame.time % durMs) / durMs);
+            const s = 1 + (pulseScale - 1) * Math.sin(progress * Math.PI * 2);
+            konvaEl.scaleX((resolvedNode.scaleX || 1) * s);
+            konvaEl.scaleY((resolvedNode.scaleY || 1) * s);
+          }, konvaEl.getLayer());
+          anim.start();
+        } else if (animConfig.type === 'bounce') {
+          const bounceHeight = animConfig.startDistance ?? animConfig.distance ?? 30;
+          const bounceCount = animConfig.bounceCount ?? 2;
+          const totalBounceTime = durMs * bounceCount;
+          anim = new Konva.Animation((frame) => {
+            if (!frame) return;
+            if (!isInfinite && frame.time >= totalBounceTime) {
+              konvaEl.y(initialY);
+              anim?.stop();
+              return;
+            }
+            const progress = (frame.time % durMs) / durMs;
+            const bounce = -Math.sin(progress * Math.PI) * bounceHeight;
+            konvaEl.y(initialY + bounce);
+          }, konvaEl.getLayer());
+          anim.start();
+        } else if (animConfig.type === 'fade-in') {
+          const fadeStart = isInitiallyHidden ? (animConfig.startOpacity !== undefined ? Math.max(0, Math.min(1, animConfig.startOpacity / 100)) : 0) : initialOpacity;
+          konvaEl.opacity(fadeStart);
+          currentTween = new Konva.Tween({
+            node: konvaEl,
+            duration: durMs / 1000,
+            opacity: initialOpacity,
+            easing: Konva.Easings.EaseOut,
+          });
+          currentTween.play();
+        } else if (animConfig.type.startsWith('slide-')) {
+          const parentNode = nodes.find(p => p.id === resolvedNode.parentId);
+          const parentW = parentNode?.width || 393;
+          const parentH = parentNode?.height || 852;
+          const nodeW = resolvedNode.width || 0;
+          const nodeH = resolvedNode.height || 0;
+
+          const { startX, startY, endX, endY } = getSlideTrajectory(
+            animConfig.type,
+            initialX,
+            initialY,
+            nodeW,
+            nodeH,
+            parentW,
+            parentH,
+            startDist,
+            endDist,
+            animConfig.fromEdge
+          );
+
+          konvaEl.x(startX);
+          konvaEl.y(startY);
+          konvaEl.opacity(startOpacity);
+          currentTween = new Konva.Tween({
+            node: konvaEl,
+            duration: durMs / 1000,
+            x: endX,
+            y: endY,
+            opacity: initialOpacity,
+            easing: Konva.Easings.EaseOut,
+          });
+          currentTween.play();
+        }
+      };
+
+      boundRunAnim = runAnimation;
+      boundResetAnim = resetKonvaEl;
+
+      if (trigger === 'auto' || trigger === 'scroll') {
+        runAnimation();
+      } else if (trigger === 'hover' || trigger === 'focus') {
+        const stage = konvaEl.getStage();
+        let triggerEl: Konva.Node | null = null;
+        if (animConfig.triggerNodeId && stage) {
+          triggerEl = stage.findOne('#node-' + animConfig.triggerNodeId) || null;
+        }
+        if (!triggerEl) {
+          triggerEl = konvaEl;
+        }
+        if (triggerEl) {
+          boundTriggerEl = triggerEl;
+
+          if (trigger === 'hover') {
+            triggerEl.on('mouseenter', runAnimation);
+            triggerEl.on('mouseleave', resetKonvaEl);
+          } else if (trigger === 'focus') {
+            triggerEl.on('mouseenter click tap', runAnimation);
+            triggerEl.on('mouseleave', resetKonvaEl);
+          }
+        }
+      }
+    }, 50);
+
+    return () => {
+      clearTimeout(timerId);
+      const konvaEl = shapeRef.current;
+      if (boundTriggerEl && boundRunAnim && boundResetAnim) {
+        boundTriggerEl.off('mouseenter', boundRunAnim);
+        boundTriggerEl.off('mouseleave', boundResetAnim);
+        boundTriggerEl.off('click tap', boundRunAnim);
+      }
       if (anim) anim.stop();
       if (currentTween) currentTween.destroy();
       if (konvaEl) {
@@ -207,135 +440,24 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
         konvaEl.opacity(initialOpacity);
       }
     };
-
-    const runAnimation = () => {
-      resetKonvaEl();
-
-      if (animConfig.type === 'spin') {
-        anim = new Konva.Animation((frame) => {
-          if (!frame) return;
-          const progress = (frame.time % durMs) / durMs;
-          konvaEl.rotation((resolvedNode.rotation || 0) + progress * 360);
-        }, konvaEl.getLayer());
-        anim.start();
-      } else if (animConfig.type === 'pulse') {
-        anim = new Konva.Animation((frame) => {
-          if (!frame) return;
-          const progress = (frame.time % durMs) / durMs;
-          const s = 1 + 0.08 * Math.sin(progress * Math.PI * 2);
-          konvaEl.scaleX((resolvedNode.scaleX || 1) * s);
-          konvaEl.scaleY((resolvedNode.scaleY || 1) * s);
-        }, konvaEl.getLayer());
-        anim.start();
-      } else if (animConfig.type === 'bounce') {
-        anim = new Konva.Animation((frame) => {
-          if (!frame) return;
-          const progress = (frame.time % durMs) / durMs;
-          const bounce = -Math.abs(Math.sin(progress * Math.PI * 2)) * 18;
-          konvaEl.y(initialY + bounce);
-        }, konvaEl.getLayer());
-        anim.start();
-      } else if (animConfig.type === 'fade-in') {
-        konvaEl.opacity(0);
-        currentTween = new Konva.Tween({
-          node: konvaEl,
-          duration: durMs / 1000,
-          opacity: initialOpacity,
-          easing: Konva.Easings.EaseOut,
-        });
-        currentTween.play();
-      } else if (animConfig.type === 'slide-up') {
-        konvaEl.y(initialY + 30);
-        konvaEl.opacity(0);
-        currentTween = new Konva.Tween({
-          node: konvaEl,
-          duration: durMs / 1000,
-          y: initialY,
-          opacity: initialOpacity,
-          easing: Konva.Easings.EaseOut,
-        });
-        currentTween.play();
-      } else if (animConfig.type === 'slide-down') {
-        konvaEl.y(initialY - 30);
-        konvaEl.opacity(0);
-        currentTween = new Konva.Tween({
-          node: konvaEl,
-          duration: durMs / 1000,
-          y: initialY,
-          opacity: initialOpacity,
-          easing: Konva.Easings.EaseOut,
-        });
-        currentTween.play();
-      } else if (animConfig.type === 'slide-left') {
-        konvaEl.x(initialX + 30);
-        konvaEl.opacity(0);
-        currentTween = new Konva.Tween({
-          node: konvaEl,
-          duration: durMs / 1000,
-          x: initialX,
-          opacity: initialOpacity,
-          easing: Konva.Easings.EaseOut,
-        });
-        currentTween.play();
-      } else if (animConfig.type === 'slide-right') {
-        konvaEl.x(initialX - 30);
-        konvaEl.opacity(0);
-        currentTween = new Konva.Tween({
-          node: konvaEl,
-          duration: durMs / 1000,
-          x: initialX,
-          opacity: initialOpacity,
-          easing: Konva.Easings.EaseOut,
-        });
-        currentTween.play();
-      }
-    };
-
-    let boundTriggerEl: Konva.Node | null = null;
-
-    const timerId = setTimeout(() => {
-      const stage = konvaEl.getStage();
-      let triggerEl: Konva.Node | null = null;
-      if (animConfig.triggerNodeId && stage) {
-        triggerEl = stage.findOne('#node-' + animConfig.triggerNodeId) || null;
-      }
-      if (!triggerEl) {
-        triggerEl = konvaEl;
-      }
-      boundTriggerEl = triggerEl;
-
-      if (triggerEl) {
-        if (trigger === 'auto' || trigger === 'scroll') {
-          runAnimation();
-        } else if (trigger === 'click') {
-          triggerEl.on('click tap', runAnimation);
-        } else if (trigger === 'dblclick') {
-          triggerEl.on('dblclick dbltap', runAnimation);
-        } else if (trigger === 'hover') {
-          triggerEl.on('mouseenter', runAnimation);
-          triggerEl.on('mouseleave', resetKonvaEl);
-        } else if (trigger === 'focus') {
-          triggerEl.on('mouseenter click tap', runAnimation);
-          triggerEl.on('mouseleave', resetKonvaEl);
-        }
-      }
-    }, 50);
-
-    return () => {
-      clearTimeout(timerId);
-      if (boundTriggerEl) {
-        boundTriggerEl.off('click tap', runAnimation);
-        boundTriggerEl.off('dblclick dbltap', runAnimation);
-        boundTriggerEl.off('mouseenter', runAnimation);
-        boundTriggerEl.off('mouseleave', resetKonvaEl);
-      }
-      resetKonvaEl();
-    };
-  }, [isPreview, resolvedNode.animation?.type, resolvedNode.animation?.duration, resolvedNode.animation?.trigger, resolvedNode.animation?.triggerNodeId]);
+  }, [
+    isPreview,
+    resolvedNode.animation?.type,
+    resolvedNode.animation?.duration,
+    resolvedNode.animation?.distance,
+    resolvedNode.animation?.startDistance,
+    resolvedNode.animation?.endDistance,
+    resolvedNode.animation?.scale,
+    resolvedNode.animation?.degrees,
+    resolvedNode.animation?.startOpacity,
+    resolvedNode.animation?.trigger,
+    resolvedNode.animation?.triggerNodeId
+  ]);
 
   const hasShadow = !!resolvedNode.boxShadow?.enabled;
   const hasBlur = !!(resolvedNode.filterBlur && resolvedNode.filterBlur > 0);
-  const resolvedOpacity = resolvedNode.opacity !== undefined ? Math.max(0, Math.min(1, resolvedNode.opacity / 100)) : 1;
+  const baseOpacity = resolvedNode.opacity !== undefined ? Math.max(0, Math.min(1, resolvedNode.opacity / 100)) : 1;
+  const resolvedOpacity = ((mode === 'preview' || isPreview) && resolvedNode.animation?.initiallyHidden) ? 0 : baseOpacity;
 
   const shadowProps = {
     shadowEnabled: hasShadow,
@@ -652,10 +774,10 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
           />
         )}
         <Group
-          clipX={0} 
-          clipY={0} 
-          clipWidth={resolvedNode.width} 
-          clipHeight={resolvedNode.height}
+          clipX={isPreview ? 0 : undefined} 
+          clipY={isPreview ? 0 : undefined} 
+          clipWidth={isPreview ? resolvedNode.width : undefined} 
+          clipHeight={isPreview ? resolvedNode.height : undefined}
         >
           {childNodes.map(n => <RenderNode key={n.id} node={n} isPreview={isPreview} context={context} />)}
         </Group>
@@ -794,6 +916,7 @@ export const CanvasArea: React.FC = () => {
   const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants, pickingTriggerForNodeId, setPickingTriggerForNodeId, setToastMessage } = useCanvasStore();
   
   const stageRef = useRef<Konva.Stage>(null);
+  const previewStageRef = useRef<any>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
 
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -813,6 +936,19 @@ export const CanvasArea: React.FC = () => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [mode]);
+
+  useEffect(() => {
+    const handlePlayAnim = (e: any) => {
+      const nodeId = e.detail?.nodeId;
+      if (!nodeId) return;
+      const targetNode = nodes.find(n => n.id === nodeId);
+      if (targetNode) {
+        playNodeAnimation(targetNode);
+      }
+    };
+    window.addEventListener('play-node-animation', handlePlayAnim);
+    return () => window.removeEventListener('play-node-animation', handlePlayAnim);
+  }, [nodes]);
 
   useEffect(() => {
     if (mode === 'preview' || mode === 'connect') {
@@ -923,6 +1059,8 @@ export const CanvasArea: React.FC = () => {
       let targetFrameId = undefined;
       // Only valid target frames are actual layout frames, not master components or instances themselves
       const frames = nodes.filter(n => n.type === 'Frame' && !n.isMasterComponent && !n.componentId && n.id !== storeNode.id);
+      
+      // 1. Check exact bounding box collision first
       for (let i = frames.length - 1; i >= 0; i--) {
         const frame = frames[i];
         if (
@@ -931,6 +1069,22 @@ export const CanvasArea: React.FC = () => {
         ) {
           targetFrameId = frame.id;
           break;
+        }
+      }
+
+      // 2. If node was ALREADY parented to a frame, keep it parented if moved off-screen near that same frame (e.g. drawer sidebar)
+      if (!targetFrameId && storeNode.parentId) {
+        const currentParent = frames.find(f => f.id === storeNode.parentId);
+        if (currentParent) {
+          const fw = currentParent.width || 0;
+          const fh = currentParent.height || 0;
+          const MARGIN = 250;
+          if (
+            centerX >= currentParent.x - MARGIN && centerX <= currentParent.x + fw + MARGIN &&
+            centerY >= currentParent.y - MARGIN && centerY <= currentParent.y + fh + MARGIN
+          ) {
+            targetFrameId = currentParent.id;
+          }
         }
       }
 
@@ -1082,6 +1236,136 @@ export const CanvasArea: React.FC = () => {
     updateNode(nodeId, { points: newPoints }, true);
   };
 
+  const playNodeAnimation = (targetNode: CanvasNode, stageOverride?: Konva.Stage | null) => {
+    if (!targetNode.animation || targetNode.animation.type === 'none') return;
+    const stage = stageOverride || previewStageRef.current || stageRef.current;
+    if (!stage) { console.log('[playNodeAnimation] No stage found'); return; }
+    const konvaEl = stage.findOne('#node-' + targetNode.id) as Konva.Node;
+    if (!konvaEl) { console.log('[playNodeAnimation] Konva element not found for', targetNode.id, targetNode.name); return; }
+
+    const animConfig = targetNode.animation;
+    const durMs = animConfig.duration || 1000;
+    const initialX = targetNode.x;
+    const initialY = targetNode.y;
+    const initialOpacity = targetNode.opacity !== undefined ? Math.max(0, Math.min(1, targetNode.opacity / 100)) : 1;
+    const startOpacity = animConfig.startOpacity !== undefined ? Math.max(0, Math.min(1, animConfig.startOpacity / 100)) : 0;
+
+    const startDist = animConfig.startDistance ?? animConfig.distance ?? 50;
+    const endDist = animConfig.endDistance ?? 0;
+    const pulseScale = animConfig.scale ?? 1.15;
+    const spinDeg = animConfig.degrees ?? 360;
+
+    const isOpen = !!(konvaEl as any)._animOpen;
+    (konvaEl as any)._animOpen = !isOpen;
+    
+    console.log('[playNodeAnimation]', targetNode.name, '| type:', animConfig.type, '| isOpen:', isOpen, '| initialX:', initialX, '| initialY:', initialY, '| startDist:', startDist, '| endDist:', endDist);
+
+    const isInitiallyHidden = !!animConfig.initiallyHidden;
+    const isInfinite = !!animConfig.infinite;
+    const startOp = isInitiallyHidden
+      ? (isOpen ? initialOpacity : (animConfig.startOpacity !== undefined ? Math.max(0, Math.min(1, animConfig.startOpacity / 100)) : 0))
+      : initialOpacity;
+
+    const targetOpacity = isInitiallyHidden
+      ? (isOpen ? (animConfig.startOpacity !== undefined ? Math.max(0, Math.min(1, animConfig.startOpacity / 100)) : 0) : initialOpacity)
+      : initialOpacity;
+
+    if (animConfig.type === 'spin') {
+      konvaEl.opacity(startOp);
+      new Konva.Tween({ node: konvaEl, duration: durMs / 1000, opacity: targetOpacity, easing: Konva.Easings.EaseOut }).play();
+      const anim = new Konva.Animation((frame) => {
+        if (!frame) return;
+        if (!isInfinite && frame.time >= durMs) {
+          konvaEl.rotation((targetNode.rotation || 0) + spinDeg);
+          anim.stop();
+          return;
+        }
+        const progress = Math.min(1, (frame.time % durMs) / durMs);
+        konvaEl.rotation((targetNode.rotation || 0) + progress * spinDeg);
+      }, konvaEl.getLayer());
+      anim.start();
+    } else if (animConfig.type === 'pulse') {
+      konvaEl.opacity(startOp);
+      new Konva.Tween({ node: konvaEl, duration: durMs / 1000, opacity: targetOpacity, easing: Konva.Easings.EaseOut }).play();
+      const anim = new Konva.Animation((frame) => {
+        if (!frame) return;
+        if (!isInfinite && frame.time >= durMs) {
+          konvaEl.scaleX(targetNode.scaleX || 1);
+          konvaEl.scaleY(targetNode.scaleY || 1);
+          anim.stop();
+          return;
+        }
+        const progress = Math.min(1, (frame.time % durMs) / durMs);
+        const s = 1 + (pulseScale - 1) * Math.sin(progress * Math.PI * 2);
+        konvaEl.scaleX((targetNode.scaleX || 1) * s);
+        konvaEl.scaleY((targetNode.scaleY || 1) * s);
+      }, konvaEl.getLayer());
+      anim.start();
+    } else if (animConfig.type === 'bounce') {
+      konvaEl.opacity(startOp);
+      new Konva.Tween({ node: konvaEl, duration: durMs / 1000, opacity: targetOpacity, easing: Konva.Easings.EaseOut }).play();
+      const bounceHeight = animConfig.startDistance ?? animConfig.distance ?? 30;
+      const bounceCount = animConfig.bounceCount ?? 2;
+      const totalBounceTime = durMs * bounceCount;
+      const anim = new Konva.Animation((frame) => {
+        if (!frame) return;
+        if (!isInfinite && frame.time >= totalBounceTime) {
+          konvaEl.y(initialY);
+          anim.stop();
+          return;
+        }
+        const progress = (frame.time % durMs) / durMs;
+        const bounce = -Math.sin(progress * Math.PI) * bounceHeight;
+        konvaEl.y(initialY + bounce);
+      }, konvaEl.getLayer());
+      anim.start();
+    } else if (animConfig.type === 'fade-in') {
+      konvaEl.opacity(startOp);
+      new Konva.Tween({
+        node: konvaEl,
+        duration: durMs / 1000,
+        opacity: targetOpacity,
+        easing: Konva.Easings.EaseOut,
+      }).play();
+    } else if (animConfig.type.startsWith('slide-')) {
+      const parentNode = nodes.find(p => p.id === targetNode.parentId);
+      const parentW = parentNode?.width || 393;
+      const parentH = parentNode?.height || 852;
+      const nodeW = targetNode.width || 0;
+      const nodeH = targetNode.height || 0;
+
+      const { startX, startY, endX, endY } = getSlideTrajectory(
+        animConfig.type,
+        initialX,
+        initialY,
+        nodeW,
+        nodeH,
+        parentW,
+        parentH,
+        startDist,
+        endDist,
+        animConfig.fromEdge
+      );
+
+      const fromX = isOpen ? endX : startX;
+      const toX = isOpen ? startX : endX;
+      const fromY = isOpen ? endY : startY;
+      const toY = isOpen ? startY : endY;
+
+      konvaEl.x(fromX);
+      konvaEl.y(fromY);
+      konvaEl.opacity(startOp);
+      new Konva.Tween({
+        node: konvaEl,
+        duration: durMs / 1000,
+        x: toX,
+        y: toY,
+        opacity: targetOpacity,
+        easing: Konva.Easings.EaseOut,
+      }).play();
+    }
+  };
+
   const handleNodeClick = (e: any, node: CanvasNode, isDoubleClick: boolean = false) => {
     e.cancelBubble = true;
     (document.activeElement as HTMLElement)?.blur();
@@ -1096,7 +1380,7 @@ export const CanvasArea: React.FC = () => {
               ...animatedNode.animation,
               type: animatedNode.animation?.type || 'bounce',
               duration: animatedNode.animation?.duration || 1000,
-              infinite: animatedNode.animation?.infinite ?? true,
+              infinite: animatedNode.animation?.infinite ?? false,
               triggerNodeId: undefined,
             }
           }, true);
@@ -1108,7 +1392,7 @@ export const CanvasArea: React.FC = () => {
               ...animatedNode.animation,
               type: animatedNode.animation?.type || 'bounce',
               duration: animatedNode.animation?.duration || 1000,
-              infinite: animatedNode.animation?.infinite ?? true,
+              infinite: animatedNode.animation?.infinite ?? false,
               triggerNodeId: node.id,
             }
           }, true);
@@ -1117,6 +1401,22 @@ export const CanvasArea: React.FC = () => {
       }
       setPickingTriggerForNodeId(null);
       return;
+    }
+
+    // Trigger animations connected to this clicked node (preview mode only)
+    if (mode === 'preview') {
+      const triggeredNodes = nodes.filter(n => 
+        n.animation && 
+        n.animation.type !== 'none' && 
+        (n.animation.trigger === 'click' || n.animation.trigger === 'dblclick' || !n.animation.trigger) &&
+        (n.animation.triggerNodeId === node.id || (n.id === node.id && (!n.animation.triggerNodeId || n.animation.triggerNodeId === n.id)))
+      );
+      console.log('[Animation] Click on node:', node.id, node.name, '| Found triggered nodes:', triggeredNodes.map(n => ({ id: n.id, name: n.name, type: n.animation?.type, trigger: n.animation?.trigger })));
+      if (triggeredNodes.length > 0) {
+        const activeStage = e?.target ? e.target.getStage() : null;
+        console.log('[Animation] Active stage:', !!activeStage, '| Stage children:', activeStage?.children?.length);
+        triggeredNodes.forEach(tn => playNodeAnimation(tn, activeStage));
+      }
     }
 
     if (mode === 'preview') {
@@ -1320,7 +1620,7 @@ export const CanvasArea: React.FC = () => {
           </div>
         </div>
         <div className="flex-1 overflow-hidden">
-          <Stage width={stageSize.width} height={stageSize.height - 56}>
+          <Stage ref={previewStageRef} width={stageSize.width} height={stageSize.height - 56}>
             <Layer x={centeredX} y={centeredY} scaleX={fitScale} scaleY={fitScale}>
               <RenderNode node={modifiedPreviewFrame} isPreview={true} context={nodeContext} />
             </Layer>
@@ -1831,6 +2131,688 @@ export const CanvasArea: React.FC = () => {
                 </Group>
               );
             })}
+
+          {/* Animation Footprint Range Indicator on Canvas for Selected Element */}
+          {mode === 'select' && selectedIds.map(selectedId => {
+            const animatedNode = nodes.find(n => n.id === selectedId);
+            if (!animatedNode || !animatedNode.animation || animatedNode.animation.type === 'none') return null;
+
+            const anim = animatedNode.animation;
+            const bounds = getNodeCanvasBounds(animatedNode.id);
+            if (!bounds) return null;
+
+            const { x, y, width, height, centerX, centerY } = bounds;
+
+            if (anim.type.startsWith('slide-')) {
+              const startDist = anim.startDistance ?? anim.distance ?? 50;
+              const endDist = anim.endDistance ?? 0;
+
+              const parentNode = nodes.find(p => p.id === animatedNode.parentId);
+              const parentW = parentNode?.width || 393;
+              const parentH = parentNode?.height || 852;
+
+              const { startX: localStartX, startY: localStartY, endX: localEndX, endY: localEndY, isOutsideBottom, isOutsideTop, isOutsideRight, isOutsideLeft } = getSlideTrajectory(
+                anim.type,
+                animatedNode.x,
+                animatedNode.y,
+                width,
+                height,
+                parentW,
+                parentH,
+                startDist,
+                endDist,
+                anim.fromEdge
+              );
+
+              const parentAbsX = x - animatedNode.x;
+              const parentAbsY = y - animatedNode.y;
+
+              const startCanvasX = parentAbsX + localStartX;
+              const startCanvasY = parentAbsY + localStartY;
+              const startCenterX = startCanvasX + width / 2;
+              const startCenterY = startCanvasY + height / 2;
+
+              const endCanvasX = parentAbsX + localEndX;
+              const endCanvasY = parentAbsY + localEndY;
+              const endCenterX = endCanvasX + width / 2;
+              const endCenterY = endCanvasY + height / 2;
+
+              const totalTravelDist = Math.round(
+                Math.sqrt(Math.pow(endCenterX - startCenterX, 2) + Math.pow(endCenterY - startCenterY, 2))
+              );
+
+              const slideTitle = anim.type.toUpperCase().replace('-', ' ');
+              const startPillText = `🟢 START (${startDist > 0 ? `-${startDist}px` : `${startDist}px`})`;
+              const endPillText = `🔴 END (${endDist}px)`;
+              const midPillText = `➡ ${slideTitle}: ${totalTravelDist}px`;
+
+              const startPillW = 130;
+              const endPillW = 120;
+              const midPillW = Math.max(160, midPillText.length * 7.5);
+
+              const midX = (startCenterX + endCenterX) / 2;
+              const midY = (startCenterY + endCenterY) / 2;
+
+              return (
+                <Group key={`anim-range-${animatedNode.id}`}>
+                  {/* Trajectory Arrow from START CENTER to END CENTER */}
+                  <Arrow
+                    points={[startCenterX, startCenterY, endCenterX, endCenterY]}
+                    stroke="#4A3AFF"
+                    strokeWidth={3}
+                    fill="#4A3AFF"
+                    pointerLength={12}
+                    pointerWidth={10}
+                    dash={[5, 3]}
+                    shadowColor="rgba(74, 58, 255, 0.4)"
+                    shadowBlur={6}
+                    listening={false}
+                  />
+
+                  {/* DRAGGABLE START POINT Footprint Box (Emerald Green) */}
+                  <Group
+                    key={`anim-start-grp-${animatedNode.id}`}
+                    x={startCanvasX}
+                    y={startCanvasY}
+                    draggable={mode === 'select'}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const droppedLocalX = e.target.x() - parentAbsX;
+                      const droppedLocalY = e.target.y() - parentAbsY;
+                      let newStartDist = startDist;
+
+                      if (anim.type === 'slide-right') {
+                        newStartDist = Math.round(animatedNode.x - droppedLocalX);
+                      } else if (anim.type === 'slide-left') {
+                        newStartDist = Math.round(droppedLocalX - animatedNode.x);
+                      } else if (anim.type === 'slide-up') {
+                        newStartDist = Math.round(droppedLocalY - animatedNode.y);
+                      } else if (anim.type === 'slide-down') {
+                        newStartDist = Math.round(animatedNode.y - droppedLocalY);
+                      }
+
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          startDistance: newStartDist,
+                          distance: newStartDist,
+                        }
+                      }, false);
+                    }}
+                    onDragEnd={(e) => {
+                      e.cancelBubble = true;
+                      const droppedLocalX = e.target.x() - parentAbsX;
+                      const droppedLocalY = e.target.y() - parentAbsY;
+                      let newStartDist = startDist;
+
+                      if (anim.type === 'slide-right') {
+                        newStartDist = Math.round(animatedNode.x - droppedLocalX);
+                      } else if (anim.type === 'slide-left') {
+                        newStartDist = Math.round(droppedLocalX - animatedNode.x);
+                      } else if (anim.type === 'slide-up') {
+                        newStartDist = Math.round(droppedLocalY - animatedNode.y);
+                      } else if (anim.type === 'slide-down') {
+                        newStartDist = Math.round(animatedNode.y - droppedLocalY);
+                      }
+
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          startDistance: newStartDist,
+                          distance: newStartDist,
+                        }
+                      }, true);
+                    }}
+                    onMouseEnter={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'grab';
+                    }}
+                    onMouseLeave={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'default';
+                    }}
+                  >
+                    <Rect
+                      x={0}
+                      y={0}
+                      width={width}
+                      height={height}
+                      stroke="#10B981"
+                      strokeWidth={2.5}
+                      dash={[6, 4]}
+                      fill="rgba(16, 185, 129, 0.16)"
+                      cornerRadius={animatedNode.cornerRadius || 4}
+                    />
+                    {/* START POINT Badge Overlay */}
+                    <Group x={width / 2} y={-24} listening={false}>
+                      <Rect
+                        x={-startPillW / 2}
+                        y={0}
+                        width={startPillW}
+                        height={20}
+                        fill="#059669"
+                        cornerRadius={10}
+                        shadowColor="rgba(0,0,0,0.25)"
+                        shadowBlur={4}
+                      />
+                      <Text
+                        text={startPillText}
+                        fill="white"
+                        fontSize={10}
+                        fontStyle="bold"
+                        fontFamily="Inter, sans-serif"
+                        x={-startPillW / 2}
+                        y={4}
+                        width={startPillW}
+                        align="center"
+                      />
+                    </Group>
+                  </Group>
+
+                  {/* DRAGGABLE END POINT Footprint Box (Rose / Coral Red) */}
+                  <Group
+                    key={`anim-end-grp-${animatedNode.id}`}
+                    x={endCanvasX}
+                    y={endCanvasY}
+                    draggable={mode === 'select'}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const droppedLocalX = e.target.x() - parentAbsX;
+                      const droppedLocalY = e.target.y() - parentAbsY;
+                      let newEndDist = endDist;
+
+                      if (anim.type === 'slide-right') {
+                        newEndDist = isOutsideLeft ? Math.round(droppedLocalX - 0) : Math.round(droppedLocalX - animatedNode.x);
+                      } else if (anim.type === 'slide-left') {
+                        newEndDist = isOutsideRight ? Math.round(parentW - width - droppedLocalX) : Math.round(animatedNode.x - droppedLocalX);
+                      } else if (anim.type === 'slide-up') {
+                        newEndDist = isOutsideBottom ? Math.round(parentH - height - droppedLocalY) : Math.round(animatedNode.y - droppedLocalY);
+                      } else if (anim.type === 'slide-down') {
+                        newEndDist = isOutsideTop ? Math.round(droppedLocalY - 0) : Math.round(droppedLocalY - animatedNode.y);
+                      }
+
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          endDistance: newEndDist,
+                        }
+                      }, false);
+                    }}
+                    onDragEnd={(e) => {
+                      e.cancelBubble = true;
+                      const droppedLocalX = e.target.x() - parentAbsX;
+                      const droppedLocalY = e.target.y() - parentAbsY;
+                      let newEndDist = endDist;
+
+                      if (anim.type === 'slide-right') {
+                        newEndDist = isOutsideLeft ? Math.round(droppedLocalX - 0) : Math.round(droppedLocalX - animatedNode.x);
+                      } else if (anim.type === 'slide-left') {
+                        newEndDist = isOutsideRight ? Math.round(parentW - width - droppedLocalX) : Math.round(animatedNode.x - droppedLocalX);
+                      } else if (anim.type === 'slide-up') {
+                        newEndDist = isOutsideBottom ? Math.round(parentH - height - droppedLocalY) : Math.round(animatedNode.y - droppedLocalY);
+                      } else if (anim.type === 'slide-down') {
+                        newEndDist = isOutsideTop ? Math.round(droppedLocalY - 0) : Math.round(droppedLocalY - animatedNode.y);
+                      }
+
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          endDistance: newEndDist,
+                        }
+                      }, true);
+                    }}
+                    onMouseEnter={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'grab';
+                    }}
+                    onMouseLeave={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'default';
+                    }}
+                  >
+                    <Rect
+                      x={0}
+                      y={0}
+                      width={width}
+                      height={height}
+                      stroke="#EF4444"
+                      strokeWidth={2.5}
+                      dash={[6, 4]}
+                      fill="rgba(239, 68, 68, 0.16)"
+                      cornerRadius={animatedNode.cornerRadius || 4}
+                    />
+                    {/* END POINT Badge Overlay */}
+                    <Group x={width / 2} y={-24} listening={false}>
+                      <Rect
+                        x={-endPillW / 2}
+                        y={0}
+                        width={endPillW}
+                        height={20}
+                        fill="#DC2626"
+                        cornerRadius={10}
+                        shadowColor="rgba(0,0,0,0.25)"
+                        shadowBlur={4}
+                      />
+                      <Text
+                        text={endPillText}
+                        fill="white"
+                        fontSize={10}
+                        fontStyle="bold"
+                        fontFamily="Inter, sans-serif"
+                        x={-endPillW / 2}
+                        y={4}
+                        width={endPillW}
+                        align="center"
+                      />
+                    </Group>
+                  </Group>
+
+                  {/* Trajectory Distance Label Badge in the middle of arrow */}
+                  <Group x={midX} y={midY - 12} listening={false}>
+                    <Rect
+                      x={-midPillW / 2}
+                      y={0}
+                      width={midPillW}
+                      height={22}
+                      fill="#4A3AFF"
+                      cornerRadius={11}
+                      shadowColor="rgba(0,0,0,0.3)"
+                      shadowBlur={6}
+                    />
+                    <Text
+                      text={midPillText}
+                      fill="white"
+                      fontSize={10}
+                      fontStyle="bold"
+                      fontFamily="Inter, sans-serif"
+                      x={-midPillW / 2}
+                      y={5}
+                      width={midPillW}
+                      align="center"
+                    />
+                  </Group>
+                </Group>
+              );
+            }
+
+            if (anim.type === 'bounce') {
+              const heightDist = anim.distance ?? anim.startDistance ?? 30;
+              const parentAbsY = y - animatedNode.y;
+              const ghostCanvasY = y - heightDist;
+              const pillWidth = 180;
+
+              return (
+                <Group key={`anim-range-${animatedNode.id}`}>
+                  {/* Vertical Bounce trajectory arrow */}
+                  <Arrow
+                    points={[centerX, y + height / 2, centerX, ghostCanvasY + height / 2]}
+                    stroke="#059669"
+                    strokeWidth={2.5}
+                    fill="#059669"
+                    pointerLength={8}
+                    pointerWidth={8}
+                    dash={[3, 3]}
+                    listening={false}
+                  />
+                  {/* DRAGGABLE Bounce Peak Footprint */}
+                  <Group
+                    key={`anim-bounce-peak-${animatedNode.id}`}
+                    x={x}
+                    y={ghostCanvasY}
+                    draggable={mode === 'select'}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const droppedLocalY = e.target.y() - parentAbsY;
+                      const newHeightDist = Math.max(5, Math.round(animatedNode.y - droppedLocalY));
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          distance: newHeightDist,
+                          startDistance: newHeightDist,
+                        }
+                      }, false);
+                    }}
+                    onDragEnd={(e) => {
+                      e.cancelBubble = true;
+                      const droppedLocalY = e.target.y() - parentAbsY;
+                      const newHeightDist = Math.max(5, Math.round(animatedNode.y - droppedLocalY));
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          distance: newHeightDist,
+                          startDistance: newHeightDist,
+                        }
+                      }, true);
+                    }}
+                    onMouseEnter={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'ns-resize';
+                    }}
+                    onMouseLeave={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'default';
+                    }}
+                  >
+                    <Rect
+                      x={0}
+                      y={0}
+                      width={width}
+                      height={height}
+                      stroke="#10B981"
+                      strokeWidth={2.5}
+                      dash={[6, 4]}
+                      fill="rgba(16, 185, 129, 0.16)"
+                      cornerRadius={animatedNode.cornerRadius || 4}
+                    />
+                    <Line
+                      points={[-10, 0, width + 10, 0]}
+                      stroke="#059669"
+                      strokeWidth={2}
+                      dash={[4, 2]}
+                    />
+                    {/* Peak Level Drag Pill Badge */}
+                    <Group x={width / 2} y={-24} listening={false}>
+                      <Rect
+                        x={-pillWidth / 2}
+                        y={0}
+                        width={pillWidth}
+                        height={20}
+                        fill="#059669"
+                        cornerRadius={10}
+                        shadowColor="rgba(0,0,0,0.25)"
+                        shadowBlur={4}
+                      />
+                      <Text
+                        text={`🦘 BOUNCE PEAK: ${heightDist}px (Drag)`}
+                        fill="white"
+                        fontSize={10}
+                        fontStyle="bold"
+                        fontFamily="Inter, sans-serif"
+                        x={-pillWidth / 2}
+                        y={4}
+                        width={pillWidth}
+                        align="center"
+                      />
+                    </Group>
+                  </Group>
+                </Group>
+              );
+            }
+
+            if (anim.type === 'pulse') {
+              const scaleFactor = anim.scale ?? 1.15;
+              const newWidth = width * scaleFactor;
+              const newHeight = height * scaleFactor;
+              const newX = centerX - newWidth / 2;
+              const newY = centerY - newHeight / 2;
+              const pillText = `💗 PULSE RANGE: ${Math.round(scaleFactor * 100)}% (Drag)`;
+              const pillWidth = 180;
+
+              return (
+                <Group key={`anim-range-${animatedNode.id}`}>
+                  {/* DRAGGABLE Pulse Expansion Box */}
+                  <Group
+                    key={`anim-pulse-grp-${animatedNode.id}`}
+                    x={newX}
+                    y={newY}
+                    draggable={mode === 'select'}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const dragCenterX = e.target.x() + newWidth / 2;
+                      const dragCenterY = e.target.y() + newHeight / 2;
+                      const dist = Math.max(width / 2, Math.hypot(dragCenterX - centerX, dragCenterY - centerY));
+                      const newScale = Math.max(1.05, Math.min(3, Math.round((dist / (width / 2)) * 100) / 100));
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          scale: newScale,
+                        }
+                      }, false);
+                    }}
+                    onDragEnd={(e) => {
+                      e.cancelBubble = true;
+                      const dragCenterX = e.target.x() + newWidth / 2;
+                      const dragCenterY = e.target.y() + newHeight / 2;
+                      const dist = Math.max(width / 2, Math.hypot(dragCenterX - centerX, dragCenterY - centerY));
+                      const newScale = Math.max(1.05, Math.min(3, Math.round((dist / (width / 2)) * 100) / 100));
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          scale: newScale,
+                        }
+                      }, true);
+                    }}
+                    onMouseEnter={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'nwse-resize';
+                    }}
+                    onMouseLeave={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'default';
+                    }}
+                  >
+                    <Rect
+                      x={0}
+                      y={0}
+                      width={newWidth}
+                      height={newHeight}
+                      stroke="#EC4899"
+                      strokeWidth={2.5}
+                      dash={[6, 4]}
+                      fill="rgba(236, 72, 153, 0.16)"
+                      cornerRadius={animatedNode.cornerRadius ? animatedNode.cornerRadius * scaleFactor : 4}
+                    />
+                    {/* Badge Overlay */}
+                    <Group x={newWidth / 2} y={-24} listening={false}>
+                      <Rect
+                        x={-pillWidth / 2}
+                        y={0}
+                        width={pillWidth}
+                        height={20}
+                        fill="#DB2777"
+                        cornerRadius={10}
+                        shadowColor="rgba(0,0,0,0.25)"
+                        shadowBlur={4}
+                      />
+                      <Text
+                        text={pillText}
+                        fill="white"
+                        fontSize={10}
+                        fontStyle="bold"
+                        fontFamily="Inter, sans-serif"
+                        x={-pillWidth / 2}
+                        y={4}
+                        width={pillWidth}
+                        align="center"
+                      />
+                    </Group>
+                  </Group>
+                </Group>
+              );
+            }
+
+            if (anim.type === 'spin') {
+              const deg = anim.degrees ?? 360;
+              const outerRadius = Math.max(width, height) / 2 + 15;
+              const pillText = `🔄 SPIN ANGLE: ${deg}° (Drag)`;
+              const pillWidth = 170;
+
+              return (
+                <Group key={`anim-range-${animatedNode.id}`}>
+                  {/* Circular rotational range indicator */}
+                  <Circle
+                    x={centerX}
+                    y={centerY}
+                    radius={outerRadius}
+                    stroke="#F59E0B"
+                    strokeWidth={2}
+                    dash={[6, 4]}
+                    fill="rgba(245, 158, 11, 0.08)"
+                    listening={false}
+                  />
+                  {/* DRAGGABLE Spin Handle / Badge */}
+                  <Group
+                    key={`anim-spin-badge-${animatedNode.id}`}
+                    x={centerX}
+                    y={centerY - outerRadius - 24}
+                    draggable={mode === 'select'}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const handleCenterX = e.target.x();
+                      const handleCenterY = e.target.y() + 24;
+                      const dx = handleCenterX - centerX;
+                      const dy = handleCenterY - centerY;
+                      let angleRad = Math.atan2(dy, dx);
+                      let angleDeg = Math.round((angleRad * 180) / Math.PI + 90);
+                      if (angleDeg < 0) angleDeg += 360;
+                      if (angleDeg === 0) angleDeg = 360;
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          degrees: angleDeg,
+                        }
+                      }, false);
+                    }}
+                    onDragEnd={(e) => {
+                      e.cancelBubble = true;
+                      const handleCenterX = e.target.x();
+                      const handleCenterY = e.target.y() + 24;
+                      const dx = handleCenterX - centerX;
+                      const dy = handleCenterY - centerY;
+                      let angleRad = Math.atan2(dy, dx);
+                      let angleDeg = Math.round((angleRad * 180) / Math.PI + 90);
+                      if (angleDeg < 0) angleDeg += 360;
+                      if (angleDeg === 0) angleDeg = 360;
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          degrees: angleDeg,
+                        }
+                      }, true);
+                    }}
+                    onMouseEnter={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'grab';
+                    }}
+                    onMouseLeave={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'default';
+                    }}
+                  >
+                    <Rect
+                      x={-pillWidth / 2}
+                      y={0}
+                      width={pillWidth}
+                      height={20}
+                      fill="#D97706"
+                      cornerRadius={10}
+                      shadowColor="rgba(0,0,0,0.25)"
+                      shadowBlur={4}
+                    />
+                    <Text
+                      text={pillText}
+                      fill="white"
+                      fontSize={10}
+                      fontStyle="bold"
+                      fontFamily="Inter, sans-serif"
+                      x={-pillWidth / 2}
+                      y={4}
+                      width={pillWidth}
+                      align="center"
+                    />
+                  </Group>
+                </Group>
+              );
+            }
+
+            if (anim.type === 'fade-in') {
+              const opacityVal = anim.startOpacity ?? 0;
+              const pillText = `👁 FADE IN: ${opacityVal}% (Drag)`;
+              const pillWidth = 160;
+
+              return (
+                <Group key={`anim-range-${animatedNode.id}`}>
+                  {/* DRAGGABLE Fade Highlight Box & Badge */}
+                  <Group
+                    key={`anim-fade-grp-${animatedNode.id}`}
+                    x={x - 4}
+                    y={y - 28}
+                    draggable={mode === 'select'}
+                    onDragMove={(e) => {
+                      e.cancelBubble = true;
+                      const dragY = e.target.y();
+                      const deltaY = (y - 28) - dragY;
+                      const newOpacity = Math.max(0, Math.min(95, Math.round(opacityVal + deltaY)));
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          startOpacity: newOpacity,
+                        }
+                      }, false);
+                    }}
+                    onDragEnd={(e) => {
+                      e.cancelBubble = true;
+                      const dragY = e.target.y();
+                      const deltaY = (y - 28) - dragY;
+                      const newOpacity = Math.max(0, Math.min(95, Math.round(opacityVal + deltaY)));
+                      updateNode(animatedNode.id, {
+                        animation: {
+                          ...anim,
+                          startOpacity: newOpacity,
+                        }
+                      }, true);
+                    }}
+                    onMouseEnter={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'ns-resize';
+                    }}
+                    onMouseLeave={(e) => {
+                      const container = e.target.getStage()?.container();
+                      if (container) container.style.cursor = 'default';
+                    }}
+                  >
+                    <Rect
+                      x={0}
+                      y={24}
+                      width={width + 8}
+                      height={height + 8}
+                      stroke="#6366F1"
+                      strokeWidth={2}
+                      dash={[4, 4]}
+                      fill={`rgba(99, 102, 241, ${Math.max(0.05, (100 - opacityVal) / 200)})`}
+                      cornerRadius={animatedNode.cornerRadius || 4}
+                    />
+                    {/* Badge Overlay */}
+                    <Group x={(width + 8) / 2} y={0} listening={false}>
+                      <Rect
+                        x={-pillWidth / 2}
+                        y={0}
+                        width={pillWidth}
+                        height={20}
+                        fill="#4F46E5"
+                        cornerRadius={10}
+                        shadowColor="rgba(0,0,0,0.25)"
+                        shadowBlur={4}
+                      />
+                      <Text
+                        text={pillText}
+                        fill="white"
+                        fontSize={10}
+                        fontStyle="bold"
+                        fontFamily="Inter, sans-serif"
+                        x={-pillWidth / 2}
+                        y={4}
+                        width={pillWidth}
+                        align="center"
+                      />
+                    </Group>
+                  </Group>
+                </Group>
+              );
+            }
+
+            return null;
+          })}
 
           {selectionRect && (
             <Rect

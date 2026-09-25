@@ -71,6 +71,15 @@ export interface CanvasNode {
     type: 'none' | 'bounce' | 'pulse' | 'spin' | 'fade-in' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right';
     duration: number;
     infinite: boolean;
+    distance?: number;
+    startDistance?: number;
+    endDistance?: number;
+    scale?: number;
+    degrees?: number;
+    startOpacity?: number;
+    fromEdge?: boolean;
+    initiallyHidden?: boolean;
+    bounceCount?: number;
     trigger?: 'auto' | 'click' | 'dblclick' | 'hover' | 'focus' | 'scroll';
     triggerNodeId?: string;
   };

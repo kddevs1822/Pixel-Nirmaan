@@ -75,6 +75,15 @@ export interface CanvasNode {
     type: 'none' | 'bounce' | 'pulse' | 'spin' | 'fade-in' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right';
     duration: number;   // ms
     infinite: boolean;
+    distance?: number;  // px offset for slide/bounce animations (default 50)
+    startDistance?: number; // starting offset in px
+    endDistance?: number;   // ending offset in px (default 0)
+    scale?: number;     // scale multiplier for pulse (e.g. 1.15)
+    degrees?: number;   // spin angle in degrees (e.g. 360)
+    startOpacity?: number; // 0-100 initial opacity for fade-in (default 0)
+    fromEdge?: boolean;  // slide from off-screen frame edge
+    initiallyHidden?: boolean; // start hidden until triggered
+    bounceCount?: number; // number of bounce iterations (default 2)
     trigger?: 'auto' | 'click' | 'dblclick' | 'hover' | 'focus' | 'scroll';
     triggerNodeId?: string;
   };

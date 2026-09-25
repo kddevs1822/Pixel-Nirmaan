@@ -24,43 +24,68 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
+  from { opacity: var(--fade-start, 0); }
   to { opacity: 1; }
 }
 
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 @keyframes slideUp {
-  from { transform: translateY(24px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateY(var(--slide-start, 50px)); opacity: var(--fade-start, 0); }
+  to { transform: translateY(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+}
+
+@keyframes slideUpReverse {
+  from { transform: translateY(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+  to { transform: translateY(var(--slide-start, 50px)); opacity: 0; }
 }
 
 @keyframes slideDown {
-  from { transform: translateY(-24px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateY(calc(-1 * var(--slide-start, 50px))); opacity: var(--fade-start, 0); }
+  to { transform: translateY(var(--slide-end, 0px)); opacity: 1; }
+}
+
+@keyframes slideDownReverse {
+  from { transform: translateY(var(--slide-end, 0px)); opacity: 1; }
+  to { transform: translateY(calc(-1 * var(--slide-start, 50px))); opacity: 0; }
 }
 
 @keyframes slideLeft {
-  from { transform: translateX(24px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(var(--slide-start, 50px)); opacity: var(--fade-start, 0); }
+  to { transform: translateX(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+}
+
+@keyframes slideLeftReverse {
+  from { transform: translateX(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+  to { transform: translateX(var(--slide-start, 50px)); opacity: 0; }
 }
 
 @keyframes slideRight {
-  from { transform: translateX(-24px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(calc(-1 * var(--slide-start, 50px))); opacity: var(--fade-start, 0); }
+  to { transform: translateX(var(--slide-end, 0px)); opacity: 1; }
+}
+
+@keyframes slideRightReverse {
+  from { transform: translateX(var(--slide-end, 0px)); opacity: 1; }
+  to { transform: translateX(calc(-1 * var(--slide-start, 50px))); opacity: 0; }
 }
 
 @keyframes bounceSubtle {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-16px); }
+  50% { transform: translateY(calc(-1 * var(--slide-dist, 18px))); }
 }
 
 @keyframes pulseSubtle {
   0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.12); opacity: 0.85; }
+  50% { transform: scale(var(--pulse-scale, 1.15)); opacity: 0.85; }
 }
 
 @keyframes spinSmooth {
   from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  to { transform: rotate(var(--spin-deg, 360deg)); }
 }
 
 @keyframes scaleUp {
@@ -94,23 +119,53 @@
 }
 
 .animate-fade-in {
-  animation: fadeIn 1000ms ease-out forwards;
+  animation: fadeIn 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-fade-out {
+  animation: fadeOut 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-up {
-  animation: slideUp 1000ms ease-out forwards;
+  animation: slideUp 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-up-reverse {
+  animation: slideUpReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-down {
-  animation: slideDown 1000ms ease-out forwards;
+  animation: slideDown 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-down-reverse {
+  animation: slideDownReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-left {
-  animation: slideLeft 1000ms ease-out forwards;
+  animation: slideLeft 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-left-reverse {
+  animation: slideLeftReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-right {
-  animation: slideRight 1000ms ease-out forwards;
+  animation: slideRight 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-right-reverse {
+  animation: slideRightReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-bounce-subtle {
@@ -147,5 +202,15 @@
 
 .animate-brighten {
   animation: brighten 1000ms ease-out forwards;
+}
+
+.is-initially-hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.is-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 

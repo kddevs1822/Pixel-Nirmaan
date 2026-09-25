@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2 } from 'lucide-react';
+import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -184,10 +184,16 @@ const AnimationPreviewCard: React.FC<{
   type: string;
   duration: number;
   infinite: boolean;
+  distance?: number;
+  startDistance?: number;
+  endDistance?: number;
+  scale?: number;
+  degrees?: number;
+  startOpacity?: number;
   trigger?: 'auto' | 'click' | 'dblclick' | 'hover' | 'focus' | 'scroll';
   nodeType?: string;
   fill?: string;
-}> = ({ type, duration, infinite, trigger = 'auto', nodeType, fill }) => {
+}> = ({ type, duration, infinite, distance = 50, startDistance, endDistance, scale = 1.15, degrees = 360, startOpacity = 0, trigger = 'auto', nodeType, fill }) => {
   const [key, setKey] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -283,6 +289,12 @@ const AnimationPreviewCard: React.FC<{
     animationFillMode: fillMode,
     animationPlayState: isPaused ? 'paused' : 'running',
     backgroundColor: (fill && fill !== '#ffffff' && fill !== 'transparent') ? fill : '#4A3AFF',
+    ['--slide-dist' as any]: `${distance}px`,
+    ['--slide-start' as any]: `${startDistance ?? distance}px`,
+    ['--slide-end' as any]: `${endDistance ?? 0}px`,
+    ['--pulse-scale' as any]: `${scale}`,
+    ['--spin-deg' as any]: `${degrees}deg`,
+    ['--fade-start' as any]: `${startOpacity / 100}`,
   };
 
   const isCircle = nodeType === 'Circle';
@@ -553,13 +565,18 @@ export const RightSidebar: React.FC = () => {
     const currentAnim = primaryNode.animation || {
       type: 'none',
       duration: 1000,
-      infinite: true
+      infinite: false
     };
     const newAnim = { ...currentAnim, ...updates };
     if (primaryNode.isMasterComponent && activeVariantTab !== 'default') {
       updateVariant(primaryNode.id, activeVariantTab, { animation: newAnim });
     } else {
       updateNodes(selectedIds, { animation: newAnim }, true);
+    }
+    if (newAnim.type && newAnim.type !== 'none') {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('play-node-animation', { detail: { nodeId: primaryNode.id } }));
+      }, 50);
     }
   };
 
@@ -1289,14 +1306,31 @@ export const RightSidebar: React.FC = () => {
 
       {/* Animations Panel */}
       <div className="flex flex-col gap-3 pt-4 border-t border-slate-100">
-        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Animations</label>
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Animations</label>
+          {primaryNode.animation?.type && primaryNode.animation.type !== 'none' && (
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('play-node-animation', { detail: { nodeId: primaryNode.id } }));
+              }}
+              className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold flex items-center gap-1 shadow-xs transition-all active:scale-95 cursor-pointer"
+              title="Play and test this animation on the main canvas"
+            >
+              <Play size={12} fill="white" /> Play on Canvas
+            </button>
+          )}
+        </div>
         
         {/* Animation Type */}
         <div className="flex flex-col gap-1">
           <label className="text-xs text-slate-600 font-medium">Type</label>
           <select 
             value={primaryNode.animation?.type || 'none'}
-            onChange={(e) => handleAnimationChange({ type: e.target.value as any })}
+            onChange={(e) => {
+              const newType = e.target.value;
+              const isSlide = ['slide-up', 'slide-down', 'slide-left', 'slide-right'].includes(newType);
+              handleAnimationChange({ type: newType as any, fromEdge: isSlide ? true : undefined });
+            }}
             className="border border-slate-200 rounded px-2 py-1.5 text-xs bg-slate-50 w-full"
           >
             <option value="none">None</option>
@@ -1356,6 +1390,22 @@ export const RightSidebar: React.FC = () => {
               </select>
             </div>
 
+            {/* Initially Hidden Toggle */}
+            <div className="pt-2 border-t border-slate-200">
+              <label className="flex items-center gap-2 p-2 bg-slate-100/80 hover:bg-slate-100 border border-slate-200 rounded text-xs cursor-pointer select-none transition-colors">
+                <input 
+                  type="checkbox"
+                  checked={primaryNode.animation?.initiallyHidden ?? false}
+                  onChange={(e) => handleAnimationChange({ initiallyHidden: e.target.checked })}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 accent-indigo-600"
+                />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-slate-700">Initially Hidden (Start Hidden)</span>
+                  <span className="text-[10px] text-slate-500 leading-tight">Hides element until triggered by click, hover, or event</span>
+                </div>
+              </label>
+            </div>
+
             {/* Trigger Target Element Selector */}
             <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-200">
               <div className="flex justify-between items-center">
@@ -1413,11 +1463,251 @@ export const RightSidebar: React.FC = () => {
               )}
             </div>
 
+            {/* Slide Start & End Position Controls */}
+            {['slide-up', 'slide-down', 'slide-left', 'slide-right'].includes(primaryNode.animation?.type || '') && (
+              <div className="flex flex-col gap-2.5 pt-2 border-t border-slate-200">
+                {/* Off-screen edge toggle */}
+                <label className="flex items-center gap-2 p-2 bg-indigo-50/70 border border-indigo-100 rounded text-xs cursor-pointer select-none">
+                  <input 
+                    type="checkbox"
+                    checked={primaryNode.animation?.fromEdge ?? true}
+                    onChange={(e) => handleAnimationChange({ fromEdge: e.target.checked })}
+                    className="rounded text-indigo-600 focus:ring-indigo-500 accent-indigo-600"
+                  />
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-slate-700">Start from Screen Edge (Off-Screen)</span>
+                    <span className="text-[10px] text-slate-500 leading-tight">Animates element into screen from outside frame boundary</span>
+                  </div>
+                </label>
+
+                {!(primaryNode.animation?.fromEdge ?? true) && (
+                  /* Start Position (Offset) */
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Start Offset (px)
+                      </span>
+                      <span className="font-mono text-slate-400">
+                        {primaryNode.animation?.startDistance ?? primaryNode.animation?.distance ?? 50}px
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="500" 
+                        step="10"
+                        value={primaryNode.animation?.startDistance ?? primaryNode.animation?.distance ?? 50}
+                        onChange={(e) => {
+                          const val = Math.max(0, parseInt(e.target.value) || 0);
+                          handleAnimationChange({ startDistance: val, distance: val });
+                        }}
+                        className="flex-1 accent-emerald-500 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                      <input 
+                        type="number" 
+                        min="0" 
+                        max="2000" 
+                        step="5"
+                        value={primaryNode.animation?.startDistance ?? primaryNode.animation?.distance ?? 50}
+                        onChange={(e) => {
+                          const val = Math.max(0, parseInt(e.target.value) || 0);
+                          handleAnimationChange({ startDistance: val, distance: val });
+                        }}
+                        className="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white font-mono text-center"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* End Position (Offset) */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> End Position (Offset)
+                    </span>
+                    <span className="font-mono text-slate-400">
+                      {primaryNode.animation?.endDistance ?? 0}px
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="range" 
+                      min="-300" 
+                      max="300" 
+                      step="10"
+                      value={primaryNode.animation?.endDistance ?? 0}
+                      onChange={(e) => handleAnimationChange({ endDistance: parseInt(e.target.value) || 0 })}
+                      className="flex-1 accent-rose-500 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                    />
+                    <input 
+                      type="number" 
+                      min="-1000" 
+                      max="1000" 
+                      step="5"
+                      value={primaryNode.animation?.endDistance ?? 0}
+                      onChange={(e) => handleAnimationChange({ endDistance: parseInt(e.target.value) || 0 })}
+                      className="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white font-mono text-center"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Bounce Height & Number of Bounces Control */}
+            {primaryNode.animation?.type === 'bounce' && (
+              <div className="flex flex-col gap-2 pt-2 border-t border-slate-200">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 font-medium">Bounce Height (Peak)</span>
+                  <span className="font-mono text-slate-400">{primaryNode.animation?.startDistance ?? primaryNode.animation?.distance ?? 30}px</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="range" 
+                    min="5" 
+                    max="300" 
+                    step="5"
+                    value={primaryNode.animation?.startDistance ?? primaryNode.animation?.distance ?? 30}
+                    onChange={(e) => handleAnimationChange({ distance: parseInt(e.target.value) || 30, startDistance: parseInt(e.target.value) || 30 })}
+                    className="flex-1 accent-[#4A3AFF] h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                  />
+                  <input 
+                    type="number" 
+                    min="5" 
+                    max="500" 
+                    step="5"
+                    value={primaryNode.animation?.startDistance ?? primaryNode.animation?.distance ?? 30}
+                    onChange={(e) => handleAnimationChange({ distance: parseInt(e.target.value) || 30, startDistance: parseInt(e.target.value) || 30 })}
+                    className="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white font-mono text-center"
+                  />
+                </div>
+
+                {!primaryNode.animation?.infinite && (
+                  <div className="flex flex-col gap-1.5 pt-1.5 border-t border-slate-100">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-600 font-medium">Number of Bounces</span>
+                      <span className="font-mono text-slate-400">{primaryNode.animation?.bounceCount ?? 2} {(primaryNode.animation?.bounceCount ?? 2) === 1 ? 'bounce' : 'bounces'}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="range" 
+                        min="1" 
+                        max="10" 
+                        step="1"
+                        value={primaryNode.animation?.bounceCount ?? 2}
+                        onChange={(e) => handleAnimationChange({ bounceCount: parseInt(e.target.value) || 1 })}
+                        className="flex-1 accent-[#4A3AFF] h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="20" 
+                        step="1"
+                        value={primaryNode.animation?.bounceCount ?? 2}
+                        onChange={(e) => handleAnimationChange({ bounceCount: parseInt(e.target.value) || 1 })}
+                        className="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white font-mono text-center"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Pulse Scale Control */}
+            {primaryNode.animation?.type === 'pulse' && (
+              <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-200">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 font-medium">Pulse Scale</span>
+                  <span className="font-mono text-slate-400">{(primaryNode.animation?.scale ?? 1.15).toFixed(2)}x</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="range" 
+                    min="1.05" 
+                    max="2.0" 
+                    step="0.05"
+                    value={primaryNode.animation?.scale ?? 1.15}
+                    onChange={(e) => handleAnimationChange({ scale: parseFloat(e.target.value) || 1.15 })}
+                    className="flex-1 accent-[#4A3AFF] h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                  />
+                  <input 
+                    type="number" 
+                    min="1.0" 
+                    max="5.0" 
+                    step="0.05"
+                    value={primaryNode.animation?.scale ?? 1.15}
+                    onChange={(e) => handleAnimationChange({ scale: parseFloat(e.target.value) || 1.15 })}
+                    className="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white font-mono text-center"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Spin Angle Control */}
+            {primaryNode.animation?.type === 'spin' && (
+              <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-200">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 font-medium">Spin Angle</span>
+                  <span className="font-mono text-slate-400">{primaryNode.animation?.degrees ?? 360}°</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="range" 
+                    min="90" 
+                    max="1440" 
+                    step="90"
+                    value={primaryNode.animation?.degrees ?? 360}
+                    onChange={(e) => handleAnimationChange({ degrees: parseInt(e.target.value) || 360 })}
+                    className="flex-1 accent-[#4A3AFF] h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                  />
+                  <input 
+                    type="number" 
+                    min="-3600" 
+                    max="3600" 
+                    step="45"
+                    value={primaryNode.animation?.degrees ?? 360}
+                    onChange={(e) => handleAnimationChange({ degrees: parseInt(e.target.value) || 360 })}
+                    className="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white font-mono text-center"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Fade In Opacity Control */}
+            {primaryNode.animation?.type === 'fade-in' && (
+              <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-200">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 font-medium">Start Opacity</span>
+                  <span className="font-mono text-slate-400">{primaryNode.animation?.startOpacity ?? 0}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="90" 
+                    step="5"
+                    value={primaryNode.animation?.startOpacity ?? 0}
+                    onChange={(e) => handleAnimationChange({ startOpacity: parseInt(e.target.value) ?? 0 })}
+                    className="flex-1 accent-[#4A3AFF] h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                  />
+                  <input 
+                    type="number" 
+                    min="0" 
+                    max="100" 
+                    step="5"
+                    value={primaryNode.animation?.startOpacity ?? 0}
+                    onChange={(e) => handleAnimationChange({ startOpacity: parseInt(e.target.value) ?? 0 })}
+                    className="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white font-mono text-center"
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between pt-1 border-t border-slate-200">
               <span className="text-slate-600 text-xs font-medium">Loop Infinitely</span>
               <input 
                 type="checkbox" 
-                checked={primaryNode.animation?.infinite ?? true}
+                checked={primaryNode.animation?.infinite ?? false}
                 onChange={(e) => handleAnimationChange({ infinite: e.target.checked })}
                 className="w-4 h-4 accent-[#4A3AFF] rounded cursor-pointer"
               />
@@ -1429,7 +1719,13 @@ export const RightSidebar: React.FC = () => {
           <AnimationPreviewCard
             type={primaryNode.animation.type}
             duration={primaryNode.animation.duration || 1000}
-            infinite={primaryNode.animation.infinite ?? true}
+            distance={primaryNode.animation.distance}
+            startDistance={primaryNode.animation.startDistance}
+            endDistance={primaryNode.animation.endDistance}
+            scale={primaryNode.animation.scale}
+            degrees={primaryNode.animation.degrees}
+            startOpacity={primaryNode.animation.startOpacity}
+            infinite={primaryNode.animation.infinite ?? false}
             trigger={primaryNode.animation.trigger || 'auto'}
             nodeType={primaryNode.type}
             fill={primaryNode.fill}

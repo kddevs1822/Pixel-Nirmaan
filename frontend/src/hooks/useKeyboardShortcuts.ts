@@ -1,25 +1,26 @@
 import { useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
 
+const isTextEditingElement = (el: Element | null): boolean => {
+  if (!el) return false;
+  if (el instanceof HTMLTextAreaElement) return true;
+  if ((el as HTMLElement).isContentEditable) return true;
+  if (el instanceof HTMLInputElement) {
+    const type = (el.type || 'text').toLowerCase();
+    const nonTextTypes = ['range', 'color', 'checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'file'];
+    return !nonTextTypes.includes(type);
+  }
+  return false;
+};
+
 export const useKeyboardShortcuts = () => {
   useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
-      const isInput =
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target?.isContentEditable ||
-        target?.tagName === 'SELECT' ||
-        !!target?.closest('input, textarea, select, [contenteditable="true"]');
+      const isEditingInput = isTextEditingElement(target) || !!target?.closest('textarea, [contenteditable="true"], input:not([type="range"]):not([type="checkbox"]):not([type="color"]):not([type="button"])');
 
-      if (!isInput) {
-        if (
-          document.activeElement &&
-          (document.activeElement instanceof HTMLInputElement ||
-            document.activeElement instanceof HTMLTextAreaElement ||
-            (document.activeElement as HTMLElement).isContentEditable ||
-            document.activeElement.tagName === 'SELECT')
-        ) {
+      if (!isEditingInput) {
+        if (document.activeElement && (document.activeElement as HTMLElement).blur) {
           (document.activeElement as HTMLElement).blur();
         }
       }
@@ -28,6 +29,14 @@ export const useKeyboardShortcuts = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key;
       const code = e.code;
+
+      // Handle Enter inside text inputs to submit/release focus
+      if (key === 'Enter' || code === 'Enter') {
+        const activeEl = document.activeElement as HTMLElement | null;
+        if (activeEl && isTextEditingElement(activeEl) && activeEl.tagName !== 'TEXTAREA') {
+          activeEl.blur();
+        }
+      }
 
       // Always handle Escape even inside inputs
       if (key === 'Escape' || code === 'Escape') {
@@ -47,19 +56,10 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
-      // Ignore standard editing shortcuts if typing inside an active text input
+      // Ignore standard editing shortcuts if typing inside an active text input or textarea
       const target = e.target as HTMLElement | null;
       const activeEl = document.activeElement as HTMLElement | null;
-      const isInputFocused =
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target?.isContentEditable ||
-        target?.tagName === 'SELECT' ||
-        !!target?.closest('input, textarea, select, [contenteditable="true"]') ||
-        activeEl instanceof HTMLInputElement ||
-        activeEl instanceof HTMLTextAreaElement ||
-        activeEl?.isContentEditable ||
-        activeEl?.tagName === 'SELECT';
+      const isInputFocused = isTextEditingElement(target) || isTextEditingElement(activeEl);
 
       if (isInputFocused) {
         return;
@@ -80,7 +80,6 @@ export const useKeyboardShortcuts = () => {
         zoom,
         setZoom,
         setPan,
-        mode,
       } = useCanvasStore.getState();
 
       // Delete / Backspace: Delete selected elements
@@ -108,12 +107,14 @@ export const useKeyboardShortcuts = () => {
 
       // Cmd/Ctrl + C: Copy
       if (cmdOrCtrl && (key === 'c' || key === 'C' || code === 'KeyC')) {
+        e.preventDefault();
         copyNodes();
         return;
       }
 
       // Cmd/Ctrl + X: Cut
       if (cmdOrCtrl && (key === 'x' || key === 'X' || code === 'KeyX')) {
+        e.preventDefault();
         copyNodes();
         deleteNodes();
         return;
@@ -121,6 +122,7 @@ export const useKeyboardShortcuts = () => {
 
       // Cmd/Ctrl + V: Paste
       if (cmdOrCtrl && (key === 'v' || key === 'V' || code === 'KeyV')) {
+        e.preventDefault();
         pasteNodes();
         return;
       }

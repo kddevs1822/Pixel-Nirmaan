@@ -293,43 +293,68 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
+  from { opacity: var(--fade-start, 0); }
   to { opacity: 1; }
 }
 
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
 @keyframes slideUp {
-  from { transform: translateY(24px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateY(var(--slide-start, 50px)); opacity: var(--fade-start, 0); }
+  to { transform: translateY(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+}
+
+@keyframes slideUpReverse {
+  from { transform: translateY(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+  to { transform: translateY(var(--slide-start, 50px)); opacity: 0; }
 }
 
 @keyframes slideDown {
-  from { transform: translateY(-24px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateY(calc(-1 * var(--slide-start, 50px))); opacity: var(--fade-start, 0); }
+  to { transform: translateY(var(--slide-end, 0px)); opacity: 1; }
+}
+
+@keyframes slideDownReverse {
+  from { transform: translateY(var(--slide-end, 0px)); opacity: 1; }
+  to { transform: translateY(calc(-1 * var(--slide-start, 50px))); opacity: 0; }
 }
 
 @keyframes slideLeft {
-  from { transform: translateX(24px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(var(--slide-start, 50px)); opacity: var(--fade-start, 0); }
+  to { transform: translateX(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+}
+
+@keyframes slideLeftReverse {
+  from { transform: translateX(calc(-1 * var(--slide-end, 0px))); opacity: 1; }
+  to { transform: translateX(var(--slide-start, 50px)); opacity: 0; }
 }
 
 @keyframes slideRight {
-  from { transform: translateX(-24px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from { transform: translateX(calc(-1 * var(--slide-start, 50px))); opacity: var(--fade-start, 0); }
+  to { transform: translateX(var(--slide-end, 0px)); opacity: 1; }
+}
+
+@keyframes slideRightReverse {
+  from { transform: translateX(var(--slide-end, 0px)); opacity: 1; }
+  to { transform: translateX(calc(-1 * var(--slide-start, 50px))); opacity: 0; }
 }
 
 @keyframes bounceSubtle {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-16px); }
+  50% { transform: translateY(calc(-1 * var(--slide-dist, 30px))); }
 }
 
 @keyframes pulseSubtle {
   0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.08); opacity: 0.85; }
+  50% { transform: scale(var(--pulse-scale, 1.15)); opacity: 0.85; }
 }
 
 @keyframes spinSmooth {
   from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  to { transform: rotate(var(--spin-deg, 360deg)); }
 }
 
 @keyframes scaleUp {
@@ -363,23 +388,53 @@ body {
 }
 
 .animate-fade-in {
-  animation: fadeIn 1000ms ease-out forwards;
+  animation: fadeIn 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-fade-out {
+  animation: fadeOut 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-up {
-  animation: slideUp 1000ms ease-out forwards;
+  animation: slideUp 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-up-reverse {
+  animation: slideUpReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-down {
-  animation: slideDown 1000ms ease-out forwards;
+  animation: slideDown 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-down-reverse {
+  animation: slideDownReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-left {
-  animation: slideLeft 1000ms ease-out forwards;
+  animation: slideLeft 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-left-reverse {
+  animation: slideLeftReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-slide-right {
-  animation: slideRight 1000ms ease-out forwards;
+  animation: slideRight 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-slide-right-reverse {
+  animation: slideRightReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
 }
 
 .animate-bounce-subtle {
@@ -416,6 +471,16 @@ body {
 
 .animate-brighten {
   animation: brighten 1000ms ease-out forwards;
+}
+
+.is-initially-hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.is-visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 `;
   }
@@ -470,9 +535,9 @@ ${routeElements.join('\n')}
     const animType = node.animation.type;
     const trigger = node.animation.trigger || 'auto';
     
-    // If this node's animation is triggered by ANOTHER element, do not attach self-trigger classes
+    // If this node's animation is triggered by ANOTHER element, do not attach self-trigger animation classes
     if (node.animation.triggerNodeId && node.animation.triggerNodeId !== node.id) {
-      return '';
+      return node.animation.initiallyHidden ? 'is-initially-hidden' : '';
     }
 
     let baseClass = '';
@@ -505,117 +570,250 @@ ${routeElements.join('\n')}
         return '';
     }
 
-    if (trigger === 'hover') {
-      return `hover:${baseClass} cursor-pointer`;
+    const isHidden = !!node.animation?.initiallyHidden;
+
+    if (isHidden) {
+      if (trigger === 'hover') return 'is-initially-hidden cursor-pointer';
+      if (trigger === 'focus') return 'is-initially-hidden cursor-pointer outline-none';
+      if (trigger === 'click' || trigger === 'dblclick') return 'is-initially-hidden cursor-pointer';
+      if (trigger === 'scroll') return 'is-initially-hidden transition-all';
+      if (trigger === 'auto') return baseClass;
+      return 'is-initially-hidden';
     }
-    if (trigger === 'focus') {
-      return `focus:${baseClass} active:${baseClass} cursor-pointer outline-none`;
-    }
-    if (trigger === 'click' || trigger === 'dblclick') {
-      return `cursor-pointer`;
-    }
-    if (trigger === 'scroll') {
-      return `transition-all`;
-    }
+
+    if (trigger === 'hover') return `hover:${baseClass} cursor-pointer`;
+    if (trigger === 'focus') return `focus:${baseClass} active:${baseClass} cursor-pointer outline-none`;
+    if (trigger === 'click' || trigger === 'dblclick') return 'cursor-pointer';
+    if (trigger === 'scroll') return 'transition-all';
     return baseClass;
   }
 
-  private static generateNodeAnimationClickProps(node: CanvasNode): string {
-    if (!node.animation || node.animation.type === 'none') return '';
-    if (node.animation.triggerNodeId && node.animation.triggerNodeId !== node.id) return '';
-    const trigger = node.animation.trigger || 'auto';
-    const animType = node.animation.type;
-
-    let baseClass = '';
+  private static getAnimBaseClass(animType: string): string {
     switch (animType) {
-      case 'bounce': baseClass = 'animate-bounce-subtle'; break;
-      case 'pulse': baseClass = 'animate-pulse-subtle'; break;
-      case 'spin': baseClass = 'animate-spin-smooth'; break;
-      case 'fade-in': baseClass = 'animate-fade-in'; break;
-      case 'slide-up': baseClass = 'animate-slide-up'; break;
-      case 'slide-down': baseClass = 'animate-slide-down'; break;
-      case 'slide-left': baseClass = 'animate-slide-left'; break;
-      case 'slide-right': baseClass = 'animate-slide-right'; break;
+      case 'bounce': return 'animate-bounce-subtle';
+      case 'pulse': return 'animate-pulse-subtle';
+      case 'spin': return 'animate-spin-smooth';
+      case 'fade-in': return 'animate-fade-in';
+      case 'slide-up': return 'animate-slide-up';
+      case 'slide-down': return 'animate-slide-down';
+      case 'slide-left': return 'animate-slide-left';
+      case 'slide-right': return 'animate-slide-right';
+      default: return '';
     }
-
-    if (trigger === 'click') {
-      return ` onClick={(e) => { const el = e.currentTarget.querySelector('[data-anim]') || e.currentTarget; el.classList.remove('${baseClass}'); void el.offsetWidth; el.classList.add('${baseClass}'); }}`;
-    }
-    if (trigger === 'dblclick') {
-      return ` onDoubleClick={(e) => { const el = e.currentTarget.querySelector('[data-anim]') || e.currentTarget; el.classList.remove('${baseClass}'); void el.offsetWidth; el.classList.add('${baseClass}'); }}`;
-    }
-    if (trigger === 'focus') {
-      return ` tabIndex={0}`;
-    }
-    if (trigger === 'scroll') {
-      return ` ref={(el) => { if (!el) return; const obs = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { el.classList.add('${baseClass}'); } }); obs.observe(el); }}`;
-    }
-    return '';
   }
 
-  private static generateCrossElementTriggerProps(node: CanvasNode, allNodes: CanvasNode[]): string {
+  private static getAnimReverseClass(animType: string): string {
+    switch (animType) {
+      case 'bounce': return 'animate-fade-out';
+      case 'pulse': return 'animate-fade-out';
+      case 'spin': return 'animate-fade-out';
+      case 'fade-in': return 'animate-fade-out';
+      case 'slide-up': return 'animate-slide-up-reverse';
+      case 'slide-down': return 'animate-slide-down-reverse';
+      case 'slide-left': return 'animate-slide-left-reverse';
+      case 'slide-right': return 'animate-slide-right-reverse';
+      default: return 'animate-fade-out';
+    }
+  }
+
+  private static generateNodeEventHandlers(node: CanvasNode, allNodes: CanvasNode[]): string {
+    const onClickStatements: string[] = [];
+    const onDblClickStatements: string[] = [];
+    const onMouseEnterStatements: string[] = [];
+    const onMouseLeaveStatements: string[] = [];
+    const onFocusStatements: string[] = [];
+    const onBlurStatements: string[] = [];
+    let refProp = '';
+
+    // 1. Cross-element triggers (where node.id is the triggerNodeId for target nodes)
     const triggeredNodes = allNodes.filter(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
-    if (triggeredNodes.length === 0) return '';
-
-    const props: string[] = [];
-
     triggeredNodes.forEach(targetNode => {
       const animType = targetNode.animation!.type;
-      const trigger = targetNode.animation!.trigger || 'click';
-      let baseClass = '';
-      switch (animType) {
-        case 'bounce': baseClass = 'animate-bounce-subtle'; break;
-        case 'pulse': baseClass = 'animate-pulse-subtle'; break;
-        case 'spin': baseClass = 'animate-spin-smooth'; break;
-        case 'fade-in': baseClass = 'animate-fade-in'; break;
-        case 'slide-up': baseClass = 'animate-slide-up'; break;
-        case 'slide-down': baseClass = 'animate-slide-down'; break;
-        case 'slide-left': baseClass = 'animate-slide-left'; break;
-        case 'slide-right': baseClass = 'animate-slide-right'; break;
-      }
+      const baseClass = this.getAnimBaseClass(animType);
+      const reverseClass = this.getAnimReverseClass(animType);
       if (!baseClass) return;
 
+      const trigger = targetNode.animation!.trigger || 'click';
+      const isHidden = !!targetNode.animation!.initiallyHidden;
       const targetIdStr = `node-${targetNode.id}`;
+      const targetQuery = `const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim="true"]') || el;`;
 
       if (trigger === 'click') {
-        props.push(`onClick={(e) => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }}`);
+        if (isHidden) {
+          onClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
+        } else {
+          onClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
+        }
       } else if (trigger === 'dblclick') {
-        props.push(`onDoubleClick={(e) => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }}`);
+        if (isHidden) {
+          onDblClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
+        } else {
+          onDblClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
+        }
       } else if (trigger === 'hover') {
-        props.push(`onMouseEnter={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.add('${baseClass}'); } }}`);
-        props.push(`onMouseLeave={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); } }}`);
+        if (isHidden) {
+          onMouseEnterStatements.push(`${targetQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          onMouseLeaveStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); }`);
+        } else {
+          onMouseEnterStatements.push(`${targetQuery} target.classList.add('${baseClass}'); }`);
+          onMouseLeaveStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); }`);
+        }
       } else if (trigger === 'focus') {
-        props.push(`onFocus={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.add('${baseClass}'); } }}`);
-        props.push(`onBlur={() => { const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim]') || el; target.classList.remove('${baseClass}'); } }}`);
+        if (isHidden) {
+          onFocusStatements.push(`${targetQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          onBlurStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); }`);
+        } else {
+          onFocusStatements.push(`${targetQuery} target.classList.add('${baseClass}'); }`);
+          onBlurStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); }`);
+        }
       }
     });
 
-    if (props.length === 0) return '';
-    return ' ' + props.join(' ');
+    // 2. Self-triggered animation (if node itself has animation and is self-triggered)
+    if (node.animation && node.animation.type !== 'none' && (!node.animation.triggerNodeId || node.animation.triggerNodeId === node.id)) {
+      const animType = node.animation.type;
+      const baseClass = this.getAnimBaseClass(animType);
+      const reverseClass = this.getAnimReverseClass(animType);
+      if (baseClass) {
+        const trigger = node.animation.trigger || 'auto';
+        const isHidden = !!node.animation.initiallyHidden;
+        const selfQuery = `const target = e.currentTarget.querySelector('[data-anim="true"]') || e.currentTarget;`;
+
+        if (trigger === 'click') {
+          if (isHidden) {
+            onClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          } else {
+            onClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          }
+        } else if (trigger === 'dblclick') {
+          if (isHidden) {
+            onDblClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          } else {
+            onDblClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          }
+        } else if (trigger === 'hover') {
+          if (isHidden) {
+            onMouseEnterStatements.push(`${selfQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}');`);
+            onMouseLeaveStatements.push(`${selfQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}');`);
+          } else {
+            onMouseEnterStatements.push(`${selfQuery} target.classList.add('${baseClass}');`);
+            onMouseLeaveStatements.push(`${selfQuery} target.classList.remove('${baseClass}');`);
+          }
+        } else if (trigger === 'focus') {
+          if (isHidden) {
+            onFocusStatements.push(`${selfQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}');`);
+            onBlurStatements.push(`${selfQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}');`);
+          } else {
+            onFocusStatements.push(`${selfQuery} target.classList.add('${baseClass}');`);
+            onBlurStatements.push(`${selfQuery} target.classList.remove('${baseClass}');`);
+          }
+        } else if (trigger === 'scroll') {
+          refProp = ` ref={(el) => { if (!el) return; const obs = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { const target = el.querySelector('[data-anim="true"]') || el; target.classList.remove('${baseClass}'); void el.offsetWidth; target.classList.remove('is-initially-hidden'); target.classList.add('${baseClass}'); } }); obs.observe(el); }}`;
+        }
+      }
+    }
+
+    const handlerParts: string[] = [];
+
+    if (onClickStatements.length > 0) {
+      handlerParts.push(`onClick={(e) => { ${onClickStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+    }
+    if (onDblClickStatements.length > 0) {
+      handlerParts.push(`onDoubleClick={(e) => { ${onDblClickStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+    }
+    if (onMouseEnterStatements.length > 0) {
+      handlerParts.push(`onMouseEnter={(e) => { ${onMouseEnterStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+    }
+    if (onMouseLeaveStatements.length > 0) {
+      handlerParts.push(`onMouseLeave={(e) => { ${onMouseLeaveStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+    }
+    if (onFocusStatements.length > 0) {
+      handlerParts.push(`tabIndex={0} onFocus={(e) => { ${onFocusStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+    }
+    if (onBlurStatements.length > 0) {
+      handlerParts.push(`onBlur={(e) => { ${onBlurStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+    }
+    if (refProp) {
+      handlerParts.push(refProp.trim());
+    }
+
+    if (handlerParts.length === 0) return '';
+    return ' ' + handlerParts.join(' ');
   }
 
-  private static generateNodeAnimationStyles(node: CanvasNode): string {
+  private static generateNodeAnimationStyles(node: CanvasNode, parentNode?: CanvasNode): string {
     if (!node.animation || node.animation.type === 'none') return '';
     const animDur = node.animation.duration || 1000;
-    const isInf = node.animation.infinite ?? true;
     const animType = node.animation.type;
+    const isContinuous = animType === 'spin' || animType === 'pulse' || animType === 'bounce';
+    const isInf = !!node.animation.infinite;
 
     const styleProps: string[] = [];
     styleProps.push(`animationDuration: '${animDur}ms'`);
 
-    if (!isInf) {
-      styleProps.push(`animationIterationCount: 1`);
-    } else if (animType === 'fade-in' || animType === 'slide-up' || animType === 'slide-down' || animType === 'slide-left' || animType === 'slide-right') {
+    const x = node.x || 0;
+    const y = node.y || 0;
+    const startDist = node.animation.startDistance ?? node.animation.distance ?? 50;
+    const endDist = node.animation.endDistance ?? 0;
+
+    const parentW = parentNode?.width || 393;
+    const parentH = parentNode?.height || 852;
+    const width = node.width || 0;
+    const height = node.height || 0;
+
+    const isOutsideBottom = y >= parentH - height || y >= parentH - 20;
+    const isOutsideTop = y < 0;
+    const isOutsideRight = x >= parentW - width || x >= parentW - 20;
+    const isOutsideLeft = x < 0;
+
+    const fromEdge = node.animation.fromEdge ?? false;
+    let slideStart = startDist;
+    let slideEnd = endDist;
+
+    if (fromEdge) {
+      if (animType === 'slide-up') slideStart = Math.max(startDist, parentH - y + 20);
+      else if (animType === 'slide-down') slideStart = Math.max(startDist, y + height + 20);
+      else if (animType === 'slide-left') slideStart = Math.max(startDist, parentW - x + 20);
+      else if (animType === 'slide-right') slideStart = Math.max(startDist, x + width + 20);
+    } else {
+      if (animType === 'slide-up' && isOutsideBottom) {
+        slideEnd = Math.round(y - (parentH - height - endDist));
+      } else if (animType === 'slide-down' && isOutsideTop) {
+        slideEnd = Math.round((0 + endDist) - y);
+      } else if (animType === 'slide-left' && isOutsideRight) {
+        slideEnd = Math.round(x - (parentW - width - endDist));
+      } else if (animType === 'slide-right' && isOutsideLeft) {
+        slideEnd = Math.round((0 + endDist) - x);
+      }
+    }
+
+    styleProps.push(`'--slide-start': '${slideStart}px'`);
+    styleProps.push(`'--slide-dist': '${slideStart}px'`);
+    styleProps.push(`'--slide-end': '${slideEnd}px'`);
+    if (node.animation.scale !== undefined) {
+      styleProps.push(`'--pulse-scale': '${node.animation.scale}'`);
+    }
+    if (node.animation.degrees !== undefined) {
+      styleProps.push(`'--spin-deg': '${node.animation.degrees}deg'`);
+    }
+    if (node.animation.startOpacity !== undefined) {
+      styleProps.push(`'--fade-start': '${node.animation.startOpacity / 100}'`);
+    }
+
+    if (isInf) {
       styleProps.push(`animationIterationCount: 'infinite'`);
+    } else {
+      const count = (animType === 'bounce' && node.animation.bounceCount) ? node.animation.bounceCount : 1;
+      styleProps.push(`animationIterationCount: ${count}`);
+      styleProps.push(`animationFillMode: 'forwards'`);
     }
 
     return ` style={{ ${styleProps.join(', ')} }}`;
   }
 
-  private static generateNodePositionClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
-    const classes: string[] = [];
+  private static generateNodePositionStyles(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
+    if (isRoot) return '';
     const round = (val: number) => Math.round(val);
-    
     const scaleX = node.scaleX || 1;
     const scaleY = node.scaleY || 1;
     
@@ -638,7 +836,7 @@ ${routeElements.join('\n')}
       cssY -= node.radius * scaleY;
     }
 
-    if (!isRoot && parentNode) {
+    if (parentNode) {
       if (nodeW && parentNode.width && Math.abs(nodeW - parentNode.width) < 5) {
         isFullWidth = true;
       } else if (nodeW && parentNode.width) {
@@ -659,83 +857,91 @@ ${routeElements.join('\n')}
         }
       }
     }
-    
-    if (!isRoot) {
-      classes.push('absolute');
+
+    const styles: string[] = ["position: 'absolute'"];
+    const transforms: string[] = [];
+
+    // Horizontal position
+    if (isFullWidth) {
+      styles.push("left: '0px'");
+    } else if (isCenterX) {
+      styles.push("left: '50%'");
+      transforms.push('translateX(-50%)');
+    } else if (isTouchRight) {
+      styles.push("right: '0px'");
+    } else {
+      styles.push(`left: '${round(cssX)}px'`);
+    }
+
+    // Vertical position
+    if (isFullHeight) {
+      styles.push("top: '0px'");
+    } else if (isCenterY) {
+      styles.push("top: '50%'");
+      transforms.push('translateY(-50%)');
+    } else if (isTouchBottom) {
+      styles.push("bottom: '0px'");
+    } else {
+      styles.push(`top: '${round(cssY)}px'`);
+    }
+
+    // Width & Height
+    if (node.type === 'Circle' || node.type === 'Triangle') {
+      if (node.radius) {
+        styles.push(`width: '${round(node.radius * 2 * scaleX)}px'`);
+        styles.push(`height: '${round(node.radius * 2 * scaleY)}px'`);
+      }
+    } else if (node.type === 'Line') {
+      let lineW = node.width;
+      if (node.points && node.points.length >= 4) {
+        const dx = node.points[2] - node.points[0];
+        const dy = node.points[3] - node.points[1];
+        lineW = Math.sqrt(dx * dx + dy * dy);
+      }
+      styles.push(`width: '${round(lineW || 0)}px'`);
+    } else {
       if (isFullWidth) {
-        classes.push('left-0');
-      } else if (isCenterX) {
-        classes.push('left-1/2');
-        classes.push('-translate-x-1/2');
-      } else if (isTouchRight) {
-        classes.push('right-0');
-      } else {
-        classes.push(`left-[${round(cssX)}px]`);
+        styles.push("width: '100%'");
+      } else if (node.width) {
+        styles.push(`width: '${round(node.width)}px'`);
       }
       
       if (isFullHeight) {
-        classes.push('top-0');
-      } else if (isCenterY) {
-        classes.push('top-1/2');
-        classes.push('-translate-y-1/2');
-      } else if (isTouchBottom) {
-        classes.push('bottom-0');
-      } else {
-        classes.push(`top-[${round(cssY)}px]`);
-      }
-
-      if (node.type === 'Circle' || node.type === 'Triangle') {
-        if (node.radius) {
-          classes.push(`w-[${round(node.radius * 2 * scaleX)}px]`);
-          classes.push(`h-[${round(node.radius * 2 * scaleY)}px]`);
-        }
-      } else if (node.type === 'Line') {
-        let lineW = node.width;
-        if (node.points && node.points.length >= 4) {
-          const dx = node.points[2] - node.points[0];
-          const dy = node.points[3] - node.points[1];
-          lineW = Math.sqrt(dx * dx + dy * dy);
-        }
-        classes.push(`w-[${round(lineW || 0)}px]`);
-      } else {
-        if (isFullWidth) {
-          classes.push('w-full');
-        } else if (node.width) {
-          classes.push(`w-[${round(node.width)}px]`);
-        }
-        
-        if (isFullHeight) {
-          classes.push('h-full');
-        } else if (node.height) {
-          classes.push(`h-[${round(node.height)}px]`);
-        }
-      }
-
-      let lineRot = 0;
-      if (node.type === 'Line' && node.points && node.points.length >= 4) {
-        const dx = node.points[2] - node.points[0];
-        const dy = node.points[3] - node.points[1];
-        lineRot = Math.atan2(dy, dx) * (180 / Math.PI);
-      }
-      const rot = node.rotation || lineRot;
-      if (rot) {
-        classes.push(`rotate-[${round(rot)}deg]`);
-        if (node.type !== 'Circle' && node.type !== 'Triangle') {
-          classes.push('origin-top-left');
-        }
-      }
-    } else {
-      classes.push('relative');
-      if (node.isMasterComponent) {
-        if (node.width) classes.push(`w-[${round(node.width)}px]`);
-        if (node.height) classes.push(`h-[${round(node.height)}px]`);
-      } else {
-        classes.push('w-full');
-        classes.push('min-h-screen');
+        styles.push("height: '100%'");
+      } else if (node.height) {
+        styles.push(`height: '${round(node.height)}px'`);
       }
     }
 
-    return classes.join(' ');
+    // Rotation
+    let lineRot = 0;
+    if (node.type === 'Line' && node.points && node.points.length >= 4) {
+      const dx = node.points[2] - node.points[0];
+      const dy = node.points[3] - node.points[1];
+      lineRot = Math.atan2(dy, dx) * (180 / Math.PI);
+    }
+    const rot = node.rotation || lineRot;
+    if (rot) {
+      transforms.push(`rotate(${round(rot)}deg)`);
+      if (node.type !== 'Circle' && node.type !== 'Triangle') {
+        styles.push("transformOrigin: 'top left'");
+      }
+    }
+
+    if (transforms.length > 0) {
+      styles.push(`transform: '${transforms.join(' ')}'`);
+    }
+
+    // Frame overflow clipping
+    if (node.type === 'Frame') {
+      styles.push("overflow: 'hidden'");
+    }
+
+    return ` style={{ ${styles.join(', ')} }}`;
+  }
+
+  private static generateNodePositionClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
+    return '';
   }
 
   private static generateNodeStyleClasses(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
@@ -958,13 +1164,12 @@ ${routeElements.join('\n')}
         });
       }
 
-      const posClasses = this.generateNodePositionClasses(node, false, parentNode);
+      const posStyleStr = this.generateNodePositionStyles(node, false, parentNode);
       const animClasses = this.generateNodeAnimationClasses(node);
-      const animStyleStr = this.generateNodeAnimationStyles(node);
-      const animClickProps = this.generateNodeAnimationClickProps(node);
+      const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
+      const eventHandlers = this.generateNodeEventHandlers(node, allNodes);
 
       const isTriggerSource = allNodes.some(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
-      const crossTriggerProps = this.generateCrossElementTriggerProps(node, allNodes);
       const cursorClass = (targetRoute || isTriggerSource) ? ' cursor-pointer' : '';
       const elemIdAttr = ` id="node-${node.id}"`;
 
@@ -983,11 +1188,11 @@ ${routeElements.join('\n')}
         scaleStyleStr = ` style={{ transform: 'scale(${sx}, ${sy})', transformOrigin: 'top left' }}`;
       }
 
-      const innerClasses = `w-full h-full ${animClasses}`.trim();
-      const animAttrStr = `${animStyleStr}${animClickProps}`;
+      const innerClasses = `relative w-full h-full ${animClasses}`.trim();
+      const animAttrStr = `${animStyleStr}`;
 
       if (targetRoute) {
-        return `<Link${elemIdAttr} to="${targetRoute}" className="${posClasses}${cursorClass} block"${crossTriggerProps}>
+        return `<Link${elemIdAttr} to="${targetRoute}" className="${cursorClass.trim()} block"${posStyleStr}${eventHandlers}>
       <div data-anim="true" className="${innerClasses}"${animAttrStr}>
         <div${scaleStyleStr}>
           <${compName}${propsStr} />
@@ -995,7 +1200,7 @@ ${routeElements.join('\n')}
       </div>
     </Link>`;
       }
-      return `<div${elemIdAttr} className="${posClasses}${cursorClass}"${crossTriggerProps}>
+      return `<div${elemIdAttr} className="${cursorClass.trim()}"${posStyleStr}${eventHandlers}>
       <div data-anim="true" className="${innerClasses}"${animAttrStr}>
         <div${scaleStyleStr}>
           <${compName}${propsStr} />
@@ -1004,14 +1209,13 @@ ${routeElements.join('\n')}
     </div>`;
     }
 
-    const posClasses = this.generateNodePositionClasses(node, false, parentNode);
+    const posStyleStr = this.generateNodePositionStyles(node, false, parentNode);
     let styleClasses = this.generateNodeStyleClasses(node, false, parentNode);
     const animClasses = this.generateNodeAnimationClasses(node);
-    const animStyleStr = this.generateNodeAnimationStyles(node);
-    const animClickProps = this.generateNodeAnimationClickProps(node);
+    const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
+    const eventHandlers = this.generateNodeEventHandlers(node, allNodes);
 
     const isTriggerSource = allNodes.some(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
-    const crossTriggerProps = this.generateCrossElementTriggerProps(node, allNodes);
     const cursorClass = (targetRoute || isTriggerSource) ? ' cursor-pointer' : '';
     const elemIdAttr = ` id="node-${node.id}"`;
 
@@ -1046,18 +1250,18 @@ ${routeElements.join('\n')}
       innerContent = `<img src=${imgSrc} className="w-full h-full object-cover" alt="image" />`;
     }
 
-    const animAttrStr = `${animStyleStr}${inlineStyle}${animClickProps}`;
-    const innerClasses = `w-full h-full ${styleClasses} ${animClasses}`.trim();
+    const animAttrStr = `${animStyleStr}${inlineStyle}`;
+    const innerClasses = `relative w-full h-full ${styleClasses} ${animClasses}`.trim();
 
     if (targetRoute) {
-      return `<Link${elemIdAttr} to="${targetRoute}" className="${posClasses}${cursorClass} block"${crossTriggerProps}>
+      return `<Link${elemIdAttr} to="${targetRoute}" className="${cursorClass.trim()} block"${posStyleStr}${eventHandlers}>
       <div data-anim="true" className="${innerClasses}"${animAttrStr}>
         ${innerContent}
       </div>
     </Link>`;
     }
 
-    return `<div${elemIdAttr} className="${posClasses}${cursorClass}"${crossTriggerProps}>
+    return `<div${elemIdAttr} className="${cursorClass.trim()}"${posStyleStr}${eventHandlers}>
       <div data-anim="true" className="${innerClasses}"${animAttrStr}>
         ${innerContent}
       </div>
@@ -1164,7 +1368,7 @@ export default function ${componentName}(props) {
 
     const getFrameEffectStyles = (f?: CanvasNode): string => {
       if (!f) return '';
-      const styles: string[] = [];
+      const styles: string[] = ["overflow: 'hidden'"];
       if (f.opacity !== undefined && f.opacity < 100) {
         styles.push(`opacity: ${Math.round(f.opacity) / 100}`);
       }
@@ -1176,7 +1380,6 @@ export default function ${componentName}(props) {
         const col = (s.color || 'rgba(0,0,0,0.25)').replace(/\s+/g, '');
         styles.push(`boxShadow: '${s.x ?? 0}px ${s.y ?? 4}px ${s.blur ?? 10}px ${s.spread ?? 0}px ${col}'`);
       }
-      if (styles.length === 0) return '';
       return ',\n          ' + styles.join(',\n          ');
     };
 
