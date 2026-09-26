@@ -131,9 +131,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         localStorage.setItem('pixelnirmaan-output-path', project.outputPath);
       }
 
-      // Load nodes into canvas store
-      const nodes = Array.isArray(project.nodes) ? project.nodes : [];
-      useCanvasStore.getState().setNodes(nodes);
+      // Load nodes & stateVariables into canvas store
+      const projectPayload = project.nodes;
+      if (Array.isArray(projectPayload)) {
+        useCanvasStore.getState().setNodes(projectPayload);
+        useCanvasStore.getState().setStateVariables([]);
+      } else if (projectPayload && typeof projectPayload === 'object') {
+        useCanvasStore.getState().setNodes((projectPayload as any).nodes || []);
+        useCanvasStore.getState().setStateVariables((projectPayload as any).stateVariables || []);
+      } else {
+        useCanvasStore.getState().setNodes([]);
+        useCanvasStore.getState().setStateVariables([]);
+      }
 
       return true;
     } catch (error) {

@@ -388,6 +388,77 @@ const AnimationPreviewCard: React.FC<{
   );
 };
 
+const VariableBindingControl: React.FC<{
+  node: CanvasNode;
+  propertyKey: string;
+  label?: string;
+}> = ({ node, propertyKey, label }) => {
+  const stateVariables = useCanvasStore((state) => state.stateVariables);
+  const bindVariableToNodeProperty = useCanvasStore((state) => state.bindVariableToNodeProperty);
+  
+  const currentBoundVar = node.bindings?.[propertyKey];
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="relative inline-flex items-center">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 transition-all ${
+          currentBoundVar
+            ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-300 shadow-xs'
+            : 'bg-slate-100 text-slate-400 hover:text-slate-600 hover:bg-slate-200'
+        }`}
+        title={currentBoundVar ? `Bound to variable "${currentBoundVar}"` : 'Bind property to variable'}
+      >
+        <span className="font-sans font-semibold text-[10px]">fx</span>
+        {currentBoundVar && <span className="max-w-[65px] truncate">{currentBoundVar}</span>}
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 top-6 z-40 p-2.5 bg-white border border-slate-200 shadow-xl rounded-xl flex flex-col gap-1.5 min-w-[170px] animate-in fade-in zoom-in-95">
+          <div className="flex items-center justify-between text-[10px] uppercase font-bold text-slate-400 pb-1 border-b border-slate-100">
+            <span>Bind {label || propertyKey}</span>
+            <button type="button" onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              bindVariableToNodeProperty(node.id, propertyKey, null);
+              setIsOpen(false);
+            }}
+            className={`text-left text-xs px-2 py-1 rounded hover:bg-slate-100 ${!currentBoundVar ? 'font-bold text-slate-700' : 'text-slate-500'}`}
+          >
+            • None (Static)
+          </button>
+
+          {stateVariables.length === 0 ? (
+            <p className="text-[10px] text-slate-400 p-2 text-center">No variables declared yet.</p>
+          ) : (
+            stateVariables.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => {
+                  bindVariableToNodeProperty(node.id, propertyKey, v.name);
+                  setIsOpen(false);
+                }}
+                className={`text-left text-xs px-2 py-1 rounded hover:bg-emerald-50 hover:text-emerald-700 flex items-center justify-between ${
+                  currentBoundVar === v.name ? 'bg-emerald-50 text-emerald-700 font-bold' : 'text-slate-700'
+                }`}
+              >
+                <span className="font-mono">{v.name}</span>
+                <span className="text-[9px] uppercase px-1 rounded bg-slate-100 text-slate-500">{v.type}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const RightSidebar: React.FC = () => {
   const selectedIds = useCanvasStore((state) => state.selectedIds);
   const nodes = useCanvasStore((state) => state.nodes);
@@ -584,7 +655,11 @@ export const RightSidebar: React.FC = () => {
   const hasFill = selectedNodes.some(n => n.type !== 'Image' && n.type !== 'Line');
   const hasStroke = selectedNodes.some(n => n.type === 'Line');
   const hasText = selectedNodes.some(n => n.type === 'Text');
-  const hasDimensions = selectedNodes.some(n => n.type === 'Rect' || n.type === 'Image' || n.type === 'Frame');
+  const hasDimensions = selectedNodes.some(n => 
+    n.type === 'Rect' || n.type === 'Image' || n.type === 'Frame' || 
+    n.type === 'TextInput' || n.type === 'TextArea' || n.type === 'Checkbox' || 
+    n.type === 'Switch' || n.type === 'SelectDropdown' || n.type === 'FormContainer'
+  );
   const hasRadius = selectedNodes.some(n => n.type === 'Circle' || n.type === 'Triangle');
   
   return (
@@ -949,9 +1024,12 @@ export const RightSidebar: React.FC = () => {
       {hasFill && (
         <div className="flex flex-col gap-1">
           <div className="flex justify-between items-center">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              {primaryNode.type === 'Frame' ? 'Background Color' : 'Fill Color'}
-            </label>
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                {primaryNode.type === 'Frame' ? 'Background Color' : 'Fill Color'}
+              </label>
+              <VariableBindingControl node={primaryNode} propertyKey="fill" label="Fill Color" />
+            </div>
             {masterParent?.propsDefinition && masterParent.propsDefinition.filter(p => p.type === 'color').length > 0 && (
               <select
                 value={primaryNode.boundProps?.fill || ''}
@@ -1026,7 +1104,10 @@ export const RightSidebar: React.FC = () => {
         <>
           <div className="flex flex-col gap-1">
             <div className="flex justify-between items-center">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Text</label>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Text</label>
+                <VariableBindingControl node={primaryNode} propertyKey="text" label="Text" />
+              </div>
               {masterParent?.propsDefinition && masterParent.propsDefinition.filter(p => p.type === 'string').length > 0 && (
                 <select
                   value={primaryNode.boundProps?.text || ''}
@@ -1080,6 +1161,165 @@ export const RightSidebar: React.FC = () => {
             onChange={(e) => handleChange(e, 'cornerRadius', true)}
             className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50 font-mono"
           />
+        </div>
+      )}
+
+      {/* Interactive Input Properties Panel */}
+      {selectedNodes.length === 1 && (primaryNode.type === 'TextInput' || primaryNode.type === 'TextArea' || primaryNode.type === 'Checkbox' || primaryNode.type === 'Switch' || primaryNode.type === 'SelectDropdown' || primaryNode.type === 'FormContainer') && (
+        <div className="flex flex-col gap-3 pt-4 border-t border-slate-100">
+          <label className="text-xs font-semibold text-emerald-600 uppercase tracking-wider flex items-center justify-between">
+            <span>Input Settings</span>
+            <span className="text-[10px] bg-emerald-50 px-1.5 py-0.5 rounded text-emerald-700 font-mono">Interactive</span>
+          </label>
+
+          {(primaryNode.type === 'TextInput' || primaryNode.type === 'TextArea') && (
+            <>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Placeholder</label>
+                  <VariableBindingControl node={primaryNode} propertyKey="placeholder" label="Placeholder" />
+                </div>
+                <input
+                  type="text"
+                  value={primaryNode.placeholder || ''}
+                  onChange={(e) => updateNodes([primaryNode.id], { placeholder: e.target.value })}
+                  className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50"
+                  placeholder="Enter placeholder text..."
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Default Value</label>
+                  <VariableBindingControl node={primaryNode} propertyKey="defaultValue" label="Default Value" />
+                </div>
+                <input
+                  type="text"
+                  value={primaryNode.defaultValue || ''}
+                  onChange={(e) => updateNodes([primaryNode.id], { defaultValue: e.target.value })}
+                  className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50"
+                  placeholder="Initial default text..."
+                />
+              </div>
+
+              {primaryNode.type === 'TextInput' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Input Type</label>
+                  <select
+                    value={primaryNode.inputType || 'text'}
+                    onChange={(e) => updateNodes([primaryNode.id], { inputType: e.target.value as any })}
+                    className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50"
+                  >
+                    <option value="text">Text</option>
+                    <option value="email">Email</option>
+                    <option value="password">Password</option>
+                    <option value="number">Number</option>
+                  </select>
+                </div>
+              )}
+            </>
+          )}
+
+          {(primaryNode.type === 'Checkbox' || primaryNode.type === 'Switch') && (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-1 mr-2">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Default Checked</label>
+                  <VariableBindingControl node={primaryNode} propertyKey="defaultChecked" label="Default Checked" />
+                </div>
+                <input
+                  type="checkbox"
+                  checked={!!primaryNode.defaultChecked}
+                  onChange={(e) => updateNodes([primaryNode.id], { defaultChecked: e.target.checked, checked: e.target.checked })}
+                  className="w-4 h-4 text-[#4A3AFF] rounded focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Label Text</label>
+                  <VariableBindingControl node={primaryNode} propertyKey="text" label="Label Text" />
+                </div>
+                <input
+                  type="text"
+                  value={primaryNode.text || ''}
+                  onChange={(e) => updateNodes([primaryNode.id], { text: e.target.value })}
+                  className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50"
+                  placeholder="Label..."
+                />
+              </div>
+            </>
+          )}
+
+          {primaryNode.type === 'SelectDropdown' && (
+            <>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Placeholder</label>
+                  <VariableBindingControl node={primaryNode} propertyKey="placeholder" label="Placeholder" />
+                </div>
+                <input
+                  type="text"
+                  value={primaryNode.placeholder || ''}
+                  onChange={(e) => updateNodes([primaryNode.id], { placeholder: e.target.value })}
+                  className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50"
+                  placeholder="Select option..."
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Dropdown Options</label>
+                {(primaryNode.options || ['Option 1', 'Option 2']).map((opt, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={opt}
+                      onChange={(e) => {
+                        const newOpts = [...(primaryNode.options || [])];
+                        newOpts[idx] = e.target.value;
+                        updateNodes([primaryNode.id], { options: newOpts });
+                      }}
+                      className="border border-slate-200 rounded px-2 py-1 text-xs bg-slate-50 flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newOpts = (primaryNode.options || []).filter((_, i) => i !== idx);
+                        updateNodes([primaryNode.id], { options: newOpts });
+                      }}
+                      className="text-slate-400 hover:text-red-500 p-1"
+                      title="Remove option"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newOpts = [...(primaryNode.options || []), `Option ${(primaryNode.options || []).length + 1}`];
+                    updateNodes([primaryNode.id], { options: newOpts });
+                  }}
+                  className="mt-1 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 transition-colors"
+                >
+                  + Add Option
+                </button>
+              </div>
+            </>
+          )}
+
+          {primaryNode.type === 'FormContainer' && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Form Name</label>
+              <input
+                type="text"
+                value={primaryNode.name || ''}
+                onChange={(e) => updateNodes([primaryNode.id], { name: e.target.value })}
+                className="border border-slate-200 rounded px-2 py-1 text-sm bg-slate-50"
+                placeholder="e.g. Contact Form"
+              />
+            </div>
+          )}
         </div>
       )}
 

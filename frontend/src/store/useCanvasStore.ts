@@ -1,7 +1,27 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 
-export type NodeType = 'Rect' | 'Circle' | 'Text' | 'Image' | 'Frame' | 'Triangle' | 'Line';
+export type NodeType = 
+  | 'Rect' 
+  | 'Circle' 
+  | 'Text' 
+  | 'Image' 
+  | 'Frame' 
+  | 'Triangle' 
+  | 'Line'
+  | 'TextInput'
+  | 'TextArea'
+  | 'Checkbox'
+  | 'Switch'
+  | 'SelectDropdown'
+  | 'FormContainer';
+
+export interface StateVariable {
+  id: string;
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
+  defaultValue: any;
+}
 
 export interface ComponentPropDef {
   id: string;
@@ -39,6 +59,16 @@ export interface CanvasNode {
   name?: string;
   variantOf?: string;
   sourceNodeId?: string;
+
+  // Interactive Input properties
+  placeholder?: string;
+  defaultValue?: any;
+  inputType?: 'text' | 'email' | 'password' | 'number';
+  checked?: boolean;
+  defaultChecked?: boolean;
+  options?: string[];
+  bindings?: Record<string, string>; // Maps property name (e.g. 'text', 'fill', 'defaultValue') to StateVariable name
+
   // Component features
   isMasterComponent?: boolean;
   componentName?: string;
@@ -107,6 +137,14 @@ interface CanvasState {
 
   pickingTriggerForNodeId: string | null;
 
+  // State Variables
+  stateVariables: StateVariable[];
+  addStateVariable: (variable: Omit<StateVariable, 'id'>) => void;
+  updateStateVariable: (id: string, updates: Partial<StateVariable>) => void;
+  deleteStateVariable: (id: string) => void;
+  setStateVariables: (variables: StateVariable[]) => void;
+  bindVariableToNodeProperty: (nodeId: string, propertyName: string, variableName: string | null) => void;
+
   setMode: (mode: AppMode) => void;
   setConnectingSourceId: (id: string | null) => void;
   setPreviewFrameId: (id: string | null) => void;
@@ -160,6 +198,37 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   connectingSourceId: null,
   previewFrameId: null,
   pickingTriggerForNodeId: null,
+
+  stateVariables: [],
+  addStateVariable: (v) => {
+    const newVar: StateVariable = { id: uuidv4(), ...v };
+    set((state) => ({ stateVariables: [...state.stateVariables, newVar] }));
+  },
+  updateStateVariable: (id, updates) => {
+    set((state) => ({
+      stateVariables: state.stateVariables.map((v) => (v.id === id ? { ...v, ...updates } : v)),
+    }));
+  },
+  deleteStateVariable: (id) => {
+    set((state) => ({
+      stateVariables: state.stateVariables.filter((v) => v.id !== id),
+    }));
+  },
+  setStateVariables: (stateVariables) => set({ stateVariables }),
+  bindVariableToNodeProperty: (nodeId, propertyName, variableName) => {
+    set((state) => ({
+      nodes: state.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const bindings = { ...(n.bindings || {}) };
+        if (variableName) {
+          bindings[propertyName] = variableName;
+        } else {
+          delete bindings[propertyName];
+        }
+        return { ...n, bindings };
+      }),
+    }));
+  },
 
   setMode: (mode) => set({ mode, connectingSourceId: null, pickingTriggerForNodeId: null }),
   setConnectingSourceId: (connectingSourceId) => set({ connectingSourceId }),

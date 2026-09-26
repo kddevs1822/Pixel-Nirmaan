@@ -52,6 +52,7 @@ interface NodeContext {
   handleAnchorDragMove: (e: KonvaEventObject<DragEvent>, nodeId: string, index: number) => void;
   handleAnchorDragEnd: (e: KonvaEventObject<DragEvent>, nodeId: string, index: number) => void;
   handleAnchorDblClick: (e: KonvaEventObject<MouseEvent>, nodeId: string, index: number) => void;
+  openInputOverlay: (node: CanvasNode, shape: any, displayValue: string, onUpdate: (val: string) => void) => void;
 }
 
 const getKonvaEasing = (timing?: string) => {
@@ -482,7 +483,20 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
     blurRadius: hasBlur ? (resolvedNode.filterBlur || 0) : 0,
     draggable: mode === 'select' && (!inComponent || selectedIds.includes(node.id)),
     listening: (mode === 'preview' || isPreview) 
-      ? (resolvedNode.type === 'Frame' ? true : !!resolvedNode.linkTo || !!masterNode || !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none') || !!(resolvedNode.animation && resolvedNode.animation.type !== 'none') || nodes.some(n => n.animation?.triggerNodeId === resolvedNode.id && n.animation?.type !== 'none')) 
+      ? (
+          resolvedNode.type === 'Frame' || 
+          resolvedNode.type === 'TextInput' || 
+          resolvedNode.type === 'TextArea' || 
+          resolvedNode.type === 'Checkbox' || 
+          resolvedNode.type === 'Switch' || 
+          resolvedNode.type === 'SelectDropdown' || 
+          resolvedNode.type === 'FormContainer' || 
+          !!resolvedNode.linkTo || 
+          !!masterNode || 
+          !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none') || 
+          !!(resolvedNode.animation && resolvedNode.animation.type !== 'none') || 
+          nodes.some(n => n.animation?.triggerNodeId === resolvedNode.id && n.animation?.type !== 'none')
+        ) 
       : true,
     onClick: (e: any) => handleNodeClick(e, node, false),
     onTap: (e: any) => handleNodeClick(e, node, false),
@@ -732,6 +746,35 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
 
   let content = null;
 
+  const [liveValue, setLiveValue] = useState<string | null>(null);
+  const [liveCheckedState, setLiveCheckedState] = useState<boolean | null>(null);
+  const [liveOptionIdx, setLiveOptionIdx] = useState<number | null>(null);
+
+  const displayChecked = liveCheckedState !== null ? liveCheckedState : (resolvedNode.checked ?? resolvedNode.defaultChecked ?? false);
+  const displayValue = liveValue !== null ? liveValue : (resolvedNode.text || resolvedNode.defaultValue || '');
+
+  const handlePreviewClick = (e: any) => {
+    if (mode === 'preview' || isPreview) {
+      e.cancelBubble = true;
+      if (resolvedNode.type === 'Checkbox' || resolvedNode.type === 'Switch') {
+        setLiveCheckedState(!displayChecked);
+      } else if (resolvedNode.type === 'TextInput' || resolvedNode.type === 'TextArea' || resolvedNode.type === 'SelectDropdown') {
+        context.openInputOverlay(resolvedNode, shapeRef.current, displayValue, (val) => {
+          setLiveValue(val);
+          useCanvasStore.getState().updateNode(resolvedNode.id, { defaultValue: val, text: val }, true);
+        });
+      }
+    }
+  };
+
+  const interactiveProps = {
+    ...commonProps,
+    onClick: (e: any) => {
+      handlePreviewClick(e);
+      if (commonProps.onClick) commonProps.onClick(e);
+    }
+  };
+
   if (resolvedNode.type === 'Frame') {
     const childNodes = nodes.filter(n => n.parentId === node.id);
     const { shadowEnabled, shadowColor, shadowBlur, shadowOffsetX, shadowOffsetY, shadowOpacity, ...groupProps } = commonProps;
@@ -888,6 +931,207 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
     );
   } else if (resolvedNode.type === 'Image') {
     content = <URLImage shapeRef={shapeRef} key={node.id} node={resolvedNode} commonProps={commonProps} shadowProps={shadowProps} />;
+  } else if (resolvedNode.type === 'TextInput') {
+    const w = resolvedNode.width || 220;
+    const h = resolvedNode.height || 40;
+    const labelText = displayValue || resolvedNode.placeholder || 'Enter text...';
+    content = (
+      <Group ref={shapeRef} key={node.id} {...interactiveProps}>
+        <Rect
+          width={w}
+          height={h}
+          fill={resolvedNode.fill || '#FFFFFF'}
+          stroke={resolvedNode.stroke || '#CBD5E1'}
+          strokeWidth={resolvedNode.strokeWidth || 1.5}
+          cornerRadius={resolvedNode.cornerRadius ?? 6}
+        />
+        <Text
+          x={12}
+          y={(h - 14) / 2}
+          width={w - 24}
+          text={labelText}
+          fontSize={14}
+          fontFamily="Inter, sans-serif"
+          fill={displayValue ? '#1E293B' : '#94A3B8'}
+          listening={false}
+        />
+      </Group>
+    );
+  } else if (resolvedNode.type === 'TextArea') {
+    const w = resolvedNode.width || 260;
+    const h = resolvedNode.height || 90;
+    const labelText = displayValue || resolvedNode.placeholder || 'Enter text area content...';
+    content = (
+      <Group ref={shapeRef} key={node.id} {...interactiveProps}>
+        <Rect
+          width={w}
+          height={h}
+          fill={resolvedNode.fill || '#FFFFFF'}
+          stroke={resolvedNode.stroke || '#CBD5E1'}
+          strokeWidth={resolvedNode.strokeWidth || 1.5}
+          cornerRadius={resolvedNode.cornerRadius ?? 6}
+        />
+        <Text
+          x={12}
+          y={10}
+          width={w - 24}
+          text={labelText}
+          fontSize={14}
+          fontFamily="Inter, sans-serif"
+          fill={displayValue ? '#1E293B' : '#94A3B8'}
+          listening={false}
+        />
+      </Group>
+    );
+  } else if (resolvedNode.type === 'Checkbox') {
+    const w = resolvedNode.width || 140;
+    const h = resolvedNode.height || 24;
+    const isChecked = displayChecked;
+    const labelText = resolvedNode.text || 'Checkbox Label';
+    content = (
+      <Group ref={shapeRef} key={node.id} {...interactiveProps}>
+        <Rect
+          width={w}
+          height={h}
+          fill="transparent"
+        />
+        <Rect
+          x={0}
+          y={2}
+          width={18}
+          height={18}
+          fill={isChecked ? (resolvedNode.fill || '#4A3AFF') : '#FFFFFF'}
+          stroke={isChecked ? (resolvedNode.fill || '#4A3AFF') : '#94A3B8'}
+          strokeWidth={1.5}
+          cornerRadius={4}
+          listening={false}
+        />
+        {isChecked && (
+          <Line
+            points={[4, 11, 8, 15, 14, 6]}
+            stroke="#FFFFFF"
+            strokeWidth={2.5}
+            lineCap="round"
+            lineJoin="round"
+            listening={false}
+          />
+        )}
+        <Text
+          x={26}
+          y={3}
+          text={labelText}
+          fontSize={14}
+          fontFamily="Inter, sans-serif"
+          fill="#1E293B"
+          listening={false}
+        />
+      </Group>
+    );
+  } else if (resolvedNode.type === 'Switch') {
+    const w = resolvedNode.width || 110;
+    const h = resolvedNode.height || 26;
+    const isChecked = displayChecked;
+    const labelText = resolvedNode.text || 'Toggle';
+    content = (
+      <Group ref={shapeRef} key={node.id} {...interactiveProps}>
+        <Rect
+          width={w}
+          height={h}
+          fill="transparent"
+        />
+        <Rect
+          x={0}
+          y={2}
+          width={40}
+          height={22}
+          fill={isChecked ? (resolvedNode.fill || '#4A3AFF') : '#CBD5E1'}
+          cornerRadius={11}
+          listening={false}
+        />
+        <Circle
+          x={isChecked ? 29 : 11}
+          y={13}
+          radius={8}
+          fill="#FFFFFF"
+          listening={false}
+        />
+        <Text
+          x={48}
+          y={5}
+          text={labelText}
+          fontSize={14}
+          fontFamily="Inter, sans-serif"
+          fill="#1E293B"
+          listening={false}
+        />
+      </Group>
+    );
+  } else if (resolvedNode.type === 'SelectDropdown') {
+    const w = resolvedNode.width || 200;
+    const h = resolvedNode.height || 40;
+    const labelText = displayValue || resolvedNode.defaultValue || resolvedNode.placeholder || 'Select option...';
+    content = (
+      <Group ref={shapeRef} key={node.id} {...interactiveProps}>
+        <Rect
+          width={w}
+          height={h}
+          fill={resolvedNode.fill || '#FFFFFF'}
+          stroke={resolvedNode.stroke || '#CBD5E1'}
+          strokeWidth={resolvedNode.strokeWidth || 1.5}
+          cornerRadius={resolvedNode.cornerRadius ?? 6}
+        />
+        <Text
+          x={12}
+          y={(h - 14) / 2}
+          width={w - 36}
+          text={labelText}
+          fontSize={14}
+          fontFamily="Inter, sans-serif"
+          fill="#1E293B"
+          listening={false}
+        />
+        <Text
+          x={w - 24}
+          y={(h - 12) / 2}
+          text="▼"
+          fontSize={10}
+          fill="#64748B"
+          listening={false}
+        />
+      </Group>
+    );
+  } else if (resolvedNode.type === 'FormContainer') {
+    const childNodes = nodes.filter(n => n.parentId === node.id);
+    const w = resolvedNode.width || 340;
+    const h = resolvedNode.height || 260;
+    content = (
+      <Group ref={shapeRef} key={node.id} {...interactiveProps}>
+        <Rect
+          width={w}
+          height={h}
+          fill={resolvedNode.fill || '#F8FAFC'}
+          stroke={resolvedNode.stroke || '#64748B'}
+          strokeWidth={1.5}
+          dash={[6, 6]}
+          cornerRadius={resolvedNode.cornerRadius ?? 8}
+        />
+        {!isPreview && (
+          <Text
+            x={10}
+            y={-18}
+            text={`Form: ${resolvedNode.name || 'Container'}`}
+            fill="#64748B"
+            fontSize={12}
+            fontStyle="600"
+            fontFamily="Inter, sans-serif"
+            listening={false}
+          />
+        )}
+        <Group>
+          {childNodes.map(n => <RenderNode key={n.id} node={n} isPreview={isPreview} context={context} />)}
+        </Group>
+      </Group>
+    );
   }
 
   // Add component indicator label in select mode
@@ -1502,6 +1746,118 @@ export const CanvasArea: React.FC = () => {
     }
   };
 
+  const [activeEditingInput, setActiveEditingInput] = useState<{
+    node: CanvasNode;
+    bounds: { x: number; y: number; width: number; height: number };
+    displayValue: string;
+    onUpdate: (val: string) => void;
+  } | null>(null);
+
+  useEffect(() => {
+    setActiveEditingInput(null);
+  }, [mode, previewFrameId]);
+
+  const openInputOverlay = (node: CanvasNode, shape: any, displayValue: string, onUpdate: (val: string) => void) => {
+    if (shape) {
+      const bounds = shape.getClientRect();
+      setActiveEditingInput({
+        node,
+        bounds,
+        displayValue,
+        onUpdate
+      });
+    }
+  };
+
+  const renderInputOverlay = () => {
+    if (!activeEditingInput) return null;
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          left: `${activeEditingInput.bounds.x}px`,
+          top: `${activeEditingInput.bounds.y}px`,
+          width: `${activeEditingInput.bounds.width}px`,
+          height: `${activeEditingInput.bounds.height}px`,
+          zIndex: 1000,
+        }}
+      >
+        {activeEditingInput.node.type === 'TextInput' && (
+          <input
+            autoFocus
+            type={activeEditingInput.node.inputType || 'text'}
+            defaultValue={activeEditingInput.displayValue}
+            placeholder={activeEditingInput.node.placeholder || 'Enter text...'}
+            onChange={(e) => {
+              activeEditingInput.onUpdate(e.target.value);
+            }}
+            onBlur={() => setActiveEditingInput(null)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') setActiveEditingInput(null);
+            }}
+            className="w-full h-full px-3 py-1.5 bg-white text-slate-800 border-2 border-indigo-500 rounded-md font-sans text-sm focus:outline-none shadow-lg"
+          />
+        )}
+        {activeEditingInput.node.type === 'TextArea' && (
+          <textarea
+            autoFocus
+            defaultValue={activeEditingInput.displayValue}
+            placeholder={activeEditingInput.node.placeholder || 'Enter text area content...'}
+            onChange={(e) => {
+              activeEditingInput.onUpdate(e.target.value);
+            }}
+            onBlur={() => setActiveEditingInput(null)}
+            className="w-full h-full px-3 py-2 bg-white text-slate-800 border-2 border-indigo-500 rounded-md font-sans text-sm focus:outline-none shadow-lg resize-none"
+          />
+        )}
+        {activeEditingInput.node.type === 'SelectDropdown' && (() => {
+          const opts = activeEditingInput.node.options || ['Option 1', 'Option 2'];
+          return (
+            <div className="relative w-full h-full">
+              <div 
+                className="w-full h-full px-3 py-1.5 bg-white text-slate-800 border-2 border-indigo-500 rounded-md font-sans text-sm flex items-center justify-between shadow-lg cursor-pointer select-none"
+                onClick={() => setActiveEditingInput(null)}
+              >
+                <span className="truncate">{activeEditingInput.displayValue || opts[0] || 'Select option...'}</span>
+                <span className="text-slate-500 text-xs ml-2">▲</span>
+              </div>
+              <div 
+                className="absolute left-0 top-full mt-1 w-full min-w-[160px] bg-white border border-slate-200 rounded-lg shadow-xl z-[9999] overflow-hidden py-1"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="px-3 py-1 text-[11px] font-semibold uppercase text-slate-400 border-b border-slate-100 mb-1">
+                  Select Option
+                </div>
+                {opts.map((opt: string) => {
+                  const isSelected = activeEditingInput.displayValue === opt;
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        activeEditingInput.onUpdate(opt);
+                        setActiveEditingInput(null);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors flex items-center justify-between ${
+                        isSelected
+                          ? 'bg-indigo-50 text-indigo-600 font-semibold'
+                          : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>{opt}</span>
+                      {isSelected && <span className="text-indigo-600 font-bold">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    );
+  };
+
   const nodeContext: NodeContext = {
     nodes,
     selectedIds,
@@ -1515,6 +1871,7 @@ export const CanvasArea: React.FC = () => {
     handleAnchorDragMove,
     handleAnchorDragEnd,
     handleAnchorDblClick,
+    openInputOverlay,
   };
 
   if (mode === 'preview' && previewFrameId) {
@@ -1619,12 +1976,13 @@ export const CanvasArea: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden relative">
           <Stage ref={previewStageRef} width={stageSize.width} height={stageSize.height - 56}>
             <Layer x={centeredX} y={centeredY} scaleX={fitScale} scaleY={fitScale}>
               <RenderNode node={modifiedPreviewFrame} isPreview={true} context={nodeContext} />
             </Layer>
           </Stage>
+          {renderInputOverlay()}
         </div>
       </div>
     );
@@ -2892,6 +3250,7 @@ export const CanvasArea: React.FC = () => {
           </div>
         </div>
       )}
+      {renderInputOverlay()}
     </div>
   );
 };

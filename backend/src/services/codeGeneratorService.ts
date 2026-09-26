@@ -811,7 +811,7 @@ ${routeElements.join('\n')}
     return ` style={{ ${styleProps.join(', ')} }}`;
   }
 
-  private static generateNodePositionStyles(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode): string {
+  private static generateNodePositionStyles(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode, extraStyles: string[] = []): string {
     if (isRoot) return '';
     const round = (val: number) => Math.round(val);
     const scaleX = node.scaleX || 1;
@@ -935,6 +935,10 @@ ${routeElements.join('\n')}
     // Frame overflow clipping
     if (node.type === 'Frame') {
       styles.push("overflow: 'hidden'");
+    }
+
+    if (extraStyles.length > 0) {
+      styles.push(...extraStyles);
     }
 
     return ` style={{ ${styles.join(', ')} }}`;
@@ -1235,6 +1239,64 @@ ${routeElements.join('\n')}
     const inlineStyle = fillStyle || textColorStyle || '';
 
     let innerContent = '';
+
+    if (node.type === 'TextInput') {
+      const extraStyles: string[] = [];
+      if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
+      if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
+      const placeholderAttr = node.placeholder ? ` placeholder="${node.placeholder}"` : '';
+      const defaultValAttr = node.defaultValue ? ` defaultValue="${node.defaultValue}"` : '';
+      const inputType = node.inputType || 'text';
+      return `<input${elemIdAttr} type="${inputType}"${placeholderAttr}${defaultValAttr}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
+    } else if (node.type === 'TextArea') {
+      const extraStyles: string[] = [];
+      if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
+      if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
+      const placeholderAttr = node.placeholder ? ` placeholder="${node.placeholder}"` : '';
+      const defaultValAttr = node.defaultValue ? ` defaultValue="${node.defaultValue}"` : '';
+      return `<textarea${elemIdAttr}${placeholderAttr}${defaultValAttr}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
+    } else if (node.type === 'Checkbox') {
+      const isCheckedAttr = node.defaultChecked ? ' defaultChecked' : '';
+      const labelText = node.text || 'Checkbox';
+      return `<label${elemIdAttr}${posStyleStr}${eventHandlers} className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 select-none whitespace-nowrap">
+        <input type="checkbox"${isCheckedAttr} className="w-4 h-4 text-[#4A3AFF] rounded border-slate-300 focus:ring-indigo-500 cursor-pointer" />
+        <span>${labelText}</span>
+      </label>`;
+    } else if (node.type === 'Switch') {
+      const isCheckedAttr = node.defaultChecked ? ' defaultChecked' : '';
+      const labelText = node.text || 'Toggle';
+      return `<label${elemIdAttr}${posStyleStr}${eventHandlers} className="inline-flex items-center cursor-pointer select-none whitespace-nowrap">
+        <input type="checkbox"${isCheckedAttr} className="sr-only peer" />
+        <div className="w-10 h-5 bg-slate-300 peer-checked:bg-[#4A3AFF] peer-checked:[&>div]:translate-x-5 rounded-full p-0.5 transition-colors duration-200 flex items-center shrink-0">
+          <div className="w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200" />
+        </div>
+        <span className="ml-2 text-sm font-medium text-slate-700 whitespace-nowrap">${labelText}</span>
+      </label>`;
+    } else if (node.type === 'SelectDropdown') {
+      const extraStyles: string[] = [];
+      if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
+      if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
+      const placeholderOpt = node.placeholder ? `<option value="" disabled>${node.placeholder}</option>` : '';
+      const defaultValAttr = node.defaultValue ? ` defaultValue="${node.defaultValue}"` : '';
+      const optionsHtml = (node.options || ['Option 1', 'Option 2']).map(opt => `<option value="${opt}">${opt}</option>`).join('\n          ');
+      return `<select${elemIdAttr}${defaultValAttr}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer text-slate-800">
+        ${placeholderOpt}
+        ${optionsHtml}
+      </select>`;
+    } else if (node.type === 'FormContainer') {
+      const extraStyles: string[] = [];
+      if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
+      if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
+      const children = allNodes.filter(n => n.parentId === node.id);
+      const innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap)).join('\n      ');
+      return `<form${elemIdAttr}${inputStyleStr}${eventHandlers} className="p-4 border border-dashed rounded-lg relative">
+        ${innerContent}
+      </form>`;
+    }
 
     if (node.type === 'Frame') {
       const children = allNodes.filter(n => n.parentId === node.id);

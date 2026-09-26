@@ -1,4 +1,24 @@
-export type NodeType = 'Rect' | 'Circle' | 'Text' | 'Image' | 'Frame' | 'Triangle' | 'Line';
+export type NodeType = 
+  | 'Rect' 
+  | 'Circle' 
+  | 'Text' 
+  | 'Image' 
+  | 'Frame' 
+  | 'Triangle' 
+  | 'Line'
+  | 'TextInput'
+  | 'TextArea'
+  | 'Checkbox'
+  | 'Switch'
+  | 'SelectDropdown'
+  | 'FormContainer';
+
+export interface StateVariable {
+  id: string;
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
+  defaultValue: any;
+}
 
 export interface ComponentPropDef {
   id: string;
@@ -35,6 +55,16 @@ export interface CanvasNode {
   rotation?: number;
   name?: string;
   variantOf?: string;
+
+  // Interactive Input properties
+  placeholder?: string;
+  defaultValue?: any;
+  inputType?: 'text' | 'email' | 'password' | 'number';
+  checked?: boolean;
+  defaultChecked?: boolean;
+  options?: string[];
+  bindings?: Record<string, string>; // Maps property name (e.g. 'text', 'fill', 'defaultValue') to StateVariable name
+
   // Component features
   isMasterComponent?: boolean;
   componentName?: string;
