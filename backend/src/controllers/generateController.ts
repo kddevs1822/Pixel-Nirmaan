@@ -3,11 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CodeGeneratorService } from '../services/codeGeneratorService';
 import { FolderPickerService } from '../services/folderPickerService';
-import { CanvasNode } from '../models/types';
+import { CanvasNode, StateVariable } from '../models/types';
 
 export const generateCode = (req: Request, res: Response) => {
   try {
-    const { nodes } = req.body as { nodes: CanvasNode[] };
+    const { nodes, stateVariables } = req.body as { nodes: CanvasNode[]; stateVariables?: StateVariable[] };
     
     if (!nodes || !Array.isArray(nodes)) {
       return res.status(400).json({ error: 'Invalid payload: nodes array is required' });
@@ -25,7 +25,7 @@ export const generateCode = (req: Request, res: Response) => {
       console.log(`  Node: id=${n.id}, type=${n.type}, parentId=${n.parentId || 'NONE'}, isMaster=${n.isMasterComponent || false}, componentId=${n.componentId || 'NONE'}, componentName=${n.componentName || 'NONE'}`);
     });
 
-    const files = CodeGeneratorService.generate(nodes);
+    const files = CodeGeneratorService.generate(nodes, stateVariables);
 
     // DEBUG: Log generated files
     console.log(`Generated files: ${Object.keys(files).join(', ')}`);
@@ -49,7 +49,7 @@ export const generateCode = (req: Request, res: Response) => {
 
 export const generateToFolder = (req: Request, res: Response) => {
   try {
-    const { nodes, outputPath } = req.body as { nodes: CanvasNode[]; outputPath: string };
+    const { nodes, outputPath, stateVariables } = req.body as { nodes: CanvasNode[]; outputPath: string; stateVariables?: StateVariable[] };
 
     if (!nodes || !Array.isArray(nodes)) {
       return res.status(400).json({ error: 'Invalid payload: nodes array is required' });
@@ -64,7 +64,7 @@ export const generateToFolder = (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Cannot export: No Frame found on canvas. Please add at least one Frame before exporting.' });
     }
 
-    const files = CodeGeneratorService.generate(nodes);
+    const files = CodeGeneratorService.generate(nodes, stateVariables);
     const fileEntries = Object.entries(files);
 
     for (const [relativePath, content] of fileEntries) {

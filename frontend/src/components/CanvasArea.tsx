@@ -132,14 +132,44 @@ const getSlideTrajectory = (
   return { startX, startY, endX, endY, isOutsideBottom, isOutsideTop, isOutsideRight, isOutsideLeft };
 };
 
-const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: NodeContext }> = ({ node, isPreview = false, context }) => {
+const RenderNode: React.FC<{ 
+  node: CanvasNode; 
+  isPreview?: boolean; 
+  context: NodeContext; 
+  repeaterContext?: { item: any; index: number; scopeName: string } 
+}> = ({ node, isPreview = false, context, repeaterContext }) => {
   const { nodes, selectedIds, mode, selectNodes, toggleNodeSelection, handleNodeClick, handleDragEnd, handleTransformEnd, handleLineDblClick, handleAnchorDragMove, handleAnchorDragEnd, handleAnchorDblClick } = context;
+  const stateVariables = useCanvasStore((state) => state.stateVariables);
   const [interactiveState, setInteractiveState] = useState<'default'|'hover'|'active'|'disabled'>('default');
   const shapeRef = useRef<any>(null);
   const hoverTweenRef = useRef<Konva.Tween | null>(null);
   const shadowTweenRef = useRef<Konva.Tween | null>(null);
 
   let resolvedNode = { ...node };
+
+  const getBoundProperty = (field: string, fallback: any) => {
+    const expr = resolvedNode.bindings?.[field];
+    if (!expr) return fallback;
+
+    if (repeaterContext && repeaterContext.item) {
+      const scope = repeaterContext.scopeName || 'item';
+      if (expr === scope) {
+        return typeof repeaterContext.item === 'object' ? JSON.stringify(repeaterContext.item) : String(repeaterContext.item);
+      }
+      if (expr.startsWith(`${scope}.`)) {
+        const propPath = expr.slice(scope.length + 1);
+        const val = propPath.split('.').reduce((obj, k) => obj?.[k], repeaterContext.item);
+        if (val !== undefined && val !== null) return String(val);
+      }
+    }
+
+    const foundVar = stateVariables.find(v => v.name === expr || v.id === expr);
+    if (foundVar && foundVar.defaultValue !== undefined) {
+      return String(foundVar.defaultValue);
+    }
+
+    return fallback;
+  };
   let masterNode = node.isMasterComponent ? node : undefined;
   
   let rootInstance: CanvasNode | undefined = undefined;
@@ -470,7 +500,7 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
   };
 
   const commonProps: any = {
-    id: `node-${resolvedNode.id}`,
+    id: `node-${resolvedNode.id}${repeaterContext ? `-rep-${repeaterContext.index}` : ''}`,
     x: resolvedNode.x,
     y: resolvedNode.y,
     scaleX: resolvedNode.scaleX || 1,
@@ -482,22 +512,24 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
     filters: hasBlur ? [Konva.Filters.Blur] : undefined,
     blurRadius: hasBlur ? (resolvedNode.filterBlur || 0) : 0,
     draggable: mode === 'select' && (!inComponent || selectedIds.includes(node.id)),
-    listening: (mode === 'preview' || isPreview) 
-      ? (
-          resolvedNode.type === 'Frame' || 
-          resolvedNode.type === 'TextInput' || 
-          resolvedNode.type === 'TextArea' || 
-          resolvedNode.type === 'Checkbox' || 
-          resolvedNode.type === 'Switch' || 
-          resolvedNode.type === 'SelectDropdown' || 
-          resolvedNode.type === 'FormContainer' || 
-          !!resolvedNode.linkTo || 
-          !!masterNode || 
-          !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none') || 
-          !!(resolvedNode.animation && resolvedNode.animation.type !== 'none') || 
-          nodes.some(n => n.animation?.triggerNodeId === resolvedNode.id && n.animation?.type !== 'none')
-        ) 
-      : true,
+    listening: (repeaterContext && !isPreview && repeaterContext.index > 0)
+      ? false
+      : ((mode === 'preview' || isPreview) 
+          ? (
+              resolvedNode.type === 'Frame' || 
+              resolvedNode.type === 'TextInput' || 
+              resolvedNode.type === 'TextArea' || 
+              resolvedNode.type === 'Checkbox' || 
+              resolvedNode.type === 'Switch' || 
+              resolvedNode.type === 'SelectDropdown' || 
+              resolvedNode.type === 'FormContainer' || 
+              !!resolvedNode.linkTo || 
+              !!masterNode || 
+              !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none') || 
+              !!(resolvedNode.animation && resolvedNode.animation.type !== 'none') || 
+              nodes.some(n => n.animation?.triggerNodeId === resolvedNode.id && n.animation?.type !== 'none')
+            ) 
+          : true),
     onClick: (e: any) => handleNodeClick(e, node, false),
     onTap: (e: any) => handleNodeClick(e, node, false),
     onDblClick: (e: any) => handleNodeClick(e, node, true),
@@ -751,7 +783,9 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
   const [liveOptionIdx, setLiveOptionIdx] = useState<number | null>(null);
 
   const displayChecked = liveCheckedState !== null ? liveCheckedState : (resolvedNode.checked ?? resolvedNode.defaultChecked ?? false);
-  const displayValue = liveValue !== null ? liveValue : (resolvedNode.text || resolvedNode.defaultValue || '');
+  const rawValue = liveValue !== null ? liveValue : (resolvedNode.text || resolvedNode.defaultValue || '');
+  const displayValue = getBoundProperty('text', getBoundProperty('defaultValue', rawValue));
+  const displaySrc = getBoundProperty('src', resolvedNode.src || '');
 
   const handlePreviewClick = (e: any) => {
     if (mode === 'preview' || isPreview) {
@@ -808,8 +842,8 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
           <Text
             x={0}
             y={-20}
-            text={resolvedNode.name ? `${resolvedNode.name}${resolvedNode.variantOf ? ' • Variant' : ''} (${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)})` : `Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
-            fill={resolvedNode.variantOf ? "#4A3AFF" : "#64748b"}
+            text={resolvedNode.name ? `${resolvedNode.name}${resolvedNode.variantOf ? ' • Variant' : ''}${resolvedNode.repeaterBinding ? ' [Repeater]' : ''} (${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)})` : `Frame - ${Math.round(resolvedNode.width || 0)}x${Math.round(resolvedNode.height || 0)}`}
+            fill={resolvedNode.repeaterBinding ? "#6366F1" : (resolvedNode.variantOf ? "#4A3AFF" : "#64748b")}
             fontSize={12}
             fontStyle="500"
             fontFamily="Inter, sans-serif"
@@ -822,7 +856,86 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
           clipWidth={isPreview ? resolvedNode.width : undefined} 
           clipHeight={isPreview ? resolvedNode.height : undefined}
         >
-          {childNodes.map(n => <RenderNode key={n.id} node={n} isPreview={isPreview} context={context} />)}
+          {resolvedNode.repeaterBinding ? (() => {
+            const varId = resolvedNode.repeaterBinding.arrayVariableId;
+            const arrayVar = stateVariables.find(v => v.id === varId || v.name === varId);
+            let items: any[] = [];
+            if (arrayVar && arrayVar.defaultValue !== undefined) {
+              try {
+                const raw = arrayVar.defaultValue;
+                if (Array.isArray(raw)) items = raw;
+                else if (typeof raw === 'string') items = JSON.parse(raw);
+              } catch (e) {
+                items = [];
+              }
+            }
+            if (!Array.isArray(items) || items.length === 0) {
+              items = [
+                { name: 'Alice Smith', title: 'Product Designer', price: '$49', avatar: '' },
+                { name: 'Bob Johnson', title: 'Frontend Developer', price: '$89', avatar: '' },
+                { name: 'Charlie Lee', title: 'Fullstack Dev', price: '$129', avatar: '' }
+              ];
+            }
+            const direction = resolvedNode.repeaterBinding.direction || 'vertical';
+            const gap = resolvedNode.repeaterBinding.gap ?? 16;
+            const scopeName = resolvedNode.repeaterBinding.itemName || 'item';
+
+            const repeatedChildren = childNodes.filter(c => !c.excludeFromRepeater);
+            const staticChildren = childNodes.filter(c => c.excludeFromRepeater);
+            const targetForBounds = repeatedChildren.length > 0 ? repeatedChildren : childNodes;
+
+            let itemH = 0;
+            let itemW = 0;
+            if (targetForBounds.length > 0) {
+              const childrenMinY = Math.min(...targetForBounds.map(c => c.y || 0));
+              const childrenMaxY = Math.max(...targetForBounds.map(c => (c.y || 0) + (c.height || (c.fontSize ? c.fontSize * 1.3 : 24))));
+              itemH = Math.max(10, childrenMaxY - childrenMinY);
+
+              const childrenMinX = Math.min(...targetForBounds.map(c => c.x || 0));
+              const childrenMaxX = Math.max(...targetForBounds.map(c => (c.x || 0) + (c.width || 100)));
+              itemW = Math.max(10, childrenMaxX - childrenMinX);
+            } else {
+              itemH = resolvedNode.height || 100;
+              itemW = resolvedNode.width || 200;
+            }
+
+            return (
+              <>
+                {/* Static non-repeating children (Header, Footer, Backgrounds) */}
+                {staticChildren.map(child => (
+                  <RenderNode
+                    key={`static-${child.id}`}
+                    node={child}
+                    isPreview={isPreview}
+                    context={context}
+                    repeaterContext={repeaterContext}
+                  />
+                ))}
+
+                {/* Repeated children */}
+                {items.map((itemObj, itemIdx) => {
+                  const offsetX = direction === 'horizontal' ? itemIdx * (itemW + gap) : 0;
+                  const offsetY = direction === 'vertical' ? itemIdx * (itemH + gap) : 0;
+
+                  return (
+                    <Group key={`repeat-${node.id}-${itemIdx}`} x={offsetX} y={offsetY} listening={true}>
+                      {repeatedChildren.map(child => (
+                        <RenderNode 
+                          key={`${child.id}-repeat-${itemIdx}`} 
+                          node={child} 
+                          isPreview={isPreview} 
+                          context={context} 
+                          repeaterContext={{ item: itemObj, index: itemIdx, scopeName }} 
+                        />
+                      ))}
+                    </Group>
+                  );
+                })}
+              </>
+            );
+          })() : (
+            childNodes.map(n => <RenderNode key={n.id} node={n} isPreview={isPreview} context={context} repeaterContext={repeaterContext} />)
+          )}
         </Group>
       </Group>
     );
@@ -922,7 +1035,7 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
         ref={shapeRef}
         key={node.id}
         {...commonProps}
-        text={resolvedNode.text}
+        text={displayValue}
         fontSize={resolvedNode.fontSize}
         fontFamily={resolvedNode.fontFamily}
         stroke={isComponentIndicator ? indicatorStroke : undefined}
@@ -930,7 +1043,7 @@ const RenderNode: React.FC<{ node: CanvasNode; isPreview?: boolean; context: Nod
       />
     );
   } else if (resolvedNode.type === 'Image') {
-    content = <URLImage shapeRef={shapeRef} key={node.id} node={resolvedNode} commonProps={commonProps} shadowProps={shadowProps} />;
+    content = <URLImage shapeRef={shapeRef} key={node.id} node={{ ...resolvedNode, src: displaySrc }} commonProps={commonProps} shadowProps={shadowProps} />;
   } else if (resolvedNode.type === 'TextInput') {
     const w = resolvedNode.width || 220;
     const h = resolvedNode.height || 40;
@@ -1162,12 +1275,16 @@ export const CanvasArea: React.FC = () => {
   const stageRef = useRef<Konva.Stage>(null);
   const previewStageRef = useRef<any>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
+  const lastClickedKonvaIdRef = useRef<string | null>(null);
+  const dragStartGapRef = useRef<number>(0);
+  const dragStartPosRef = useRef<number>(0);
 
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [previewDeviceOverride, setPreviewDeviceOverride] = useState<'desktop'|'tablet'|'mobile'|null>(null);
   const [selectionRect, setSelectionRect] = useState<{ startX: number, startY: number, x: number, y: number, width: number, height: number } | null>(null);
+  const [connectMousePos, setConnectMousePos] = useState<{ x: number, y: number } | null>(null);
   
   useEffect(() => {
     const handleResize = () => {
@@ -1213,7 +1330,15 @@ export const CanvasArea: React.FC = () => {
           return true;
         });
 
-        const selectedKonvaNodes = filteredIds.map(id => stageRef.current?.findOne(`#node-${id}`)).filter(Boolean) as Konva.Node[];
+        const selectedKonvaNodes = filteredIds.map(id => {
+          if (!stageRef.current) return null;
+          const lastId = lastClickedKonvaIdRef.current;
+          if (lastId && (lastId === `node-${id}` || lastId.startsWith(`node-${id}-rep-`))) {
+            const match = stageRef.current.findOne(`#${lastId}`);
+            if (match) return match;
+          }
+          return stageRef.current.findOne(`#node-${id}`) || stageRef.current.findOne(`#node-${id}-rep-0`);
+        }).filter(Boolean) as Konva.Node[];
         
         // Don't attach transformer to Line directly if it's the only one selected (we use custom anchors)
         if (filteredIds.length === 1) {
@@ -1484,7 +1609,7 @@ export const CanvasArea: React.FC = () => {
     if (!targetNode.animation || targetNode.animation.type === 'none') return;
     const stage = stageOverride || previewStageRef.current || stageRef.current;
     if (!stage) { console.log('[playNodeAnimation] No stage found'); return; }
-    const konvaEl = stage.findOne('#node-' + targetNode.id) as Konva.Node;
+    const konvaEl = (stage.findOne('#node-' + targetNode.id) || stage.findOne('#node-' + targetNode.id + '-rep-0')) as Konva.Node;
     if (!konvaEl) { console.log('[playNodeAnimation] Konva element not found for', targetNode.id, targetNode.name); return; }
 
     const animConfig = targetNode.animation;
@@ -1614,6 +1739,11 @@ export const CanvasArea: React.FC = () => {
     e.cancelBubble = true;
     (document.activeElement as HTMLElement)?.blur();
 
+    const clickedKonvaId = e?.target?.attrs?.id || e?.target?.parent?.attrs?.id || '';
+    if (clickedKonvaId) {
+      lastClickedKonvaIdRef.current = clickedKonvaId;
+    }
+
     if (pickingTriggerForNodeId) {
       const animatedNode = nodes.find(n => n.id === pickingTriggerForNodeId);
       if (animatedNode) {
@@ -1692,14 +1822,20 @@ export const CanvasArea: React.FC = () => {
 
       if (connectingSourceId) {
         const sourceNode = nodes.find(n => n.id === connectingSourceId);
-        const sourceFrame = sourceNode ? findRootLayoutFrame(sourceNode) : undefined;
-        const targetFrame = findRootLayoutFrame(node);
+        const sourceFrame = sourceNode ? (findRootLayoutFrame(sourceNode) || (sourceNode.type === 'Frame' ? sourceNode : undefined)) : undefined;
+        const targetFrame = findRootLayoutFrame(node) || (node.type === 'Frame' ? node : undefined);
         
         if (sourceNode && sourceFrame && targetFrame && targetFrame.type === 'Frame') {
+          if (sourceFrame.id === targetFrame.id) {
+            setConnectingSourceId(null);
+            setConnectMousePos(null);
+            return;
+          }
           const sType = sourceFrame.frameType || 'desktop';
           const tType = targetFrame.frameType || 'desktop';
           if (sType === tType) {
             updateNode(connectingSourceId, { linkTo: targetFrame.id }, true);
+            setToastMessage(`Connected "${sourceNode.name || 'Element'}" to "${targetFrame.name || 'Frame'}"`);
             // Also link the parent component if sourceNode is inside a component
             let curr = sourceNode;
             while (curr && curr.parentId) {
@@ -1714,10 +1850,9 @@ export const CanvasArea: React.FC = () => {
           }
         }
         setConnectingSourceId(null);
+        setConnectMousePos(null);
       } else {
-        if (node.parentId || node.type !== 'Frame' || node.isMasterComponent || node.componentId) {
-          setConnectingSourceId(node.id);
-        }
+        setConnectingSourceId(node.id);
       }
       return;
     }
@@ -2021,54 +2156,62 @@ export const CanvasArea: React.FC = () => {
   const getConnectionPoints = () => {
     const lines: { id: string, points: number[] }[] = [];
 
-    const getFrameCenter = (frame: CanvasNode) => ({
-      x: frame.x + (frame.width || 0) / 2,
-      y: frame.y + (frame.height || 0) / 2,
-    });
+    const findRootLayoutFrame = (startNode: CanvasNode): CanvasNode | undefined => {
+      let curr: CanvasNode | undefined = startNode;
+      while (curr && curr.parentId) {
+        const p = nodes.find(n => n.id === curr!.parentId);
+        if (p && p.type === 'Frame' && !p.isMasterComponent && !p.componentId) {
+          return p;
+        }
+        curr = p;
+      }
+      if (curr && curr.type === 'Frame' && !curr.isMasterComponent && !curr.componentId) {
+        return curr;
+      }
+      return undefined;
+    };
 
     const getEdgePoint = (frame: CanvasNode, targetCenter: { x: number, y: number }) => {
-      const cx = frame.x + (frame.width || 0) / 2;
-      const cy = frame.y + (frame.height || 0) / 2;
-      const fw = (frame.width || 0) / 2;
-      const fh = (frame.height || 0) / 2;
+      const frameBounds = getNodeCanvasBounds(frame.id);
+      if (!frameBounds) return targetCenter;
+      const cx = frameBounds.centerX;
+      const cy = frameBounds.centerY;
+      const fw = frameBounds.width / 2;
+      const fh = frameBounds.height / 2;
       const dx = targetCenter.x - cx;
       const dy = targetCenter.y - cy;
       
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return { x: cx + fw, y: cy };
       
-      // Check which edge the line crosses
       const absDx = Math.abs(dx);
       const absDy = Math.abs(dy);
       
-      if (absDx / fw > absDy / fh) {
-        // Exits from left or right edge
+      if (absDx / (fw || 1) > absDy / (fh || 1)) {
         const sign = dx > 0 ? 1 : -1;
-        return { x: cx + sign * fw, y: cy + dy * (fw / absDx) };
+        return { x: cx + sign * fw, y: cy + dy * (fw / (absDx || 1)) };
       } else {
-        // Exits from top or bottom edge
         const sign = dy > 0 ? 1 : -1;
-        return { x: cx + dx * (fh / absDy), y: cy + sign * fh };
+        return { x: cx + dx * (fh / (absDy || 1)), y: cy + sign * fh };
       }
     };
 
     const drawnPairs = new Set<string>();
 
     nodes.forEach(node => {
-      if (node.linkTo && node.parentId) {
-        const sourceFrame = nodes.find(n => n.id === node.parentId);
-        if (!sourceFrame || sourceFrame.type !== 'Frame') return;
+      if (node.linkTo) {
+        const sourceFrame = findRootLayoutFrame(node) || (node.type === 'Frame' ? node : undefined);
+        if (!sourceFrame) return;
 
-        // Determine the source frame's device type
         const sourceFrameType = sourceFrame.frameType || 'desktop';
 
-        // Resolve target: find matching variant of the target for this device type
-        let targetFrame = nodes.find(n => n.id === node.linkTo);
+        let targetNode = nodes.find(n => n.id === node.linkTo);
+        if (!targetNode) return;
+
+        let targetFrame = findRootLayoutFrame(targetNode) || (targetNode.type === 'Frame' ? targetNode : undefined);
         if (!targetFrame) return;
 
-        // Get the primary target ID
         const primaryTargetId = targetFrame.variantOf || targetFrame.id;
 
-        // If source is a variant frame, try to find matching variant of the target
         if (sourceFrame.variantOf) {
           const matchingVariant = nodes.find(n =>
             n.variantOf === primaryTargetId &&
@@ -2078,25 +2221,22 @@ export const CanvasArea: React.FC = () => {
           if (matchingVariant) {
             targetFrame = matchingVariant;
           } else {
-            // Fall back to the primary target
             const primaryTarget = nodes.find(n => n.id === primaryTargetId);
             if (primaryTarget) targetFrame = primaryTarget;
           }
         } else {
-          // Source is primary — resolve target to primary too
           if (targetFrame.variantOf) {
             const primaryTarget = nodes.find(n => n.id === targetFrame!.variantOf);
             if (primaryTarget) targetFrame = primaryTarget;
           }
         }
 
-        // Deduplicate: only one arrow per source-frame → target-frame pair
-        const pairKey = `${sourceFrame.id}->${targetFrame.id}`;
+        const pairKey = `${node.id}->${targetFrame.id}`;
         if (drawnPairs.has(pairKey)) return;
         drawnPairs.add(pairKey);
 
         const sourceBounds = getNodeCanvasBounds(node.id);
-        if (sourceBounds && targetFrame && targetFrame.type === 'Frame') {
+        if (sourceBounds && targetFrame) {
           const start = { x: sourceBounds.centerX, y: sourceBounds.centerY };
           const end = getEdgePoint(targetFrame, start);
           lines.push({ id: node.id, points: [start.x, start.y, end.x, end.y] });
@@ -2110,8 +2250,8 @@ export const CanvasArea: React.FC = () => {
         const stage = stageRef.current;
         const pointer = stage.getPointerPosition();
         if (pointer) {
-          const mouseX = (pointer.x - stage.x()) / stage.scaleX();
-          const mouseY = (pointer.y - stage.y()) / stage.scaleY();
+          const mouseX = connectMousePos ? connectMousePos.x : (pointer.x - stage.x()) / stage.scaleX();
+          const mouseY = connectMousePos ? connectMousePos.y : (pointer.y - stage.y()) / stage.scaleY();
           const start = { x: sourceBounds.centerX, y: sourceBounds.centerY };
           lines.push({ id: 'temp', points: [start.x, start.y, mouseX, mouseY] });
         }
@@ -2135,8 +2275,13 @@ export const CanvasArea: React.FC = () => {
         y={pan.y}
         draggable={mode === 'select' && !selectionRect}
         onMouseMove={(e) => {
-          if (mode === 'connect' && connectingSourceId) {
-            stageRef.current?.draw();
+          if (mode === 'connect' && connectingSourceId && stageRef.current) {
+            const pointer = stageRef.current.getPointerPosition();
+            if (pointer) {
+              const unscaledX = (pointer.x - stageRef.current.x()) / zoom;
+              const unscaledY = (pointer.y - stageRef.current.y()) / zoom;
+              setConnectMousePos({ x: unscaledX, y: unscaledY });
+            }
           }
           if (selectionRect && stageRef.current) {
             const pointer = stageRef.current.getPointerPosition();
@@ -2164,7 +2309,10 @@ export const CanvasArea: React.FC = () => {
           const target = e.target;
           const isStage = target === target.getStage();
           const clickedKonvaId = target.attrs?.id || target.parent?.attrs?.id || '';
-          const clickedNodeId = clickedKonvaId.replace('node-', '');
+          if (clickedKonvaId) {
+            lastClickedKonvaIdRef.current = clickedKonvaId;
+          }
+          const clickedNodeId = clickedKonvaId.replace(/^node-/, '').replace(/-rep-\d+$/, '');
           const clickedNode = nodes.find(n => n.id === clickedNodeId);
           const isFrameBg = clickedNode?.type === 'Frame' && !clickedNode.componentId && !clickedNode.isMasterComponent;
 
@@ -2180,7 +2328,7 @@ export const CanvasArea: React.FC = () => {
                 setSelectionRect({ startX: unscaledX, startY: unscaledY, x: unscaledX, y: unscaledY, width: 0, height: 0 });
               }
             }
-            if (mode === 'connect') setConnectingSourceId(null);
+            if (mode === 'connect' && isStage) setConnectingSourceId(null);
           }
         }}
         onMouseUp={(e) => {
@@ -3170,6 +3318,186 @@ export const CanvasArea: React.FC = () => {
             }
 
             return null;
+          })}
+
+          {/* On-Canvas Draggable Gap Adjuster Handle for Repeater Frames */}
+          {mode === 'select' && selectedIds.map(selectedId => {
+            const selectedNode = nodes.find(n => n.id === selectedId);
+            if (!selectedNode) return null;
+            
+            const repeaterFrame = (selectedNode.type === 'Frame' || selectedNode.type === 'FormContainer') && selectedNode.repeaterBinding
+              ? selectedNode
+              : (selectedNode.parentId ? nodes.find(n => n.id === selectedNode.parentId && n.repeaterBinding) : null);
+
+            if (!repeaterFrame || !repeaterFrame.repeaterBinding) return null;
+
+            const bounds = getNodeCanvasBounds(repeaterFrame.id);
+            if (!bounds) return null;
+
+            const childNodes = nodes.filter(n => n.parentId === repeaterFrame.id);
+            const repeatedChildren = childNodes.filter(c => !c.excludeFromRepeater);
+            const targetForBounds = repeatedChildren.length > 0 ? repeatedChildren : childNodes;
+
+            const direction = repeaterFrame.repeaterBinding.direction || 'vertical';
+            const gap = repeaterFrame.repeaterBinding.gap ?? 16;
+
+            let itemH = 0;
+            let itemW = 0;
+            let childrenMaxY = 0;
+            let childrenMaxX = 0;
+            if (targetForBounds.length > 0) {
+              const childrenMinY = Math.min(...targetForBounds.map(c => c.y || 0));
+              childrenMaxY = Math.max(...targetForBounds.map(c => (c.y || 0) + (c.height || (c.fontSize ? c.fontSize * 1.3 : 24))));
+              itemH = Math.max(10, childrenMaxY - childrenMinY);
+
+              const childrenMinX = Math.min(...targetForBounds.map(c => c.x || 0));
+              childrenMaxX = Math.max(...targetForBounds.map(c => (c.x || 0) + (c.width || 100)));
+              itemW = Math.max(10, childrenMaxX - childrenMinX);
+            } else {
+              itemH = repeaterFrame.height || 100;
+              itemW = repeaterFrame.width || 200;
+              childrenMaxY = itemH;
+              childrenMaxX = itemW;
+            }
+
+            const pillWidth = 130;
+            const isVertical = direction === 'vertical';
+
+            const handleCanvasX = isVertical
+              ? bounds.x + Math.min(bounds.width / 2, itemW / 2 + 20)
+              : bounds.x + childrenMaxX + gap / 2;
+
+            const handleCanvasY = isVertical
+              ? bounds.y + childrenMaxY + gap / 2
+              : bounds.y + Math.min(bounds.height / 2, itemH / 2 + 20);
+
+            return (
+              <Group key={`repeater-gap-overlay-${repeaterFrame.id}`}>
+                {/* Visual Gap Region Highlight */}
+                {isVertical ? (
+                  <Rect
+                    x={bounds.x + 4}
+                    y={bounds.y + childrenMaxY}
+                    width={bounds.width - 8}
+                    height={Math.max(2, gap)}
+                    fill="rgba(99, 102, 241, 0.12)"
+                    stroke="#6366F1"
+                    strokeWidth={1.5}
+                    dash={[4, 3]}
+                    cornerRadius={4}
+                    listening={false}
+                  />
+                ) : (
+                  <Rect
+                    x={bounds.x + childrenMaxX}
+                    y={bounds.y + 4}
+                    width={Math.max(2, gap)}
+                    height={bounds.height - 8}
+                    fill="rgba(99, 102, 241, 0.12)"
+                    stroke="#6366F1"
+                    strokeWidth={1.5}
+                    dash={[4, 3]}
+                    cornerRadius={4}
+                    listening={false}
+                  />
+                )}
+
+                {/* DRAGGABLE Gap Pill Handle */}
+                <Group
+                  key={`repeater-gap-drag-${repeaterFrame.id}`}
+                  x={handleCanvasX}
+                  y={handleCanvasY}
+                  draggable={mode === 'select'}
+                  dragBoundFunc={(pos) => {
+                    if (isVertical) {
+                      const minStageY = (bounds.y + childrenMaxY) * zoom + pan.y;
+                      return {
+                        x: handleCanvasX * zoom + pan.x,
+                        y: Math.max(minStageY, pos.y)
+                      };
+                    } else {
+                      const minStageX = (bounds.x + childrenMaxX) * zoom + pan.x;
+                      return {
+                        x: Math.max(minStageX, pos.x),
+                        y: handleCanvasY * zoom + pan.y
+                      };
+                    }
+                  }}
+                  onDragStart={(e) => {
+                    e.cancelBubble = true;
+                    dragStartGapRef.current = gap;
+                    dragStartPosRef.current = isVertical ? e.target.y() : e.target.x();
+                  }}
+                  onDragMove={(e) => {
+                    e.cancelBubble = true;
+                    let newGap = gap;
+                    if (isVertical) {
+                      const deltaY = e.target.y() - dragStartPosRef.current;
+                      newGap = Math.max(0, Math.round(dragStartGapRef.current + deltaY * 2));
+                    } else {
+                      const deltaX = e.target.x() - dragStartPosRef.current;
+                      newGap = Math.max(0, Math.round(dragStartGapRef.current + deltaX * 2));
+                    }
+                    updateNode(repeaterFrame.id, {
+                      repeaterBinding: {
+                        ...repeaterFrame.repeaterBinding!,
+                        gap: newGap
+                      }
+                    }, false);
+                  }}
+                  onDragEnd={(e) => {
+                    e.cancelBubble = true;
+                    let newGap = gap;
+                    if (isVertical) {
+                      const deltaY = e.target.y() - dragStartPosRef.current;
+                      newGap = Math.max(0, Math.round(dragStartGapRef.current + deltaY * 2));
+                    } else {
+                      const deltaX = e.target.x() - dragStartPosRef.current;
+                      newGap = Math.max(0, Math.round(dragStartGapRef.current + deltaX * 2));
+                    }
+                    updateNode(repeaterFrame.id, {
+                      repeaterBinding: {
+                        ...repeaterFrame.repeaterBinding!,
+                        gap: newGap
+                      }
+                    }, true);
+                    setToastMessage(`Updated item distance gap to ${newGap}px`);
+                  }}
+                  onMouseEnter={(e) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = isVertical ? 'ns-resize' : 'ew-resize';
+                  }}
+                  onMouseLeave={(e) => {
+                    const container = e.target.getStage()?.container();
+                    if (container) container.style.cursor = 'default';
+                  }}
+                >
+                  <Rect
+                    x={-pillWidth / 2}
+                    y={-12}
+                    width={pillWidth}
+                    height={24}
+                    fill="#4F46E5"
+                    cornerRadius={12}
+                    shadowColor="rgba(0,0,0,0.3)"
+                    shadowBlur={6}
+                    shadowOffsetY={2}
+                  />
+                  <Text
+                    text={`${isVertical ? '↕' : '↔'} GAP: ${gap}px (Drag)`}
+                    fill="white"
+                    fontSize={10}
+                    fontStyle="bold"
+                    fontFamily="Inter, sans-serif"
+                    x={-pillWidth / 2}
+                    y={-5}
+                    width={pillWidth}
+                    align="center"
+                    listening={false}
+                  />
+                </Group>
+              </Group>
+            );
           })}
 
           {selectionRect && (

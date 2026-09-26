@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play } from 'lucide-react';
+import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Repeat } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -392,66 +392,139 @@ const VariableBindingControl: React.FC<{
   node: CanvasNode;
   propertyKey: string;
   label?: string;
-}> = ({ node, propertyKey, label }) => {
+  extraControl?: React.ReactNode;
+}> = ({ node, propertyKey, label, extraControl }) => {
   const stateVariables = useCanvasStore((state) => state.stateVariables);
   const bindVariableToNodeProperty = useCanvasStore((state) => state.bindVariableToNodeProperty);
   
   const currentBoundVar = node.bindings?.[propertyKey];
   const [isOpen, setIsOpen] = useState(false);
+  const [customExpr, setCustomExpr] = useState(currentBoundVar || '');
+
+  useEffect(() => {
+    setCustomExpr(currentBoundVar || '');
+  }, [currentBoundVar]);
 
   return (
-    <div className="relative inline-flex items-center">
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={`px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 transition-all ${
-          currentBoundVar
-            ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-300 shadow-xs'
-            : 'bg-slate-100 text-slate-400 hover:text-slate-600 hover:bg-slate-200'
-        }`}
-        title={currentBoundVar ? `Bound to variable "${currentBoundVar}"` : 'Bind property to variable'}
-      >
-        <span className="font-sans font-semibold text-[10px]">fx</span>
-        {currentBoundVar && <span className="max-w-[65px] truncate">{currentBoundVar}</span>}
-      </button>
+    <div className="w-full flex flex-col">
+      <div className="flex items-center justify-between w-full gap-1">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {label && (
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider truncate">
+              {label}
+            </label>
+          )}
+          {extraControl}
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className={`px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer shrink-0 ${
+            currentBoundVar
+              ? 'bg-emerald-100 text-emerald-800 font-bold border border-emerald-300 shadow-xs'
+              : 'bg-slate-100 text-slate-400 hover:text-slate-600 hover:bg-slate-200'
+          }`}
+          title={currentBoundVar ? `Bound to "${currentBoundVar}"` : 'Bind property to variable or item field'}
+        >
+          <span className="font-sans font-semibold text-[10px]">fx</span>
+          {currentBoundVar ? (
+            <span className="max-w-[90px] truncate">{currentBoundVar}</span>
+          ) : (
+            isOpen && <span className="text-[9px] text-slate-400">✕</span>
+          )}
+        </button>
+      </div>
 
       {isOpen && (
-        <div className="absolute right-0 top-6 z-40 p-2.5 bg-white border border-slate-200 shadow-xl rounded-xl flex flex-col gap-1.5 min-w-[170px] animate-in fade-in zoom-in-95">
-          <div className="flex items-center justify-between text-[10px] uppercase font-bold text-slate-400 pb-1 border-b border-slate-100">
-            <span>Bind {label || propertyKey}</span>
-            <button type="button" onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+        <div className="w-full my-2 p-2.5 bg-slate-50 border border-slate-200 shadow-sm rounded-xl flex flex-col gap-2.5 text-xs">
+          <div className="flex items-center justify-between text-[10px] uppercase font-bold text-slate-500 pb-1 border-b border-slate-200/60">
+            <span>Bind {label || propertyKey} Expression</span>
+            <button type="button" onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600 p-0.5">✕</button>
           </div>
 
+          {/* Custom Expression / Item Field Input */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-medium text-slate-600">Custom Field / Item Expression:</span>
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                value={customExpr}
+                placeholder="e.g. item.name, item.price"
+                onChange={(e) => setCustomExpr(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    bindVariableToNodeProperty(node.id, propertyKey, customExpr.trim() || null);
+                    setIsOpen(false);
+                  }
+                }}
+                className="w-full text-xs px-2 py-1 border border-slate-300 rounded-md font-mono bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  bindVariableToNodeProperty(node.id, propertyKey, customExpr.trim() || null);
+                  setIsOpen(false);
+                }}
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold shrink-0 transition-colors cursor-pointer"
+              >
+                Set
+              </button>
+            </div>
+            
+            <div className="flex items-center gap-1 flex-wrap pt-0.5">
+              <span className="text-[9px] text-slate-400">Presets:</span>
+              {['item.name', 'item.title', 'item.avatar', 'item.price'].map(chip => (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => {
+                    setCustomExpr(chip);
+                    bindVariableToNodeProperty(node.id, propertyKey, chip);
+                    setIsOpen(false);
+                  }}
+                  className="text-[9px] font-mono bg-white hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 transition-colors cursor-pointer"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-slate-200/60 my-0.5" />
+
+          {/* Clear binding */}
           <button
             type="button"
             onClick={() => {
               bindVariableToNodeProperty(node.id, propertyKey, null);
               setIsOpen(false);
             }}
-            className={`text-left text-xs px-2 py-1 rounded hover:bg-slate-100 ${!currentBoundVar ? 'font-bold text-slate-700' : 'text-slate-500'}`}
+            className={`text-left text-xs px-2 py-1 rounded-md hover:bg-slate-200/60 transition-colors cursor-pointer ${!currentBoundVar ? 'font-bold text-slate-700' : 'text-slate-500'}`}
           >
-            • None (Static)
+            • None (Static Value)
           </button>
 
-          {stateVariables.length === 0 ? (
-            <p className="text-[10px] text-slate-400 p-2 text-center">No variables declared yet.</p>
-          ) : (
-            stateVariables.map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => {
-                  bindVariableToNodeProperty(node.id, propertyKey, v.name);
-                  setIsOpen(false);
-                }}
-                className={`text-left text-xs px-2 py-1 rounded hover:bg-emerald-50 hover:text-emerald-700 flex items-center justify-between ${
-                  currentBoundVar === v.name ? 'bg-emerald-50 text-emerald-700 font-bold' : 'text-slate-700'
-                }`}
-              >
-                <span className="font-mono">{v.name}</span>
-                <span className="text-[9px] uppercase px-1 rounded bg-slate-100 text-slate-500">{v.type}</span>
-              </button>
-            ))
+          {/* State Variables */}
+          {stateVariables.length > 0 && (
+            <div className="flex flex-col gap-1 max-h-36 overflow-y-auto pt-1 border-t border-slate-200/60">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase">State Variables:</span>
+              {stateVariables.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => {
+                    bindVariableToNodeProperty(node.id, propertyKey, v.name);
+                    setIsOpen(false);
+                  }}
+                  className={`text-left text-xs px-2 py-1 rounded-md hover:bg-emerald-50 hover:text-emerald-700 flex items-center justify-between transition-colors cursor-pointer ${
+                    currentBoundVar === v.name ? 'bg-emerald-50 text-emerald-700 font-bold' : 'text-slate-700'
+                  }`}
+                >
+                  <span className="font-mono">{v.name}</span>
+                  <span className="text-[9px] uppercase px-1 rounded bg-white text-slate-500 border border-slate-200">{v.type}</span>
+                </button>
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -462,6 +535,7 @@ const VariableBindingControl: React.FC<{
 export const RightSidebar: React.FC = () => {
   const selectedIds = useCanvasStore((state) => state.selectedIds);
   const nodes = useCanvasStore((state) => state.nodes);
+  const stateVariables = useCanvasStore((state) => state.stateVariables);
   const updateNodes = useCanvasStore((state) => state.updateNodes);
   const reorderNodes = useCanvasStore((state) => state.reorderNodes);
   
@@ -527,10 +601,25 @@ export const RightSidebar: React.FC = () => {
   if (selectedNodes.length === 0) return null;
   const primaryNode = selectedNodes[0];
 
-  const parentFrame = primaryNode?.parentId ? nodes.find(n => n.id === primaryNode.parentId) : null;
-  const isConnectable = !!parentFrame && parentFrame.type === 'Frame';
+  const findRootLayoutFrame = (startNode: CanvasNode): CanvasNode | undefined => {
+    let curr: CanvasNode | undefined = startNode;
+    while (curr && curr.parentId) {
+      const p = nodes.find(n => n.id === curr!.parentId);
+      if (p && p.type === 'Frame' && !p.isMasterComponent && !p.componentId) {
+        return p;
+      }
+      curr = p;
+    }
+    if (curr && curr.type === 'Frame' && !curr.isMasterComponent && !curr.componentId) {
+      return curr;
+    }
+    return undefined;
+  };
+
+  const rootLayoutFrame = findRootLayoutFrame(primaryNode) || (primaryNode?.type === 'Frame' && !primaryNode.isMasterComponent && !primaryNode.componentId ? primaryNode : undefined);
+  const isConnectable = !!rootLayoutFrame;
   const compatibleFrames = isConnectable 
-    ? nodes.filter(n => n.type === 'Frame' && n.frameType === parentFrame.frameType && n.id !== parentFrame.id) 
+    ? nodes.filter(n => n.type === 'Frame' && !n.isMasterComponent && !n.componentId && (n.frameType || 'desktop') === (rootLayoutFrame.frameType || 'desktop') && n.id !== rootLayoutFrame.id) 
     : [];
 
   const getAllDescendants = (parentId: string): CanvasNode[] => {
@@ -663,7 +752,7 @@ export const RightSidebar: React.FC = () => {
   const hasRadius = selectedNodes.some(n => n.type === 'Circle' || n.type === 'Triangle');
   
   return (
-    <div className="w-72 bg-white border-l border-slate-200 p-6 flex flex-col gap-6 z-10 shadow-sm overflow-y-auto overflow-x-hidden shrink-0">
+    <div className="w-72 bg-white border-l border-slate-200 p-6 flex flex-col gap-6 z-10 shadow-sm overflow-y-auto shrink-0">
       <div className="flex items-center justify-between">
         <h3 className="font-heading font-bold text-lg text-slate-800 flex items-center gap-2">
           {primaryNode.isMasterComponent && <Component size={18} className="text-[#4A3AFF]" />}
@@ -1023,26 +1112,25 @@ export const RightSidebar: React.FC = () => {
 
       {hasFill && (
         <div className="flex flex-col gap-1">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                {primaryNode.type === 'Frame' ? 'Background Color' : 'Fill Color'}
-              </label>
-              <VariableBindingControl node={primaryNode} propertyKey="fill" label="Fill Color" />
-            </div>
-            {masterParent?.propsDefinition && masterParent.propsDefinition.filter(p => p.type === 'color').length > 0 && (
-              <select
-                value={primaryNode.boundProps?.fill || ''}
-                onChange={(e) => bindProp(primaryNode.id, 'fill', e.target.value || null)}
-                className="text-[10px] bg-indigo-50 border-none text-[#4A3AFF] font-medium outline-none rounded p-0.5"
-              >
-                <option value="">Bind to Prop...</option>
-                {masterParent.propsDefinition.filter(p => p.type === 'color').map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
+          <VariableBindingControl 
+            node={primaryNode} 
+            propertyKey="fill" 
+            label={primaryNode.type === 'Frame' ? 'Background Color' : 'Fill Color'}
+            extraControl={
+              masterParent?.propsDefinition && masterParent.propsDefinition.filter(p => p.type === 'color').length > 0 ? (
+                <select
+                  value={primaryNode.boundProps?.fill || ''}
+                  onChange={(e) => bindProp(primaryNode.id, 'fill', e.target.value || null)}
+                  className="text-[10px] bg-indigo-50 border-none text-[#4A3AFF] font-medium outline-none rounded p-0.5"
+                >
+                  <option value="">Bind to Prop...</option>
+                  {masterParent.propsDefinition.filter(p => p.type === 'color').map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              ) : undefined
+            }
+          />
           <div className="flex gap-2 items-center">
             {/* Clickable Color Swatch Box */}
             <div 
@@ -1103,24 +1191,25 @@ export const RightSidebar: React.FC = () => {
       {hasText && (
         <>
           <div className="flex flex-col gap-1">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-1.5">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Text</label>
-                <VariableBindingControl node={primaryNode} propertyKey="text" label="Text" />
-              </div>
-              {masterParent?.propsDefinition && masterParent.propsDefinition.filter(p => p.type === 'string').length > 0 && (
-                <select
-                  value={primaryNode.boundProps?.text || ''}
-                  onChange={(e) => bindProp(primaryNode.id, 'text', e.target.value || null)}
-                  className="text-[10px] bg-indigo-50 border-none text-[#4A3AFF] font-medium outline-none rounded p-0.5"
-                >
-                  <option value="">Bind to Prop...</option>
-                  {masterParent.propsDefinition.filter(p => p.type === 'string').map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
+            <VariableBindingControl 
+              node={primaryNode} 
+              propertyKey="text" 
+              label="Text" 
+              extraControl={
+                masterParent?.propsDefinition && masterParent.propsDefinition.filter(p => p.type === 'string').length > 0 ? (
+                  <select
+                    value={primaryNode.boundProps?.text || ''}
+                    onChange={(e) => bindProp(primaryNode.id, 'text', e.target.value || null)}
+                    className="text-[10px] bg-indigo-50 border-none text-[#4A3AFF] font-medium outline-none rounded p-0.5"
+                  >
+                    <option value="">Bind to Prop...</option>
+                    {masterParent.propsDefinition.filter(p => p.type === 'string').map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                ) : undefined
+              }
+            />
             <input 
               type="text" 
               value={(getValue('text') as string) || ''} 
@@ -1175,10 +1264,7 @@ export const RightSidebar: React.FC = () => {
           {(primaryNode.type === 'TextInput' || primaryNode.type === 'TextArea') && (
             <>
               <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Placeholder</label>
-                  <VariableBindingControl node={primaryNode} propertyKey="placeholder" label="Placeholder" />
-                </div>
+                <VariableBindingControl node={primaryNode} propertyKey="placeholder" label="Placeholder" />
                 <input
                   type="text"
                   value={primaryNode.placeholder || ''}
@@ -1189,10 +1275,7 @@ export const RightSidebar: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Default Value</label>
-                  <VariableBindingControl node={primaryNode} propertyKey="defaultValue" label="Default Value" />
-                </div>
+                <VariableBindingControl node={primaryNode} propertyKey="defaultValue" label="Default Value" />
                 <input
                   type="text"
                   value={primaryNode.defaultValue || ''}
@@ -1222,24 +1305,20 @@ export const RightSidebar: React.FC = () => {
 
           {(primaryNode.type === 'Checkbox' || primaryNode.type === 'Switch') && (
             <>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center justify-between flex-1 mr-2">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Default Checked</label>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between gap-2">
                   <VariableBindingControl node={primaryNode} propertyKey="defaultChecked" label="Default Checked" />
+                  <input
+                    type="checkbox"
+                    checked={!!primaryNode.defaultChecked}
+                    onChange={(e) => updateNodes([primaryNode.id], { defaultChecked: e.target.checked, checked: e.target.checked })}
+                    className="w-4 h-4 text-[#4A3AFF] rounded focus:ring-indigo-500 cursor-pointer shrink-0"
+                  />
                 </div>
-                <input
-                  type="checkbox"
-                  checked={!!primaryNode.defaultChecked}
-                  onChange={(e) => updateNodes([primaryNode.id], { defaultChecked: e.target.checked, checked: e.target.checked })}
-                  className="w-4 h-4 text-[#4A3AFF] rounded focus:ring-indigo-500"
-                />
               </div>
 
               <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Label Text</label>
-                  <VariableBindingControl node={primaryNode} propertyKey="text" label="Label Text" />
-                </div>
+                <VariableBindingControl node={primaryNode} propertyKey="text" label="Label Text" />
                 <input
                   type="text"
                   value={primaryNode.text || ''}
@@ -1254,10 +1333,7 @@ export const RightSidebar: React.FC = () => {
           {primaryNode.type === 'SelectDropdown' && (
             <>
               <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Placeholder</label>
-                  <VariableBindingControl node={primaryNode} propertyKey="placeholder" label="Placeholder" />
-                </div>
+                <VariableBindingControl node={primaryNode} propertyKey="placeholder" label="Placeholder" />
                 <input
                   type="text"
                   value={primaryNode.placeholder || ''}
@@ -1322,6 +1398,219 @@ export const RightSidebar: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* List Repeater Panel */}
+      {(() => {
+        const parentRepeaterFrame = primaryNode.repeaterBinding 
+          ? primaryNode 
+          : (primaryNode.parentId ? nodes.find(n => n.id === primaryNode.parentId && n.repeaterBinding) : null);
+
+        if (!parentRepeaterFrame) return null;
+
+        return (
+          <div className="flex flex-col gap-3 pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-xs text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                <Repeat size={14} className="text-indigo-600" /> List Repeater Spacing
+              </span>
+              {(primaryNode.type === 'Frame' || primaryNode.type === 'FormContainer') && (
+                <input
+                  type="checkbox"
+                  checked={!!primaryNode.repeaterBinding}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      const firstArrayVar = stateVariables.find(v => v.type === 'array') || stateVariables[0];
+                      updateNodes([primaryNode.id], {
+                        repeaterBinding: {
+                          arrayVariableId: firstArrayVar ? firstArrayVar.id : '',
+                          itemName: 'item',
+                          direction: 'vertical',
+                          gap: 16
+                        }
+                      }, true);
+                    } else {
+                      updateNodes([primaryNode.id], { repeaterBinding: undefined }, true);
+                    }
+                  }}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+              )}
+            </div>
+
+            {parentRepeaterFrame.repeaterBinding && (
+              <div className="flex flex-col gap-3 pt-1 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 shadow-xs">
+                {primaryNode.id !== parentRepeaterFrame.id && (
+                  <>
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-1 rounded-lg">
+                      <span>Scope: {parentRepeaterFrame.name || 'Repeater Frame'}</span>
+                      <button
+                        type="button"
+                        onClick={() => selectNodes([parentRepeaterFrame.id])}
+                        className="text-[10px] text-indigo-600 underline font-bold"
+                      >
+                        Select Frame
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-indigo-200/80 shadow-xs">
+                      <div className="flex flex-col pr-2">
+                        <span className="text-xs font-bold text-slate-800">Repeat Across List Items</span>
+                        <span className="text-[10px] text-slate-500 leading-tight">Uncheck to keep static (e.g. Header, Footer)</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={!primaryNode.excludeFromRepeater}
+                        onChange={(e) => {
+                          updateNodes([primaryNode.id], { excludeFromRepeater: !e.target.checked }, true);
+                        }}
+                        className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Item Gap / Distance control */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-semibold text-slate-700">Distance Between Items (Gap)</label>
+                    <span className="font-mono text-xs font-bold text-indigo-600 bg-white px-1.5 py-0.5 rounded border border-indigo-200">
+                      {parentRepeaterFrame.repeaterBinding.gap ?? 16}px
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="2"
+                      value={parentRepeaterFrame.repeaterBinding.gap ?? 16}
+                      onChange={(e) => {
+                        updateNodes([parentRepeaterFrame.id], {
+                          repeaterBinding: {
+                            ...parentRepeaterFrame.repeaterBinding!,
+                            gap: parseInt(e.target.value) || 0
+                          }
+                        }, false);
+                      }}
+                      onMouseUp={(e: any) => {
+                        updateNodes([parentRepeaterFrame.id], {
+                          repeaterBinding: {
+                            ...parentRepeaterFrame.repeaterBinding!,
+                            gap: parseInt(e.target.value) || 0
+                          }
+                        }, true);
+                      }}
+                      className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="300"
+                      value={parentRepeaterFrame.repeaterBinding.gap ?? 16}
+                      onChange={(e) => {
+                        updateNodes([parentRepeaterFrame.id], {
+                          repeaterBinding: {
+                            ...parentRepeaterFrame.repeaterBinding!,
+                            gap: parseInt(e.target.value) || 0
+                          }
+                        }, true);
+                      }}
+                      className="w-16 text-xs p-1 border rounded border-slate-200 bg-white font-mono text-slate-800 text-center font-bold"
+                    />
+                  </div>
+                  {/* Gap Presets */}
+                  <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                    <span className="text-[10px] text-slate-400">Presets:</span>
+                    {[0, 8, 16, 24, 32, 48].map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          updateNodes([parentRepeaterFrame.id], {
+                            repeaterBinding: {
+                              ...parentRepeaterFrame.repeaterBinding!,
+                              gap: preset
+                            }
+                          }, true);
+                        }}
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                          (parentRepeaterFrame.repeaterBinding?.gap ?? 16) === preset
+                            ? 'bg-indigo-600 text-white font-bold border-indigo-600'
+                            : 'bg-white hover:bg-indigo-100 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        {preset}px
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-indigo-100">
+                  <div>
+                    <label className="text-[11px] font-medium text-slate-600 block mb-1">Layout</label>
+                    <select
+                      value={parentRepeaterFrame.repeaterBinding.direction || 'vertical'}
+                      onChange={(e) => {
+                        updateNodes([parentRepeaterFrame.id], {
+                          repeaterBinding: {
+                            ...parentRepeaterFrame.repeaterBinding!,
+                            direction: e.target.value as any
+                          }
+                        }, true);
+                      }}
+                      className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white text-xs text-slate-800 font-medium"
+                    >
+                      <option value="vertical">↕ Vertical List</option>
+                      <option value="horizontal">↔ Horizontal Grid</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-medium text-slate-600 block mb-1">Data Variable</label>
+                    <select
+                      value={parentRepeaterFrame.repeaterBinding.arrayVariableId}
+                      onChange={(e) => {
+                        updateNodes([parentRepeaterFrame.id], {
+                          repeaterBinding: {
+                            ...parentRepeaterFrame.repeaterBinding!,
+                            arrayVariableId: e.target.value
+                          }
+                        }, true);
+                      }}
+                      className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white font-mono text-slate-800"
+                    >
+                      <option value="">Select array...</option>
+                      {stateVariables.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-medium text-slate-600 block mb-1">Item Scope Name</label>
+                  <input
+                    type="text"
+                    value={parentRepeaterFrame.repeaterBinding.itemName || 'item'}
+                    placeholder="e.g. item, user, product"
+                    onChange={(e) => {
+                      updateNodes([parentRepeaterFrame.id], {
+                        repeaterBinding: {
+                          ...parentRepeaterFrame.repeaterBinding!,
+                          itemName: e.target.value || 'item'
+                        }
+                      }, true);
+                    }}
+                    className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white font-mono text-slate-800"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Effects Panel */}
       <div className="flex flex-col gap-3 pt-4 border-t border-slate-100">

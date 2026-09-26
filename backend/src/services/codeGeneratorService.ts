@@ -1,7 +1,7 @@
-import { CanvasNode } from '../models/types';
+import { CanvasNode, StateVariable } from '../models/types';
 
 export class CodeGeneratorService {
-  static generate(nodes: CanvasNode[]): Record<string, string> {
+  static generate(nodes: CanvasNode[], stateVariables: StateVariable[] = []): Record<string, string> {
     const hasFrame = nodes.some(n => n.type === 'Frame');
     if (!hasFrame) {
       throw new Error('Cannot export: No Frame found on canvas. Please add at least one Frame before exporting.');
@@ -124,14 +124,14 @@ export class CodeGeneratorService {
     // Components
     masterComponents.forEach(comp => {
       const componentName = this.getComponentName(comp);
-      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap);
+      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap, stateVariables);
     });
 
     // Generate page code
     pages.forEach((page, index) => {
       const routeInfo = pageRouteMap.find(p => p.frameId === page.id);
       const pageName = routeInfo ? routeInfo.componentName : `Page${index + 1}`;
-      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap, pageName);
+      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap, pageName, stateVariables);
     });
 
     // App & Router
@@ -903,13 +903,23 @@ ${routeElements.join('\n')}
       if (isFullWidth) {
         styles.push("width: '100%'");
       } else if (node.width) {
-        styles.push(`width: '${round(node.width)}px'`);
+        if (node.repeaterBinding && node.repeaterBinding.direction === 'horizontal') {
+          styles.push("width: 'auto'");
+          styles.push(`minWidth: '${round(node.width)}px'`);
+        } else {
+          styles.push(`width: '${round(node.width)}px'`);
+        }
       }
       
       if (isFullHeight) {
         styles.push("height: '100%'");
       } else if (node.height) {
-        styles.push(`height: '${round(node.height)}px'`);
+        if (node.repeaterBinding && (node.repeaterBinding.direction || 'vertical') === 'vertical') {
+          styles.push("height: 'auto'");
+          styles.push(`minHeight: '${round(node.height)}px'`);
+        } else {
+          styles.push(`height: '${round(node.height)}px'`);
+        }
       }
     }
 
@@ -934,7 +944,11 @@ ${routeElements.join('\n')}
 
     // Frame overflow clipping
     if (node.type === 'Frame') {
-      styles.push("overflow: 'hidden'");
+      if (node.repeaterBinding) {
+        styles.push("overflow: 'visible'");
+      } else {
+        styles.push("overflow: 'hidden'");
+      }
     }
 
     if (extraStyles.length > 0) {
@@ -1112,6 +1126,65 @@ ${routeElements.join('\n')}
     return `/${targetId}`;
   }
 
+  private static generateFrameChildrenJsx(
+    frame: CanvasNode,
+    allNodes: CanvasNode[],
+    nodesById: Record<string, CanvasNode>,
+    masterComponents: CanvasNode[],
+    isMasterComponentDef: boolean,
+    pages: CanvasNode[],
+    pageRouteMap: { frameId: string; route: string; componentName: string }[],
+    stateVariables: StateVariable[],
+    indent: string = '        '
+  ): string {
+    const children = allNodes.filter(n => n.parentId === frame.id);
+    if (!frame.repeaterBinding) {
+      return children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}`);
+    }
+
+    const repeatedChildren = children.filter(c => !c.excludeFromRepeater);
+    const staticChildren = children.filter(c => c.excludeFromRepeater);
+
+    const rawStaticJsx = staticChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}`);
+    const rawRepeatedJsx = repeatedChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}    `);
+
+    const itemName = frame.repeaterBinding.itemName || 'item';
+    const varId = frame.repeaterBinding.arrayVariableId;
+    const stateVar = stateVariables.find(v => v.id === varId || v.name === varId);
+    const arrayVarName = stateVar ? stateVar.name : (varId && !varId.startsWith('var-') ? varId : 'items');
+    const isHorizontal = frame.repeaterBinding.direction === 'horizontal';
+    const flexDir = isHorizontal ? 'flex-row overflow-x-auto' : 'flex-col';
+    const gapPx = frame.repeaterBinding.gap ?? 16;
+
+    const targetForBounds = repeatedChildren.length > 0 ? repeatedChildren : children;
+
+    let itemH = 0;
+    let itemW = 0;
+    if (targetForBounds.length > 0) {
+      const childrenMaxY = Math.max(...targetForBounds.map(c => (c.y || 0) + (c.height || (c.fontSize ? c.fontSize * 1.3 : 24))));
+      itemH = Math.max(10, Math.round(childrenMaxY));
+      const childrenMaxX = Math.max(...targetForBounds.map(c => (c.x || 0) + (c.width || 100)));
+      itemW = Math.max(10, Math.round(childrenMaxX));
+    } else {
+      itemH = Math.round(frame.height || 100);
+      itemW = Math.round(frame.width || 200);
+    }
+
+    const itemContainerStyle = isHorizontal
+      ? `style={{ width: '${itemW}px', height: '100%' }}`
+      : `style={{ width: '100%', height: '${itemH}px' }}`;
+
+    const staticContentJsx = rawStaticJsx ? `${rawStaticJsx}\n${indent}` : '';
+
+    return `${staticContentJsx}<div className="flex ${flexDir} gap-[${gapPx}px] w-full">
+${indent}  {(${arrayVarName} || []).map((${itemName}, index) => (
+${indent}    <div key={index} className="relative shrink-0" ${itemContainerStyle}>
+${indent}      ${rawRepeatedJsx}
+${indent}    </div>
+${indent}  ))}
+${indent}</div>`;
+  }
+
   private static generateJsxForNode(
     node: CanvasNode, 
     allNodes: CanvasNode[], 
@@ -1120,7 +1193,8 @@ ${routeElements.join('\n')}
     isMasterComponentDef: boolean = false, 
     parentNode?: CanvasNode,
     pages: CanvasNode[] = [],
-    pageRouteMap: { frameId: string; route: string; componentName: string }[] = []
+    pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
+    stateVariables: StateVariable[] = []
   ): string {
     const round = (val: number) => Math.round(val);
 
@@ -1226,14 +1300,16 @@ ${routeElements.join('\n')}
     const dynamicProps = this.resolveBoundProps(node, isMasterComponentDef);
     
     let fillStyle = '';
-    if (dynamicProps.fill && node.type !== 'Text') {
+    if ((dynamicProps.fill || node.bindings?.fill) && node.type !== 'Text') {
       styleClasses = styleClasses.replace(/bg-\[[^\]]+\]/g, '');
-      fillStyle = ` style={{ backgroundColor: ${dynamicProps.fill.expression} || '${dynamicProps.fill.defaultValue}' }}`;
+      const fillExpr = node.bindings?.fill ? node.bindings.fill : (dynamicProps.fill?.expression || `'${node.fill || '#000000'}'`);
+      fillStyle = ` style={{ backgroundColor: ${fillExpr} || '${dynamicProps.fill?.defaultValue || node.fill || '#000000'}' }}`;
     }
     let textColorStyle = '';
-    if (dynamicProps.fill && node.type === 'Text') {
+    if ((dynamicProps.fill || node.bindings?.fill) && node.type === 'Text') {
       styleClasses = styleClasses.replace(/text-\[#[^\]]+\]/g, '');
-      textColorStyle = ` style={{ color: ${dynamicProps.fill.expression} || '${dynamicProps.fill.defaultValue}' }}`;
+      const colorExpr = node.bindings?.fill ? node.bindings.fill : (dynamicProps.fill?.expression || `'${node.fill || '#000000'}'`);
+      textColorStyle = ` style={{ color: ${colorExpr} || '${dynamicProps.fill?.defaultValue || node.fill || '#000000'}' }}`;
     }
 
     const inlineStyle = fillStyle || textColorStyle || '';
@@ -1245,28 +1321,30 @@ ${routeElements.join('\n')}
       if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
       const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
-      const placeholderAttr = node.placeholder ? ` placeholder="${node.placeholder}"` : '';
-      const defaultValAttr = node.defaultValue ? ` defaultValue="${node.defaultValue}"` : '';
+      const placeholderVal = node.bindings?.placeholder ? `{${node.bindings.placeholder} ?? "${node.placeholder || ''}"}` : (node.placeholder ? `"${node.placeholder}"` : '""');
+      const defaultVal = node.bindings?.defaultValue || node.bindings?.text ? `{${node.bindings?.defaultValue || node.bindings?.text} ?? "${node.defaultValue || ''}"}` : (node.defaultValue ? `"${node.defaultValue}"` : '""');
       const inputType = node.inputType || 'text';
-      return `<input${elemIdAttr} type="${inputType}"${placeholderAttr}${defaultValAttr}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
+      return `<input${elemIdAttr} type="${inputType}" placeholder=${placeholderVal} defaultValue=${defaultVal}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
     } else if (node.type === 'TextArea') {
       const extraStyles: string[] = [];
       if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
       const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
-      const placeholderAttr = node.placeholder ? ` placeholder="${node.placeholder}"` : '';
-      const defaultValAttr = node.defaultValue ? ` defaultValue="${node.defaultValue}"` : '';
-      return `<textarea${elemIdAttr}${placeholderAttr}${defaultValAttr}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
+      const placeholderVal = node.bindings?.placeholder ? `{${node.bindings.placeholder} ?? "${node.placeholder || ''}"}` : (node.placeholder ? `"${node.placeholder}"` : '""');
+      const defaultVal = node.bindings?.defaultValue || node.bindings?.text ? `{${node.bindings?.defaultValue || node.bindings?.text} ?? "${node.defaultValue || ''}"}` : (node.defaultValue ? `"${node.defaultValue}"` : '""');
+      return `<textarea${elemIdAttr} placeholder=${placeholderVal} defaultValue=${defaultVal}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
     } else if (node.type === 'Checkbox') {
-      const isCheckedAttr = node.defaultChecked ? ' defaultChecked' : '';
-      const labelText = node.text || 'Checkbox';
+      const boundChecked = node.bindings?.defaultChecked || node.bindings?.checked;
+      const isCheckedAttr = boundChecked ? ` defaultChecked={!!(${boundChecked})}` : (node.defaultChecked ? ' defaultChecked' : '');
+      const labelText = node.bindings?.text ? `{${node.bindings.text} ?? "${node.text || 'Checkbox'}"}` : (node.text || 'Checkbox');
       return `<label${elemIdAttr}${posStyleStr}${eventHandlers} className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 select-none whitespace-nowrap">
         <input type="checkbox"${isCheckedAttr} className="w-4 h-4 text-[#4A3AFF] rounded border-slate-300 focus:ring-indigo-500 cursor-pointer" />
         <span>${labelText}</span>
       </label>`;
     } else if (node.type === 'Switch') {
-      const isCheckedAttr = node.defaultChecked ? ' defaultChecked' : '';
-      const labelText = node.text || 'Toggle';
+      const boundChecked = node.bindings?.defaultChecked || node.bindings?.checked;
+      const isCheckedAttr = boundChecked ? ` defaultChecked={!!(${boundChecked})}` : (node.defaultChecked ? ' defaultChecked' : '');
+      const labelText = node.bindings?.text ? `{${node.bindings.text} ?? "${node.text || 'Toggle'}"}` : (node.text || 'Toggle');
       return `<label${elemIdAttr}${posStyleStr}${eventHandlers} className="inline-flex items-center cursor-pointer select-none whitespace-nowrap">
         <input type="checkbox"${isCheckedAttr} className="sr-only peer" />
         <div className="w-10 h-5 bg-slate-300 peer-checked:bg-[#4A3AFF] peer-checked:[&>div]:translate-x-5 rounded-full p-0.5 transition-colors duration-200 flex items-center shrink-0">
@@ -1292,23 +1370,29 @@ ${routeElements.join('\n')}
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
       const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
       const children = allNodes.filter(n => n.parentId === node.id);
-      const innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap)).join('\n      ');
+      const innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap, stateVariables)).join('\n      ');
       return `<form${elemIdAttr}${inputStyleStr}${eventHandlers} className="p-4 border border-dashed rounded-lg relative">
         ${innerContent}
       </form>`;
     }
 
     if (node.type === 'Frame') {
-      const children = allNodes.filter(n => n.parentId === node.id);
-      innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap)).join('\n      ');
+      innerContent = this.generateFrameChildrenJsx(node, allNodes, nodesById, masterComponents, isMasterComponentDef, pages, pageRouteMap, stateVariables, '      ');
     } else if (node.type === 'Text') {
-      innerContent = dynamicProps.text 
-        ? `{${dynamicProps.text.expression} || "${dynamicProps.text.defaultValue}"}` 
-        : (node.text || '');
+      const boundText = node.bindings?.text;
+      const fallbackText = (node.text && node.text.trim() !== '') ? node.text : 'Repeater Item';
+      innerContent = boundText
+        ? `{${boundText} || item?.text || item?.title || item?.name || "${fallbackText}"}`
+        : (dynamicProps.text 
+            ? `{${dynamicProps.text.expression} || "${dynamicProps.text.defaultValue}"}` 
+            : (node.text || 'Repeater Item'));
     } else if (node.type === 'Image') {
-      const imgSrc = dynamicProps.src 
-        ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue}"}`
-        : `"${node.src || ''}"`;
+      const boundSrc = node.bindings?.src;
+      const imgSrc = boundSrc
+        ? `{${boundSrc} || item?.src || item?.image || "${node.src || ''}"}`
+        : (dynamicProps.src 
+            ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue}"}`
+            : `"${node.src || ''}"`);
       innerContent = `<img src=${imgSrc} className="w-full h-full object-cover" alt="image" />`;
     }
 
@@ -1335,7 +1419,8 @@ ${routeElements.join('\n')}
     allNodes: CanvasNode[], 
     nodesById: Record<string, CanvasNode>,
     pages: CanvasNode[] = [],
-    pageRouteMap: { frameId: string; route: string; componentName: string }[] = []
+    pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
+    stateVariables: StateVariable[] = []
   ): string {
     const componentName = this.getComponentName(comp);
     
@@ -1343,7 +1428,7 @@ ${routeElements.join('\n')}
     const hasAnyLink = children.some(c => c.linkTo);
     const linkImport = hasAnyLink ? "import { Link } from 'react-router-dom';\n" : '';
     
-    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, [], true, comp, pages, pageRouteMap)).join('\n      ');
+    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, [], true, comp, pages, pageRouteMap, stateVariables)).join('\n      ');
     
     const rootClasses = this.generateNodeTailwindClasses(comp, true);
     
@@ -1366,7 +1451,8 @@ export default function ${componentName}(props) {
     masterComponents: CanvasNode[],
     pages: CanvasNode[] = [],
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
-    pageName: string = 'Page'
+    pageName: string = 'Page',
+    stateVariables: StateVariable[] = []
   ): string {
     // Find all variant frames for this primary page
     const baseName = (page.name || '').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
@@ -1406,15 +1492,69 @@ export default function ${componentName}(props) {
 
     const imports = Array.from(instancesUsed).map(name => `import ${name} from '../components/${name}';`).join('\n');
 
+    // Collect repeater frames and state variables for this page
+    const pageFrameIds = new Set([desktopFrame?.id, tabletFrame?.id, mobileFrame?.id].filter(Boolean) as string[]);
+    
+    const repeaterFramesOnPage = allNodes.filter(n => {
+      if (n.type !== 'Frame' || !n.repeaterBinding) return false;
+      if (pageFrameIds.has(n.id)) return true;
+      let curr: CanvasNode | undefined = n;
+      while (curr && curr.parentId) {
+        if (pageFrameIds.has(curr.parentId)) return true;
+        curr = nodesById[curr.parentId];
+      }
+      return false;
+    });
+
+    const requiredArrayVars = new Set<string>();
+    repeaterFramesOnPage.forEach(rf => {
+      const binding = rf.repeaterBinding!;
+      const varId = binding.arrayVariableId;
+      const stateVar = stateVariables.find(v => v.id === varId || v.name === varId);
+      const varName = stateVar ? stateVar.name : (varId && !varId.startsWith('var-') ? varId : 'items');
+      requiredArrayVars.add(varName);
+    });
+
+    if (repeaterFramesOnPage.length > 0 && requiredArrayVars.size === 0) {
+      requiredArrayVars.add('items');
+    }
+
+    const declaredVarNames = new Set<string>();
+    const stateDeclarations: string[] = [];
+
+    (stateVariables || []).forEach(sv => {
+      if (declaredVarNames.has(sv.name)) return;
+      declaredVarNames.add(sv.name);
+      const val = JSON.stringify(sv.defaultValue !== undefined ? sv.defaultValue : (sv.type === 'array' ? [] : ''));
+      const setter = `set${sv.name.charAt(0).toUpperCase() + sv.name.slice(1)}`;
+      stateDeclarations.push(`const [${sv.name}, ${setter}] = useState(${val});`);
+    });
+
+    requiredArrayVars.forEach(varName => {
+      if (declaredVarNames.has(varName)) return;
+      declaredVarNames.add(varName);
+
+      const stateVar = stateVariables.find(v => v.name === varName || v.id === varName);
+      let defaultArray = [
+        { id: 1, title: 'Repeater Item 1', name: 'Item 1', text: 'Repeater Item 1', price: '$29.99', image: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=300', src: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=300' },
+        { id: 2, title: 'Repeater Item 2', name: 'Item 2', text: 'Repeater Item 2', price: '$49.99', image: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=300', src: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=300' },
+        { id: 3, title: 'Repeater Item 3', name: 'Item 3', text: 'Repeater Item 3', price: '$79.99', image: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=300', src: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=300' },
+      ];
+
+      if (stateVar && Array.isArray(stateVar.defaultValue) && stateVar.defaultValue.length > 0) {
+        defaultArray = stateVar.defaultValue;
+      }
+
+      const setter = `set${varName.charAt(0).toUpperCase() + varName.slice(1)}`;
+      stateDeclarations.push(`const [${varName}, ${setter}] = useState(${JSON.stringify(defaultArray, null, 2)});`);
+    });
+
+    const stateDeclStr = stateDeclarations.length > 0 ? '\n  ' + stateDeclarations.join('\n  ') + '\n' : '';
+
     // Generate JSX for children of each frame
-    const desktopChildren = allNodes.filter(n => n.parentId === desktopFrame.id);
-    const desktopJsx = desktopChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, desktopFrame, pages, pageRouteMap)).join('\n        ');
-
-    const tabletChildren = tabletFrame ? allNodes.filter(n => n.parentId === tabletFrame.id) : [];
-    const tabletJsx = tabletFrame ? tabletChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, tabletFrame, pages, pageRouteMap)).join('\n        ') : '';
-
-    const mobileChildren = mobileFrame ? allNodes.filter(n => n.parentId === mobileFrame.id) : [];
-    const mobileJsx = mobileFrame ? mobileChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, false, mobileFrame, pages, pageRouteMap)).join('\n        ') : '';
+    const desktopJsx = desktopFrame ? this.generateFrameChildrenJsx(desktopFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ') : '';
+    const tabletJsx = tabletFrame ? this.generateFrameChildrenJsx(tabletFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ') : '';
+    const mobileJsx = mobileFrame ? this.generateFrameChildrenJsx(mobileFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ') : '';
 
     const dW = Math.round(desktopFrame.width || 1440);
     const dH = Math.round(desktopFrame.height || 900);
@@ -1456,7 +1596,7 @@ export default function ${pageName}() {
   const navigate = useNavigate();
   const [scaleX, setScaleX] = useState(1);
   const [scaleY, setScaleY] = useState(1);
-
+${stateDeclStr}
   useEffect(() => {
     const updateScale = () => {
       setScaleX(window.innerWidth / ${dW});
@@ -1495,7 +1635,7 @@ export default function ${pageName}() {
   const [screenType, setScreenType] = useState('desktop');
   const [scaleX, setScaleX] = useState(1);
   const [scaleY, setScaleY] = useState(1);
-
+${stateDeclStr}
   useEffect(() => {
     const updateScale = () => {
       const width = window.innerWidth;
@@ -1580,3 +1720,4 @@ export default function ${pageName}() {
 `;
   }
 }
+

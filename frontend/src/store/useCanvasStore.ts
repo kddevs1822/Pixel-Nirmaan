@@ -67,7 +67,16 @@ export interface CanvasNode {
   checked?: boolean;
   defaultChecked?: boolean;
   options?: string[];
-  bindings?: Record<string, string>; // Maps property name (e.g. 'text', 'fill', 'defaultValue') to StateVariable name
+  bindings?: Record<string, string>; // Maps property name (e.g. 'text', 'fill', 'defaultValue') to StateVariable name or item path
+
+  // Data Repeater settings
+  excludeFromRepeater?: boolean; // If true, child inside a Repeater Frame stays static (e.g. Header, Footer, Background) and does not repeat
+  repeaterBinding?: {
+    arrayVariableId: string;
+    itemName: string; // e.g. "item"
+    direction?: 'vertical' | 'horizontal';
+    gap?: number;
+  };
 
   // Component features
   isMasterComponent?: boolean;
