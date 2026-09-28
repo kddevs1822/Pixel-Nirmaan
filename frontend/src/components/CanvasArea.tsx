@@ -1,11 +1,12 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Stage, Layer, Rect, Circle, Text, Transformer, Group, Image as KonvaImage, RegularPolygon, Line, Arrow } from 'react-konva';
 import { useCanvasStore } from '../store/useCanvasStore';
-import type { CanvasNode } from '../store/useCanvasStore';
+import type { CanvasNode, NodeAction } from '../store/useCanvasStore';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import useImage from 'use-image';
 import { X, AlertCircle, Monitor, Tablet, Smartphone, Target } from 'lucide-react';
+import { getNodeDescriptiveLabel } from '../utils/nodeUtils';
 
 const URLImage = ({ node, commonProps, shapeRef, shadowProps }: any) => {
   const [image] = useImage(node.src || '');
@@ -46,6 +47,7 @@ interface NodeContext {
   selectNodes: (ids: string[]) => void;
   toggleNodeSelection: (id: string) => void;
   handleNodeClick: (e: any, node: CanvasNode, isDoubleClick?: boolean) => void;
+  handleNodeHover?: (e: any, node: CanvasNode, isEnter: boolean) => void;
   handleDragEnd: (e: KonvaEventObject<DragEvent>, id: string) => void;
   handleTransformEnd: (e: KonvaEventObject<Event>, id: string) => void;
   handleLineDblClick: (e: KonvaEventObject<MouseEvent>, nodeId: string) => void;
@@ -53,6 +55,10 @@ interface NodeContext {
   handleAnchorDragEnd: (e: KonvaEventObject<DragEvent>, nodeId: string, index: number) => void;
   handleAnchorDblClick: (e: KonvaEventObject<MouseEvent>, nodeId: string, index: number) => void;
   openInputOverlay: (node: CanvasNode, shape: any, displayValue: string, onUpdate: (val: string) => void) => void;
+  playNodeAnimation?: (targetNode: CanvasNode, stageOverride?: Konva.Stage | null, animTypeOverride?: string) => void;
+  executeFormSubmit?: (formNode: CanvasNode, activeStage?: Konva.Stage | null) => void;
+  executeFormReset?: (formNode: CanvasNode) => void;
+  findTargetForm?: (originNode: CanvasNode, targetId?: string) => CanvasNode | undefined;
 }
 
 const getKonvaEasing = (timing?: string) => {
@@ -138,7 +144,7 @@ const RenderNode: React.FC<{
   context: NodeContext; 
   repeaterContext?: { item: any; index: number; scopeName: string } 
 }> = ({ node, isPreview = false, context, repeaterContext }) => {
-  const { nodes, selectedIds, mode, selectNodes, toggleNodeSelection, handleNodeClick, handleDragEnd, handleTransformEnd, handleLineDblClick, handleAnchorDragMove, handleAnchorDragEnd, handleAnchorDblClick } = context;
+  const { nodes, selectedIds, mode, selectNodes, toggleNodeSelection, handleNodeClick, handleNodeHover, handleDragEnd, handleTransformEnd, handleLineDblClick, handleAnchorDragMove, handleAnchorDragEnd, handleAnchorDblClick } = context;
   const stateVariables = useCanvasStore((state) => state.stateVariables);
   const [interactiveState, setInteractiveState] = useState<'default'|'hover'|'active'|'disabled'>('default');
   const shapeRef = useRef<any>(null);
@@ -165,7 +171,15 @@ const RenderNode: React.FC<{
 
     const foundVar = stateVariables.find(v => v.name === expr || v.id === expr);
     if (foundVar && foundVar.defaultValue !== undefined) {
-      return String(foundVar.defaultValue);
+      let val = foundVar.defaultValue;
+      if (foundVar.type === 'string' || typeof val === 'string') {
+        const trimmed = String(val).trim();
+        if (trimmed === '""' || trimmed === "''") return '';
+        if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+          return trimmed.slice(1, -1);
+        }
+      }
+      return String(val);
     }
 
     return fallback;
@@ -514,22 +528,7 @@ const RenderNode: React.FC<{
     draggable: mode === 'select' && (!inComponent || selectedIds.includes(node.id)),
     listening: (repeaterContext && !isPreview && repeaterContext.index > 0)
       ? false
-      : ((mode === 'preview' || isPreview) 
-          ? (
-              resolvedNode.type === 'Frame' || 
-              resolvedNode.type === 'TextInput' || 
-              resolvedNode.type === 'TextArea' || 
-              resolvedNode.type === 'Checkbox' || 
-              resolvedNode.type === 'Switch' || 
-              resolvedNode.type === 'SelectDropdown' || 
-              resolvedNode.type === 'FormContainer' || 
-              !!resolvedNode.linkTo || 
-              !!masterNode || 
-              !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none') || 
-              !!(resolvedNode.animation && resolvedNode.animation.type !== 'none') || 
-              nodes.some(n => n.animation?.triggerNodeId === resolvedNode.id && n.animation?.type !== 'none')
-            ) 
-          : true),
+      : true,
     onClick: (e: any) => handleNodeClick(e, node, false),
     onTap: (e: any) => handleNodeClick(e, node, false),
     onDblClick: (e: any) => handleNodeClick(e, node, true),
@@ -559,6 +558,7 @@ const RenderNode: React.FC<{
     onDragEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleDragEnd(e, node.id); } },
     onTransformEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleTransformEnd(e, node.id); } },
     onMouseEnter: (e: any) => {
+      if (handleNodeHover) handleNodeHover(e, node, true);
       const hasHover = !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none');
       if (isInteractive || mode === 'connect' || hasHover) {
         const container = e.target.getStage()?.container();
@@ -682,6 +682,7 @@ const RenderNode: React.FC<{
       }
     },
     onMouseLeave: (e: any) => {
+      if (handleNodeHover) handleNodeHover(e, node, false);
       const hasHover = !!(resolvedNode.hoverEffect && resolvedNode.hoverEffect !== 'none');
       if (isInteractive || mode === 'connect' || hasHover) {
         const container = e.target.getStage()?.container();
@@ -784,18 +785,284 @@ const RenderNode: React.FC<{
 
   const displayChecked = liveCheckedState !== null ? liveCheckedState : (resolvedNode.checked ?? resolvedNode.defaultChecked ?? false);
   const rawValue = liveValue !== null ? liveValue : (resolvedNode.text || resolvedNode.defaultValue || '');
-  const displayValue = getBoundProperty('text', getBoundProperty('defaultValue', rawValue));
+  let displayValue = getBoundProperty('text', getBoundProperty('defaultValue', rawValue));
+  if (typeof displayValue === 'string') {
+    const trimmed = displayValue.trim();
+    if (trimmed === '""' || trimmed === "''") {
+      displayValue = '';
+    }
+  }
   const displaySrc = getBoundProperty('src', resolvedNode.src || '');
+
+  const executeChangeActions = (inputVal: any) => {
+    const primaryId = resolvedNode.sourceNodeId || resolvedNode.id;
+    const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+    let seqs = resolvedNode.actionSequences || [];
+    if (!seqs.length) {
+      for (const r of related) {
+        if (r.actionSequences?.length) {
+          seqs = r.actionSequences;
+          break;
+        }
+      }
+    }
+
+    const changeSeq = seqs.find(s => s.event === 'onChange');
+    if (changeSeq) {
+      changeSeq.actions.forEach(act => {
+        if (act.enabled === false) return;
+        if (act.type === 'setState' && act.stateVariableId) {
+          const currentVars = useCanvasStore.getState().stateVariables;
+          const stateVar = currentVars.find((v: any) => v.id === act.stateVariableId || v.name === act.stateVariableId);
+          if (stateVar) {
+            let newVal: any = stateVar.defaultValue;
+            const op = act.stateOperation || 'set';
+            if (op === 'setInputVal') {
+              newVal = inputVal;
+            } else if (op === 'set') {
+              if (stateVar.type === 'number') {
+                const num = Number(act.value);
+                newVal = isNaN(num) ? 0 : num;
+              } else if (stateVar.type === 'boolean') {
+                newVal = act.value === 'true' || act.value === true;
+              } else if (stateVar.type === 'string') {
+                let s = String(act.value ?? '').trim();
+                if (s === '""' || s === "''") s = '';
+                else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+                newVal = s;
+              } else {
+                if (act.value === 'true' || act.value === true) newVal = true;
+                else if (act.value === 'false' || act.value === false) newVal = false;
+                else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') newVal = Number(act.value);
+                else newVal = act.value !== undefined ? act.value : inputVal;
+              }
+            } else if (op === 'toggle') {
+              newVal = !Boolean(stateVar.defaultValue);
+            } else if (op === 'increment') {
+              const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+              newVal = (Number(stateVar.defaultValue) || 0) + step;
+            } else if (op === 'decrement') {
+              const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+              newVal = (Number(stateVar.defaultValue) || 0) - step;
+            }
+            useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: newVal });
+          }
+        }
+      });
+    }
+
+    const boundVarId = resolvedNode.bindings?.defaultValue || resolvedNode.bindings?.text || resolvedNode.bindings?.checked || resolvedNode.bindings?.defaultChecked;
+    if (boundVarId) {
+      const currentVars = useCanvasStore.getState().stateVariables;
+      const stateVar = currentVars.find((v: any) => v.id === boundVarId || v.name === boundVarId);
+      if (stateVar) {
+        useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: inputVal });
+      }
+    }
+  };
+
+  const executeFocusActions = () => {
+    const primaryId = resolvedNode.sourceNodeId || resolvedNode.id;
+    const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+    let seqs = resolvedNode.actionSequences || [];
+    if (!seqs.length) {
+      for (const r of related) {
+        if (r.actionSequences?.length) {
+          seqs = r.actionSequences;
+          break;
+        }
+      }
+    }
+
+    const focusSeq = seqs.find(s => s.event === 'onFocus');
+    if (focusSeq) {
+      focusSeq.actions.forEach(act => {
+        if (act.enabled === false) return;
+        if (act.type === 'navigate' && act.targetPageId) {
+          const targetPage = nodes.find(n => n.id === act.targetPageId);
+          if (targetPage) {
+            const primaryTargetId = targetPage.variantOf || targetPage.id;
+            const setPreview = (useCanvasStore.getState() as any).setPreviewFrameId;
+            if (setPreview) setPreview(primaryTargetId);
+          }
+        } else if (act.type === 'setState' && act.stateVariableId) {
+          const currentVars = useCanvasStore.getState().stateVariables;
+          const stateVar = currentVars.find((v: any) => v.id === act.stateVariableId || v.name === act.stateVariableId);
+          if (stateVar) {
+            let newVal: any = stateVar.defaultValue;
+            const op = act.stateOperation || 'set';
+            if (op === 'set') {
+              if (stateVar.type === 'number') {
+                const num = Number(act.value);
+                newVal = isNaN(num) ? 0 : num;
+              } else if (stateVar.type === 'boolean') {
+                newVal = act.value === 'true' || act.value === true;
+              } else if (stateVar.type === 'string') {
+                let s = String(act.value ?? '').trim();
+                if (s === '""' || s === "''") s = '';
+                else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+                newVal = s;
+              } else {
+                if (act.value === 'true' || act.value === true) newVal = true;
+                else if (act.value === 'false' || act.value === false) newVal = false;
+                else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') newVal = Number(act.value);
+                else newVal = act.value !== undefined ? act.value : '';
+              }
+            } else if (op === 'toggle') {
+              newVal = !Boolean(stateVar.defaultValue);
+            } else if (op === 'increment') {
+              const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+              newVal = (Number(stateVar.defaultValue) || 0) + step;
+            } else if (op === 'decrement') {
+              const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+              newVal = (Number(stateVar.defaultValue) || 0) - step;
+            }
+            useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: newVal });
+          }
+        } else if (act.type === 'triggerAnimation') {
+          const targetId = act.targetNodeId || node.id;
+          const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+          if (targetNode && context.playNodeAnimation) {
+            const activeStage = shapeRef.current?.getStage() || null;
+            context.playNodeAnimation(targetNode, activeStage, act.animationType);
+          }
+        } else if (act.type === 'toggleVisibility') {
+          const targetId = act.targetNodeId || node.id;
+          const activeStage = shapeRef.current?.getStage() || null;
+          if (activeStage) {
+            const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId);
+            let shape: any = null;
+            for (const tv of targetVariants) {
+              shape = activeStage.findOne('#node-' + tv.id);
+              if (shape) break;
+            }
+            if (shape) {
+              const currentVis = shape.visible();
+              const actVis = act.visibilityAction || 'toggle';
+              if (actVis === 'show') shape.visible(true);
+              else if (actVis === 'hide') shape.visible(false);
+              else shape.visible(!currentVis);
+              activeStage.batchDraw();
+            }
+          }
+        }
+      });
+    }
+  };
 
   const handlePreviewClick = (e: any) => {
     if (mode === 'preview' || isPreview) {
       e.cancelBubble = true;
+
+      // Also execute any onClick action sequence configured on this interactive element
+      const primaryId = resolvedNode.sourceNodeId || resolvedNode.id;
+      const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+      let seqs = resolvedNode.actionSequences || [];
+      if (!seqs.length) {
+        for (const r of related) {
+          if (r.actionSequences?.length) {
+            seqs = r.actionSequences;
+            break;
+          }
+        }
+      }
+      const clickSeq = seqs.find(s => s.event === 'onClick');
+      if (clickSeq) {
+        clickSeq.actions.forEach(act => {
+          if (act.enabled === false) return;
+          if (act.type === 'navigate' && act.targetPageId) {
+            const targetPage = nodes.find(n => n.id === act.targetPageId);
+            if (targetPage) {
+              const primaryTargetId = targetPage.variantOf || targetPage.id;
+              const setPreview = (useCanvasStore.getState() as any).setPreviewFrameId;
+              if (setPreview) setPreview(primaryTargetId);
+            }
+          } else if (act.type === 'setState' && act.stateVariableId) {
+            const currentVars = useCanvasStore.getState().stateVariables;
+            const stateVar = currentVars.find((v: any) => v.id === act.stateVariableId || v.name === act.stateVariableId);
+            if (stateVar) {
+              let newVal: any = stateVar.defaultValue;
+              const op = act.stateOperation || 'set';
+              if (op === 'set') {
+                if (stateVar.type === 'number') {
+                  const num = Number(act.value);
+                  newVal = isNaN(num) ? 0 : num;
+                } else if (stateVar.type === 'boolean') {
+                  newVal = act.value === 'true' || act.value === true;
+                } else if (stateVar.type === 'string') {
+                  let s = String(act.value ?? '').trim();
+                  if (s === '""' || s === "''") s = '';
+                  else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+                  newVal = s;
+                } else {
+                  if (act.value === 'true' || act.value === true) newVal = true;
+                  else if (act.value === 'false' || act.value === false) newVal = false;
+                  else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') newVal = Number(act.value);
+                  else newVal = act.value !== undefined ? act.value : '';
+                }
+              } else if (op === 'toggle') {
+                newVal = !Boolean(stateVar.defaultValue);
+              } else if (op === 'increment') {
+                const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+                newVal = (Number(stateVar.defaultValue) || 0) + step;
+              } else if (op === 'decrement') {
+                const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+                newVal = (Number(stateVar.defaultValue) || 0) - step;
+              }
+              useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: newVal });
+            }
+          } else if (act.type === 'triggerAnimation') {
+            const targetId = act.targetNodeId || node.id;
+            const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+            if (targetNode && context.playNodeAnimation) {
+              const activeStage = shapeRef.current?.getStage() || null;
+              context.playNodeAnimation(targetNode, activeStage, act.animationType);
+            }
+          } else if (act.type === 'toggleVisibility') {
+            const targetId = act.targetNodeId || (resolvedNode.type !== 'FormContainer' ? resolvedNode.id : undefined);
+            const activeStage = shapeRef.current?.getStage() || null;
+            if (targetId && activeStage) {
+              const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId);
+              let shape: any = null;
+              for (const tv of targetVariants) {
+                shape = activeStage.findOne('#node-' + tv.id);
+                if (shape) break;
+              }
+              if (shape) {
+                const currentVis = shape.visible();
+                const actVis = act.visibilityAction || 'toggle';
+                if (actVis === 'show') shape.visible(true);
+                else if (actVis === 'hide') shape.visible(false);
+                else shape.visible(!currentVis);
+                activeStage.batchDraw();
+              }
+            }
+          } else if (act.type === 'resetForm') {
+            if (context.executeFormReset) {
+              const targetForm = context.findTargetForm ? context.findTargetForm(resolvedNode, act.targetNodeId) : (resolvedNode.type === 'FormContainer' ? resolvedNode : undefined);
+              if (targetForm) context.executeFormReset(targetForm);
+            }
+          } else if (act.type === 'submitForm') {
+            if (context.executeFormSubmit) {
+              const targetForm = context.findTargetForm ? context.findTargetForm(resolvedNode, act.targetNodeId) : (resolvedNode.type === 'FormContainer' ? resolvedNode : undefined);
+              if (targetForm) context.executeFormSubmit(targetForm, shapeRef.current?.getStage() || null);
+            }
+          }
+        });
+      }
+
+      executeFocusActions();
+
       if (resolvedNode.type === 'Checkbox' || resolvedNode.type === 'Switch') {
-        setLiveCheckedState(!displayChecked);
+        const nextChecked = !displayChecked;
+        setLiveCheckedState(nextChecked);
+        useCanvasStore.getState().updateNode(resolvedNode.id, { checked: nextChecked, defaultChecked: nextChecked }, true);
+        executeChangeActions(nextChecked);
       } else if (resolvedNode.type === 'TextInput' || resolvedNode.type === 'TextArea' || resolvedNode.type === 'SelectDropdown') {
         context.openInputOverlay(resolvedNode, shapeRef.current, displayValue, (val) => {
           setLiveValue(val);
           useCanvasStore.getState().updateNode(resolvedNode.id, { defaultValue: val, text: val }, true);
+          executeChangeActions(val);
         });
       }
     }
@@ -804,8 +1071,18 @@ const RenderNode: React.FC<{
   const interactiveProps = {
     ...commonProps,
     onClick: (e: any) => {
-      handlePreviewClick(e);
-      if (commonProps.onClick) commonProps.onClick(e);
+      if (mode === 'preview' || isPreview) {
+        handlePreviewClick(e);
+      } else {
+        if (commonProps.onClick) commonProps.onClick(e);
+      }
+    },
+    onTap: (e: any) => {
+      if (mode === 'preview' || isPreview) {
+        handlePreviewClick(e);
+      } else {
+        if (commonProps.onTap) commonProps.onTap(e);
+      }
     }
   };
 
@@ -1035,7 +1312,7 @@ const RenderNode: React.FC<{
         ref={shapeRef}
         key={node.id}
         {...commonProps}
-        text={displayValue}
+        text={typeof displayValue === 'boolean' ? String(displayValue) : (displayValue ?? '')}
         fontSize={resolvedNode.fontSize}
         fontFamily={resolvedNode.fontFamily}
         stroke={isComponentIndicator ? indicatorStroke : undefined}
@@ -1270,7 +1547,7 @@ const RenderNode: React.FC<{
 };
 
 export const CanvasArea: React.FC = () => {
-  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants, pickingTriggerForNodeId, setPickingTriggerForNodeId, setToastMessage } = useCanvasStore();
+  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, updateNodes, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants, pickingTriggerForNodeId, setPickingTriggerForNodeId, pickingActionTarget, setPickingActionTarget, setToastMessage } = useCanvasStore();
   
   const stageRef = useRef<Konva.Stage>(null);
   const previewStageRef = useRef<any>(null);
@@ -1279,6 +1556,7 @@ export const CanvasArea: React.FC = () => {
   const dragStartGapRef = useRef<number>(0);
   const dragStartPosRef = useRef<number>(0);
 
+  const [hoveredPickingNodeId, setHoveredPickingNodeId] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -1426,15 +1704,26 @@ export const CanvasArea: React.FC = () => {
       const centerY = unscaledAbsY + (storeNode.height || 0) / 2;
       
       let targetFrameId = undefined;
-      // Only valid target frames are actual layout frames, not master components or instances themselves
-      const frames = nodes.filter(n => n.type === 'Frame' && !n.isMasterComponent && !n.componentId && n.id !== storeNode.id);
+      // Valid target containers are actual layout frames or FormContainers
+      const frames = nodes.filter(n => (n.type === 'Frame' || n.type === 'FormContainer') && !n.isMasterComponent && !n.componentId && n.id !== storeNode.id);
+      frames.sort((a, b) => {
+        const areaA = (a.width || 0) * (a.height || 0);
+        const areaB = (b.width || 0) * (b.height || 0);
+        return areaB - areaA;
+      });
       
-      // 1. Check exact bounding box collision first
+      // 1. Check exact bounding box collision first (checking smallest/nested first)
       for (let i = frames.length - 1; i >= 0; i--) {
         const frame = frames[i];
+        let frameAbsX = frame.x;
+        let frameAbsY = frame.y;
+        if (frame.parentId) {
+          const pf = nodes.find(n => n.id === frame.parentId);
+          if (pf) { frameAbsX += pf.x; frameAbsY += pf.y; }
+        }
         if (
-          centerX >= frame.x && centerX <= frame.x + (frame.width || 0) &&
-          centerY >= frame.y && centerY <= frame.y + (frame.height || 0)
+          centerX >= frameAbsX && centerX <= frameAbsX + (frame.width || 0) &&
+          centerY >= frameAbsY && centerY <= frameAbsY + (frame.height || 0)
         ) {
           targetFrameId = frame.id;
           break;
@@ -1445,12 +1734,18 @@ export const CanvasArea: React.FC = () => {
       if (!targetFrameId && storeNode.parentId) {
         const currentParent = frames.find(f => f.id === storeNode.parentId);
         if (currentParent) {
+          let pAbsX = currentParent.x;
+          let pAbsY = currentParent.y;
+          if (currentParent.parentId) {
+            const pf = nodes.find(n => n.id === currentParent.parentId);
+            if (pf) { pAbsX += pf.x; pAbsY += pf.y; }
+          }
           const fw = currentParent.width || 0;
           const fh = currentParent.height || 0;
           const MARGIN = 250;
           if (
-            centerX >= currentParent.x - MARGIN && centerX <= currentParent.x + fw + MARGIN &&
-            centerY >= currentParent.y - MARGIN && centerY <= currentParent.y + fh + MARGIN
+            centerX >= pAbsX - MARGIN && centerX <= pAbsX + fw + MARGIN &&
+            centerY >= pAbsY - MARGIN && centerY <= pAbsY + fh + MARGIN
           ) {
             targetFrameId = currentParent.id;
           }
@@ -1462,8 +1757,14 @@ export const CanvasArea: React.FC = () => {
         if (targetFrameId) {
           const targetFrame = frames.find(f => f.id === targetFrameId);
           if (targetFrame) {
-            updates.x = unscaledAbsX - targetFrame.x;
-            updates.y = unscaledAbsY - targetFrame.y;
+            let fAbsX = targetFrame.x;
+            let fAbsY = targetFrame.y;
+            if (targetFrame.parentId) {
+              const pf = nodes.find(n => n.id === targetFrame.parentId);
+              if (pf) { fAbsX += pf.x; fAbsY += pf.y; }
+            }
+            updates.x = unscaledAbsX - fAbsX;
+            updates.y = unscaledAbsY - fAbsY;
           }
         } else {
           updates.x = unscaledAbsX;
@@ -1605,14 +1906,30 @@ export const CanvasArea: React.FC = () => {
     updateNode(nodeId, { points: newPoints }, true);
   };
 
-  const playNodeAnimation = (targetNode: CanvasNode, stageOverride?: Konva.Stage | null) => {
-    if (!targetNode.animation || targetNode.animation.type === 'none') return;
+  const playNodeAnimation = (targetNode: CanvasNode, stageOverride?: Konva.Stage | null, animTypeOverride?: string) => {
+    const rawConfig = targetNode.animation;
+    const animType = animTypeOverride || (rawConfig && rawConfig.type !== 'none' ? rawConfig.type : undefined);
+    if (!animType || animType === 'none') return;
     const stage = stageOverride || previewStageRef.current || stageRef.current;
-    if (!stage) { console.log('[playNodeAnimation] No stage found'); return; }
-    const konvaEl = (stage.findOne('#node-' + targetNode.id) || stage.findOne('#node-' + targetNode.id + '-rep-0')) as Konva.Node;
+    let konvaEl = (stage.findOne('#node-' + targetNode.id) || stage.findOne('#node-' + targetNode.id + '-rep-0')) as Konva.Node;
+    if (!konvaEl) {
+      const variants = nodes.filter(n => n.sourceNodeId === targetNode.id || n.id === targetNode.sourceNodeId);
+      for (const v of variants) {
+        konvaEl = (stage.findOne('#node-' + v.id) || stage.findOne('#node-' + v.id + '-rep-0')) as Konva.Node;
+        if (konvaEl) break;
+      }
+    }
     if (!konvaEl) { console.log('[playNodeAnimation] Konva element not found for', targetNode.id, targetNode.name); return; }
 
-    const animConfig = targetNode.animation;
+    if (!konvaEl.visible()) {
+      konvaEl.visible(true);
+    }
+
+    const animConfig = {
+      ...(rawConfig || {}),
+      type: animType,
+      duration: rawConfig?.duration || 1000,
+    };
     const durMs = animConfig.duration || 1000;
     const initialX = targetNode.x;
     const initialY = targetNode.y;
@@ -1735,6 +2052,144 @@ export const CanvasArea: React.FC = () => {
     }
   };
 
+  const executeAction = (act: NodeAction, originNode: CanvasNode, activeStage?: Konva.Stage | null) => {
+    if (act.enabled === false) return;
+    if (act.type === 'navigate' && act.targetPageId) {
+      const targetPage = nodes.find(n => n.id === act.targetPageId);
+      if (targetPage) {
+        const primaryTargetId = targetPage.variantOf || targetPage.id;
+        setPreviewFrameId(primaryTargetId);
+      }
+    } else if (act.type === 'setState' && act.stateVariableId) {
+      const currentVars = useCanvasStore.getState().stateVariables;
+      const stateVar = currentVars.find((v: any) => v.id === act.stateVariableId || v.name === act.stateVariableId);
+      if (stateVar) {
+        let newVal: any = stateVar.defaultValue;
+        const op = act.stateOperation || 'set';
+        if (op === 'set') {
+          if (stateVar.type === 'number') {
+            const num = Number(act.value);
+            newVal = isNaN(num) ? 0 : num;
+          } else if (stateVar.type === 'boolean') {
+            newVal = act.value === 'true' || act.value === true;
+          } else if (stateVar.type === 'string') {
+            let s = String(act.value ?? '').trim();
+            if (s === '""' || s === "''") s = '';
+            else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+            newVal = s;
+          } else {
+            if (act.value === 'true' || act.value === true) newVal = true;
+            else if (act.value === 'false' || act.value === false) newVal = false;
+            else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') newVal = Number(act.value);
+            else newVal = act.value !== undefined ? act.value : '';
+          }
+        } else if (op === 'toggle') {
+          newVal = !Boolean(stateVar.defaultValue);
+        } else if (op === 'increment') {
+          const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+          newVal = (Number(stateVar.defaultValue) || 0) + step;
+        } else if (op === 'decrement') {
+          const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
+          newVal = (Number(stateVar.defaultValue) || 0) - step;
+        }
+        useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: newVal });
+      }
+    } else if (act.type === 'triggerAnimation') {
+      const targetId = act.targetNodeId || originNode.id;
+      const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+      if (targetNode) {
+        playNodeAnimation(targetNode, activeStage, act.animationType);
+      }
+    } else if (act.type === 'toggleVisibility') {
+      const targetId = act.targetNodeId || (originNode.type !== 'FormContainer' ? originNode.id : undefined);
+      if (targetId && activeStage) {
+        const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId);
+        let shape: any = null;
+        for (const tv of targetVariants) {
+          shape = activeStage.findOne('#node-' + tv.id);
+          if (shape) break;
+        }
+        if (shape) {
+          const currentVis = shape.visible();
+          const actVis = act.visibilityAction || 'toggle';
+          if (actVis === 'show') shape.visible(true);
+          else if (actVis === 'hide') shape.visible(false);
+          else shape.visible(!currentVis);
+          activeStage.batchDraw();
+        }
+      }
+    } else if (act.type === 'resetForm') {
+      const targetForm = findTargetForm(originNode, act.targetNodeId);
+      if (targetForm) {
+        executeFormReset(targetForm);
+      }
+    } else if (act.type === 'submitForm') {
+      const targetForm = findTargetForm(originNode, act.targetNodeId);
+      if (targetForm) {
+        executeFormSubmit(targetForm, activeStage);
+      }
+    }
+  };
+
+  const findTargetForm = (originNode: CanvasNode, targetId?: string): CanvasNode | undefined => {
+    if (targetId) {
+      const f = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+      if (f && f.type === 'FormContainer') return f;
+    }
+    // 1. Ancestor parent chain
+    let curr: CanvasNode | undefined = originNode.type === 'FormContainer' ? originNode : nodes.find(n => n.id === originNode.parentId);
+    while (curr) {
+      if (curr.type === 'FormContainer') return curr;
+      curr = curr.parentId ? nodes.find(n => n.id === curr!.parentId) : undefined;
+    }
+    // 2. Geometrical containment (originNode is within FormContainer bounds)
+    const forms = nodes.filter(n => n.type === 'FormContainer');
+    const containingForm = forms.find(f => {
+      const fx = f.x, fy = f.y, fw = f.width || 340, fh = f.height || 260;
+      return originNode.x >= fx && originNode.x <= fx + fw && originNode.y >= fy && originNode.y <= fy + fh;
+    });
+    if (containingForm) return containingForm;
+
+    // 3. Form on the same frame / page
+    const sameFrameForm = forms.find(f => f.parentId && f.parentId === originNode.parentId);
+    if (sameFrameForm) return sameFrameForm;
+
+    // 4. Any FormContainer in the project
+    return forms[0];
+  };
+
+  const executeFormSubmit = (formNode: CanvasNode, activeStage?: Konva.Stage | null) => {
+    const primaryId = formNode.sourceNodeId || formNode.id;
+    const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+    let seqs = formNode.actionSequences || [];
+    if (!seqs.length) {
+      for (const r of related) {
+        if (r.actionSequences?.length) {
+          seqs = r.actionSequences;
+          break;
+        }
+      }
+    }
+    const submitSeq = seqs.find(s => s.event === 'onSubmit');
+    if (!submitSeq) return;
+    submitSeq.actions.forEach(act => executeAction(act, formNode, activeStage));
+  };
+
+  const executeFormReset = (formNode: CanvasNode) => {
+    const fx = formNode.x, fy = formNode.y, fw = formNode.width || 340, fh = formNode.height || 260;
+    const formChildren = nodes.filter(n => 
+      n.parentId === formNode.id || 
+      (n.parentId === formNode.parentId && n.x >= fx && n.x <= fx + fw && n.y >= fy && n.y <= fy + fh)
+    );
+    formChildren.forEach(child => {
+      if (child.type === 'TextInput' || child.type === 'TextArea' || child.type === 'SelectDropdown') {
+        useCanvasStore.getState().updateNode(child.id, { defaultValue: '', text: '' }, true);
+      } else if (child.type === 'Checkbox' || child.type === 'Switch') {
+        useCanvasStore.getState().updateNode(child.id, { checked: false, defaultChecked: false }, true);
+      }
+    });
+  };
+
   const handleNodeClick = (e: any, node: CanvasNode, isDoubleClick: boolean = false) => {
     e.cancelBubble = true;
     (document.activeElement as HTMLElement)?.blur();
@@ -1774,32 +2229,150 @@ export const CanvasArea: React.FC = () => {
         }
       }
       setPickingTriggerForNodeId(null);
+      setHoveredPickingNodeId(null);
+      return;
+    }
+
+    if (pickingActionTarget) {
+      const { nodeId, sequenceId, actionId, targetField, allowedTypes } = pickingActionTarget;
+
+      let resolvedTargetNode: CanvasNode = node;
+      if (allowedTypes && allowedTypes.length > 0) {
+        if (!allowedTypes.includes(node.type)) {
+          let currId: string | undefined = node.parentId;
+          while (currId) {
+            const parentNode = nodes.find(n => n.id === currId);
+            if (parentNode) {
+              if (allowedTypes.includes(parentNode.type)) {
+                resolvedTargetNode = parentNode;
+                break;
+              }
+              currId = parentNode.parentId;
+            } else {
+              break;
+            }
+          }
+        }
+        if (!allowedTypes.includes(resolvedTargetNode.type)) {
+          setToastMessage(`Please click a ${allowedTypes.join(' or ')} element`);
+          return;
+        }
+      }
+
+      const originNode = nodes.find(n => n.id === nodeId);
+      if (originNode && originNode.actionSequences) {
+        const isSelf = resolvedTargetNode.id === originNode.id;
+        const updatedSequences = originNode.actionSequences.map(seq => {
+          if (seq.id !== sequenceId) return seq;
+          const updatedActions = seq.actions.map(act => {
+            if (act.id !== actionId) return act;
+            if (targetField === 'targetPageId') {
+              return { ...act, targetPageId: resolvedTargetNode.id };
+            }
+            return {
+              ...act,
+              targetNodeId: isSelf ? undefined : resolvedTargetNode.id,
+            };
+          });
+          return { ...seq, actions: updatedActions };
+        });
+
+        updateNodes([originNode.id], { actionSequences: updatedSequences }, true);
+
+        const targetLabel = getNodeDescriptiveLabel(resolvedTargetNode, nodes);
+        if (isSelf) {
+          setToastMessage(`Target set to Current Element (${originNode.name || originNode.type})`);
+        } else {
+          setToastMessage(`🎯 Target element set to "${targetLabel}"`);
+        }
+      }
+
+      setHoveredPickingNodeId(null);
+      setPickingActionTarget(null);
       return;
     }
 
     // Trigger animations connected to this clicked node (preview mode only)
     if (mode === 'preview') {
+      const triggerMatchIds = new Set<string>();
+      let currP: CanvasNode | undefined = node;
+      while (currP) {
+        triggerMatchIds.add(currP.id);
+        if (currP.sourceNodeId) triggerMatchIds.add(currP.sourceNodeId);
+        const pId = currP.sourceNodeId || currP.id;
+        nodes.filter(n => n.sourceNodeId === pId || n.id === pId).forEach(n => triggerMatchIds.add(n.id));
+        currP = currP.parentId ? nodes.find(n => n.id === currP!.parentId) : undefined;
+      }
+
       const triggeredNodes = nodes.filter(n => 
         n.animation && 
         n.animation.type !== 'none' && 
         (n.animation.trigger === 'click' || n.animation.trigger === 'dblclick' || !n.animation.trigger) &&
-        (n.animation.triggerNodeId === node.id || (n.id === node.id && (!n.animation.triggerNodeId || n.animation.triggerNodeId === n.id)))
+        (triggerMatchIds.has(n.animation.triggerNodeId!) || (n.id === node.id && (!n.animation.triggerNodeId || n.animation.triggerNodeId === n.id)))
       );
-      console.log('[Animation] Click on node:', node.id, node.name, '| Found triggered nodes:', triggeredNodes.map(n => ({ id: n.id, name: n.name, type: n.animation?.type, trigger: n.animation?.trigger })));
       if (triggeredNodes.length > 0) {
         const activeStage = e?.target ? e.target.getStage() : null;
-        console.log('[Animation] Active stage:', !!activeStage, '| Stage children:', activeStage?.children?.length);
         triggeredNodes.forEach(tn => playNodeAnimation(tn, activeStage));
       }
     }
 
     if (mode === 'preview') {
-      if (node.linkTo) {
-        const targetNode = nodes.find(n => n.id === node.linkTo);
-        if (!targetNode) return;
-        // Always resolve to the primary (non-variant) target frame
-        const primaryTargetId = targetNode.variantOf || targetNode.id;
-        setPreviewFrameId(primaryTargetId);
+      let targetForAction = node;
+      let curr: CanvasNode | undefined = node;
+      while (curr) {
+        const primaryId = curr.sourceNodeId || curr.id;
+        const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+        const hasActions = related.some(r => r.actionSequences && r.actionSequences.length > 0);
+        if (hasActions) {
+          targetForAction = curr;
+          break;
+        }
+        if (!curr.parentId) break;
+        const parent = nodes.find(n => n.id === curr!.parentId);
+        if (!parent || parent.type === 'Frame' || parent.type === 'FormContainer') break;
+        curr = parent;
+      }
+
+      const primaryId = targetForAction.sourceNodeId || targetForAction.id;
+      const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+      let seqs = targetForAction.actionSequences || [];
+      if (!seqs.length) {
+        for (const r of related) {
+          if (r.actionSequences?.length) {
+            seqs = r.actionSequences;
+            break;
+          }
+        }
+      }
+
+      const activeStage = e?.target ? e.target.getStage() : null;
+
+      if (seqs.length > 0) {
+        const clickSeq = seqs.find(s => s.event === 'onClick');
+        if (clickSeq) {
+          clickSeq.actions.forEach(act => executeAction(act, node, activeStage));
+        } else if (targetForAction.type === 'FormContainer') {
+          executeFormSubmit(targetForAction, activeStage);
+        }
+
+        const focusSeq = seqs.find(s => s.event === 'onFocus');
+        if (focusSeq && node.type !== 'TextInput' && node.type !== 'TextArea' && node.type !== 'SelectDropdown' && node.type !== 'Checkbox' && node.type !== 'Switch') {
+          focusSeq.actions.forEach(act => executeAction(act, node, activeStage));
+        }
+      } else {
+        const parentForm = findTargetForm(node);
+        if (parentForm) {
+          executeFormSubmit(parentForm, activeStage);
+        }
+      }
+
+      const targetLink = targetForAction.linkTo || node.linkTo || related.find(r => r.linkTo)?.linkTo;
+      if (targetLink) {
+        const targetNode = nodes.find(n => n.id === targetLink);
+        if (targetNode) {
+          const primaryTargetId = targetNode.variantOf || targetNode.id;
+          setPreviewFrameId(primaryTargetId);
+        }
       }
       return;
     }
@@ -1881,6 +2454,101 @@ export const CanvasArea: React.FC = () => {
     }
   };
 
+  const handleNodeHover = (e: any, node: CanvasNode, isEnter: boolean) => {
+    if (pickingActionTarget || pickingTriggerForNodeId) {
+      setHoveredPickingNodeId(isEnter ? node.id : null);
+      const container = e?.target?.getStage ? e.target.getStage()?.container() : stageRef.current?.container();
+      if (container) {
+        container.style.cursor = isEnter ? 'crosshair' : 'default';
+      }
+      return;
+    }
+
+    if (mode !== 'preview') return;
+
+    if (isEnter) {
+      const triggerMatchIds = new Set<string>([node.id]);
+      if (node.sourceNodeId) triggerMatchIds.add(node.sourceNodeId);
+      let currP: CanvasNode | undefined = node;
+      while (currP) {
+        if (currP.id) triggerMatchIds.add(currP.id);
+        if (currP.sourceNodeId) triggerMatchIds.add(currP.sourceNodeId);
+        currP = currP.parentId ? nodes.find(n => n.id === currP!.parentId) : undefined;
+      }
+
+      const triggeredNodes = nodes.filter(n => 
+        n.animation && 
+        n.animation.type !== 'none' && 
+        n.animation.trigger === 'hover' &&
+        (triggerMatchIds.has(n.animation.triggerNodeId!) || (n.id === node.id && (!n.animation.triggerNodeId || n.animation.triggerNodeId === n.id)))
+      );
+      if (triggeredNodes.length > 0) {
+        const activeStage = e?.target ? e.target.getStage() : null;
+        triggeredNodes.forEach(tn => playNodeAnimation(tn, activeStage));
+      }
+
+      let targetForAction = node;
+      let curr: CanvasNode | undefined = node;
+      while (curr) {
+        const primaryId = curr.sourceNodeId || curr.id;
+        const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+        const hasActions = related.some(r => r.actionSequences && r.actionSequences.length > 0);
+        if (hasActions) {
+          targetForAction = curr;
+          break;
+        }
+        if (!curr.parentId) break;
+        curr = nodes.find(n => n.id === curr!.parentId);
+      }
+
+      const primaryId = targetForAction.sourceNodeId || targetForAction.id;
+      const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+      let seqs = targetForAction.actionSequences || [];
+      if (!seqs.length) {
+        for (const r of related) {
+          if (r.actionSequences?.length) {
+            seqs = r.actionSequences;
+            break;
+          }
+        }
+      }
+
+      if (seqs.length > 0) {
+        const hoverSeq = seqs.find(s => s.event === 'onHover');
+        if (hoverSeq) {
+          const activeStage = e?.target ? e.target.getStage() : null;
+          hoverSeq.actions.forEach(act => executeAction(act, targetForAction, activeStage));
+        }
+      }
+    } else {
+      const triggerMatchIds = new Set<string>([node.id]);
+      if (node.sourceNodeId) triggerMatchIds.add(node.sourceNodeId);
+      let currP: CanvasNode | undefined = node;
+      while (currP) {
+        if (currP.id) triggerMatchIds.add(currP.id);
+        if (currP.sourceNodeId) triggerMatchIds.add(currP.sourceNodeId);
+        currP = currP.parentId ? nodes.find(n => n.id === currP!.parentId) : undefined;
+      }
+
+      const triggeredNodes = nodes.filter(n => 
+        n.animation && 
+        n.animation.type !== 'none' && 
+        n.animation.trigger === 'hover' &&
+        (triggerMatchIds.has(n.animation.triggerNodeId!) || (n.id === node.id && (!n.animation.triggerNodeId || n.animation.triggerNodeId === n.id)))
+      );
+      if (triggeredNodes.length > 0) {
+        const activeStage = e?.target ? e.target.getStage() : null;
+        triggeredNodes.forEach(tn => {
+          const stage = activeStage || previewStageRef.current || stageRef.current;
+          const konvaEl = stage?.findOne('#node-' + tn.id) as any;
+          if (konvaEl && konvaEl._animOpen) {
+            playNodeAnimation(tn, activeStage);
+          }
+        });
+      }
+    }
+  };
+
   const [activeEditingInput, setActiveEditingInput] = useState<{
     node: CanvasNode;
     bounds: { x: number; y: number; width: number; height: number };
@@ -1928,7 +2596,13 @@ export const CanvasArea: React.FC = () => {
             }}
             onBlur={() => setActiveEditingInput(null)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') setActiveEditingInput(null);
+              if (e.key === 'Enter') {
+                const parentForm = findTargetForm(activeEditingInput.node);
+                if (parentForm) {
+                  executeFormSubmit(parentForm, previewStageRef.current || stageRef.current);
+                }
+                setActiveEditingInput(null);
+              }
             }}
             className="w-full h-full px-3 py-1.5 bg-white text-slate-800 border-2 border-indigo-500 rounded-md font-sans text-sm focus:outline-none shadow-lg"
           />
@@ -2000,6 +2674,7 @@ export const CanvasArea: React.FC = () => {
     selectNodes,
     toggleNodeSelection,
     handleNodeClick,
+    handleNodeHover,
     handleDragEnd,
     handleTransformEnd,
     handleLineDblClick,
@@ -2007,6 +2682,10 @@ export const CanvasArea: React.FC = () => {
     handleAnchorDragEnd,
     handleAnchorDblClick,
     openInputOverlay,
+    playNodeAnimation,
+    executeFormSubmit,
+    executeFormReset,
+    findTargetForm,
   };
 
   if (mode === 'preview' && previewFrameId) {
@@ -2263,7 +2942,14 @@ export const CanvasArea: React.FC = () => {
   const rootNodes = nodes.filter(n => !n.parentId);
 
   return (
-    <div className="flex-1 bg-canvas-grid relative overflow-hidden" style={{ cursor: mode === 'connect' ? 'crosshair' : 'default' }}>
+    <div 
+      tabIndex={0}
+      className="flex-1 bg-canvas-grid relative overflow-hidden focus:outline-none" 
+      style={{ cursor: (mode === 'connect' || pickingTriggerForNodeId || pickingActionTarget) ? 'crosshair' : 'default' }}
+      onMouseDown={() => {
+        (document.activeElement as HTMLElement)?.blur();
+      }}
+    >
       <Stage
         width={stageSize.width}
         height={stageSize.height}
@@ -2273,7 +2959,7 @@ export const CanvasArea: React.FC = () => {
         scaleY={zoom}
         x={pan.x}
         y={pan.y}
-        draggable={mode === 'select' && !selectionRect}
+        draggable={mode === 'select' && !selectionRect && !pickingTriggerForNodeId && !pickingActionTarget}
         onMouseMove={(e) => {
           if (mode === 'connect' && connectingSourceId && stageRef.current) {
             const pointer = stageRef.current.getPointerPosition();
@@ -2317,6 +3003,10 @@ export const CanvasArea: React.FC = () => {
           const isFrameBg = clickedNode?.type === 'Frame' && !clickedNode.componentId && !clickedNode.isMasterComponent;
 
           if (isStage || isFrameBg) {
+            if ((pickingActionTarget || pickingTriggerForNodeId) && clickedNode) {
+              handleNodeClick(e, clickedNode, false);
+              return;
+            }
             if (mode === 'select') {
               if (!e.evt.shiftKey && !e.evt.ctrlKey && !e.evt.metaKey) {
                 if (isStage) selectNodes([]);
@@ -2637,6 +3327,124 @@ export const CanvasArea: React.FC = () => {
                 </Group>
               );
             })}
+
+          {/* Action Sequence Connectors */}
+          {mode === 'select' && nodes.map(originNode => {
+            if (!originNode.actionSequences || originNode.actionSequences.length === 0) return null;
+            const isOriginSelected = selectedIds.includes(originNode.id);
+
+            return originNode.actionSequences.map(seq => {
+              return seq.actions.map(act => {
+                const targetId = act.targetNodeId || (act.type === 'navigate' ? act.targetPageId : undefined);
+                if (!targetId || targetId === originNode.id) return null;
+                const targetNode = nodes.find(n => n.id === targetId);
+                if (!targetNode) return null;
+
+                const isTargetSelected = selectedIds.includes(targetNode.id);
+                const isPickingForThis = pickingActionTarget?.nodeId === originNode.id && pickingActionTarget?.actionId === act.id;
+
+                if (!isOriginSelected && !isTargetSelected && !isPickingForThis) return null;
+
+                const sourceBounds = getNodeCanvasBounds(originNode.id);
+                const targetBounds = getNodeCanvasBounds(targetNode.id);
+                if (!sourceBounds || !targetBounds) return null;
+
+                const points = [sourceBounds.centerX, sourceBounds.centerY, targetBounds.centerX, targetBounds.centerY];
+                const actionLabel = 
+                  act.type === 'triggerAnimation' ? `⚡ ${seq.event}: ANIMATE` :
+                  act.type === 'toggleVisibility' ? `👁️ ${seq.event}: VISIBILITY` :
+                  act.type === 'submitForm' ? `📋 ${seq.event}: SUBMIT` :
+                  act.type === 'resetForm' ? `🔄 ${seq.event}: RESET` :
+                  act.type === 'navigate' ? `🔗 ${seq.event}: GO TO` : `🎯 ${seq.event}`;
+
+                return (
+                  <Group key={`action-seq-link-${originNode.id}-${act.id}`}>
+                    <Arrow
+                      points={points}
+                      stroke="#6366F1"
+                      strokeWidth={2}
+                      fill="#6366F1"
+                      pointerLength={10}
+                      pointerWidth={8}
+                      dash={[6, 4]}
+                      listening={false}
+                    />
+                    <Group x={(sourceBounds.centerX + targetBounds.centerX) / 2} y={(sourceBounds.centerY + targetBounds.centerY) / 2} listening={false}>
+                      <Rect
+                        x={-60}
+                        y={-10}
+                        width={120}
+                        height={20}
+                        fill="#4F46E5"
+                        cornerRadius={10}
+                        shadowColor="rgba(0,0,0,0.25)"
+                        shadowBlur={4}
+                      />
+                      <Text
+                        text={actionLabel}
+                        fill="white"
+                        fontSize={8.5}
+                        fontStyle="bold"
+                        fontFamily="Inter, sans-serif"
+                        x={-60}
+                        y={-4}
+                        width={120}
+                        align="center"
+                      />
+                    </Group>
+                  </Group>
+                );
+              });
+            });
+          })}
+
+          {/* Target Element Hover Highlight during Picking */}
+          {(pickingActionTarget || pickingTriggerForNodeId) && hoveredPickingNodeId && (() => {
+            const hNode = nodes.find(n => n.id === hoveredPickingNodeId);
+            if (!hNode) return null;
+            const hBounds = getNodeCanvasBounds(hNode.id);
+            if (!hBounds) return null;
+            const hLabel = getNodeDescriptiveLabel(hNode, nodes);
+
+            return (
+              <Group key={`hovered-picking-box-${hNode.id}`} listening={false}>
+                <Rect
+                  x={hBounds.x - 3}
+                  y={hBounds.y - 3}
+                  width={hBounds.width + 6}
+                  height={hBounds.height + 6}
+                  stroke="#4F46E5"
+                  strokeWidth={2.5}
+                  dash={[6, 3]}
+                  fill="rgba(79, 70, 229, 0.12)"
+                  cornerRadius={hNode.cornerRadius || 4}
+                />
+                <Group x={hBounds.centerX} y={Math.max(10, hBounds.y - 28)}>
+                  <Rect
+                    x={-75}
+                    y={0}
+                    width={150}
+                    height={22}
+                    fill="#312E81"
+                    cornerRadius={6}
+                    shadowColor="rgba(0,0,0,0.3)"
+                    shadowBlur={6}
+                  />
+                  <Text
+                    text={`🎯 Click to select: ${hLabel.slice(0, 18)}`}
+                    fill="#E0E7FF"
+                    fontSize={9}
+                    fontStyle="bold"
+                    fontFamily="Inter, sans-serif"
+                    x={-75}
+                    y={5}
+                    width={150}
+                    align="center"
+                  />
+                </Group>
+              </Group>
+            );
+          })()}
 
           {/* Animation Footprint Range Indicator on Canvas for Selected Element */}
           {mode === 'select' && selectedIds.map(selectedId => {
@@ -3536,6 +4344,64 @@ export const CanvasArea: React.FC = () => {
             >
               <X size={12} /> Cancel (Esc)
             </button>
+          </div>
+        );
+      })()}
+
+      {/* Picking action target mode banner */}
+      {pickingActionTarget && (() => {
+        const originNode = nodes.find(n => n.id === pickingActionTarget.nodeId);
+        const actionLabel = 
+          pickingActionTarget.actionType === 'triggerAnimation' ? 'Target Element to Animate' :
+          pickingActionTarget.actionType === 'toggleVisibility' ? 'Target Element for Visibility' :
+          pickingActionTarget.actionType === 'submitForm' ? 'Target Form to Submit' :
+          pickingActionTarget.actionType === 'resetForm' ? 'Target Form to Reset' :
+          pickingActionTarget.actionType === 'navigate' ? 'Target Page / Frame' : 'Target Element';
+
+        return (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-indigo-900/95 text-white px-5 py-2.5 rounded-full shadow-2xl border border-indigo-400/50 flex items-center gap-3.5 backdrop-blur-md animate-in fade-in slide-in-from-top-4 duration-200">
+            <div className="flex items-center gap-2.5 text-xs font-semibold">
+              <div className="w-5 h-5 rounded-full bg-indigo-500/40 flex items-center justify-center">
+                <Target size={14} className="text-indigo-200 animate-pulse" />
+              </div>
+              <span>
+                Pick <span className="text-indigo-200 font-bold underline">{actionLabel}</span>: Click any element on canvas
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 border-l border-indigo-700/80 pl-3">
+              {pickingActionTarget.targetField !== 'targetPageId' && (
+                <button 
+                  onClick={() => {
+                    if (originNode && originNode.actionSequences) {
+                      const updated = originNode.actionSequences.map(seq => {
+                        if (seq.id !== pickingActionTarget.sequenceId) return seq;
+                        return {
+                          ...seq,
+                          actions: seq.actions.map(act => act.id === pickingActionTarget.actionId ? { ...act, targetNodeId: undefined } : act)
+                        };
+                      });
+                      updateNodes([originNode.id], { actionSequences: updated }, true);
+                      setToastMessage(`Target set to Current Element (${originNode.name || originNode.type})`);
+                    }
+                    setPickingActionTarget(null);
+                    setHoveredPickingNodeId(null);
+                  }}
+                  className="text-[11px] bg-indigo-800 hover:bg-indigo-700 px-2.5 py-1 rounded-full font-medium transition-colors"
+                  title="Use current element as target"
+                >
+                  Use Self
+                </button>
+              )}
+              <button 
+                onClick={() => {
+                  setPickingActionTarget(null);
+                  setHoveredPickingNodeId(null);
+                }}
+                className="text-[11px] bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white px-2.5 py-1 rounded-full font-medium transition-colors flex items-center gap-1"
+              >
+                <X size={11} /> Cancel (Esc)
+              </button>
+            </div>
           </div>
         );
       })()}

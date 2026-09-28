@@ -55,6 +55,7 @@ export interface CanvasNode {
   rotation?: number;
   name?: string;
   variantOf?: string;
+  sourceNodeId?: string;
 
   // Interactive Input properties
   placeholder?: string;
@@ -122,4 +123,44 @@ export interface CanvasNode {
     trigger?: 'auto' | 'click' | 'dblclick' | 'hover' | 'focus' | 'scroll';
     triggerNodeId?: string;
   };
+
+  // Action Sequences
+  actionSequences?: NodeActionSequence[];
 }
+
+export type ActionType = 
+  | 'navigate' 
+  | 'setState' 
+  | 'triggerAnimation' 
+  | 'toggleVisibility' 
+  | 'resetForm'
+  | 'submitForm';
+
+export interface NodeAction {
+  id: string;
+  type: ActionType;
+  enabled?: boolean;
+  
+  // Navigate parameters
+  targetPageId?: string;
+  
+  // Set State parameters
+  stateVariableId?: string;
+  stateOperation?: 'set' | 'toggle' | 'increment' | 'decrement' | 'setInputVal';
+  value?: any;
+  
+  // Animation / Visibility parameters
+  targetNodeId?: string;
+  animationType?: 'bounce' | 'pulse' | 'spin' | 'fade-in' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right';
+  visibilityAction?: 'show' | 'hide' | 'toggle';
+
+  // Optional delay (ms)
+  delay?: number;
+}
+
+export interface NodeActionSequence {
+  id: string;
+  event: 'onClick' | 'onChange' | 'onSubmit' | 'onHover' | 'onFocus';
+  actions: NodeAction[];
+}
+

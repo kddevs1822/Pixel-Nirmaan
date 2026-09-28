@@ -31,6 +31,25 @@ export class CodeGeneratorService {
       }
     });
 
+    // Normalize FormContainer children: any node visually inside a FormContainer belongs to it
+    const forms = nodes.filter(n => n.type === 'FormContainer');
+    forms.sort((a, b) => ((a.width || 0) * (a.height || 0)) - ((b.width || 0) * (b.height || 0)));
+    if (forms.length > 0) {
+      nodes = nodes.map(n => {
+        if (n.type === 'FormContainer' || n.type === 'Frame') return n;
+        const containingForm = forms.find(f => {
+          if (n.parentId && f.parentId && n.parentId !== f.parentId && n.parentId !== f.id) return false;
+          if (n.parentId === f.id) return false;
+          const fx = f.x, fy = f.y, fw = f.width || 340, fh = f.height || 260;
+          return n.x >= fx && n.x <= fx + fw && n.y >= fy && n.y <= fy + fh;
+        });
+        if (containingForm) {
+          return { ...n, parentId: containingForm.id, x: n.x - containingForm.x, y: n.y - containingForm.y };
+        }
+        return n;
+      });
+    }
+
     // Group nodes
     const masterComponents = nodes.filter(n => n.isMasterComponent);
     const masterIds = new Set(masterComponents.map(m => m.id));
@@ -124,7 +143,7 @@ export class CodeGeneratorService {
     // Components
     masterComponents.forEach(comp => {
       const componentName = this.getComponentName(comp);
-      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap, stateVariables);
+      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap, stateVariables, masterComponents);
     });
 
     // Generate page code
@@ -395,6 +414,7 @@ body {
 .animate-fade-out {
   animation: fadeOut 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
+  pointer-events: none !important;
 }
 
 .animate-slide-up {
@@ -405,6 +425,7 @@ body {
 .animate-slide-up-reverse {
   animation: slideUpReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
+  pointer-events: none !important;
 }
 
 .animate-slide-down {
@@ -415,6 +436,7 @@ body {
 .animate-slide-down-reverse {
   animation: slideDownReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
+  pointer-events: none !important;
 }
 
 .animate-slide-left {
@@ -425,6 +447,7 @@ body {
 .animate-slide-left-reverse {
   animation: slideLeftReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
+  pointer-events: none !important;
 }
 
 .animate-slide-right {
@@ -435,6 +458,7 @@ body {
 .animate-slide-right-reverse {
   animation: slideRightReverse 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
+  pointer-events: none !important;
 }
 
 .animate-bounce-subtle {
@@ -504,13 +528,26 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     const imports = uniqueImports.map(name => `import ${name} from './pages/${name}';`).join('\n');
     
     const routeElements: string[] = [];
+    const usedRoutes = new Set<string>();
+
     routes.forEach((r, idx) => {
-      routeElements.push(`        <Route path="${r.route}" element={<${r.componentName} />} />`);
+      const addRoute = (p: string) => {
+        if (!p || usedRoutes.has(p.toLowerCase())) return;
+        usedRoutes.add(p.toLowerCase());
+        routeElements.push(`        <Route path="${p}" element={<${r.componentName} />} />`);
+      };
+
+      addRoute(r.route);
       if (idx === 0) {
-        routeElements.push(`        <Route path="/page1" element={<${r.componentName} />} />`);
+        addRoute('/page1');
+        addRoute('/page-1');
       }
-      if (r.frameId && r.frameId !== r.route.replace('/', '')) {
-        routeElements.push(`        <Route path="/${r.frameId}" element={<${r.componentName} />} />`);
+      if (r.frameId) {
+        addRoute(`/${r.frameId}`);
+      }
+      if (r.componentName) {
+        addRoute(`/${r.componentName}`);
+        addRoute(`/${r.componentName.toLowerCase()}`);
       }
     });
 
@@ -530,15 +567,36 @@ ${routeElements.join('\n')}
 `;
   }
 
-  private static generateNodeAnimationClasses(node: CanvasNode): string {
-    if (!node.animation || node.animation.type === 'none') return '';
+  private static generateNodeAnimationClasses(node: CanvasNode, allNodes: CanvasNode[] = []): string {
+    if (node.type === 'Frame' && !node.parentId) return '';
+
+    const isExplicitlyHidden = !!node.animation?.initiallyHidden;
+
+    // Check if any other node triggers an animation or visibility on this node
+    const isTargetOfActionSeq = allNodes.some(n => 
+      n.actionSequences?.some(seq => 
+        seq.actions?.some(act => 
+          act.enabled !== false &&
+          (act.type === 'triggerAnimation' || act.type === 'toggleVisibility') && 
+          (act.targetNodeId === node.id || (node.sourceNodeId && act.targetNodeId === node.sourceNodeId))
+        )
+      )
+    );
+
+    const isExternallyTriggered = isTargetOfActionSeq || 
+      (!!node.animation?.triggerNodeId && node.animation.triggerNodeId !== node.id);
+
+    // If externally triggered, it should never auto-animate on page load!
+    if (isExternallyTriggered) {
+      return isExplicitlyHidden ? 'is-initially-hidden' : '';
+    }
+
+    if (!node.animation || node.animation.type === 'none') {
+      return isExplicitlyHidden ? 'is-initially-hidden' : '';
+    }
+
     const animType = node.animation.type;
     const trigger = node.animation.trigger || 'auto';
-    
-    // If this node's animation is triggered by ANOTHER element, do not attach self-trigger animation classes
-    if (node.animation.triggerNodeId && node.animation.triggerNodeId !== node.id) {
-      return node.animation.initiallyHidden ? 'is-initially-hidden' : '';
-    }
 
     let baseClass = '';
     switch (animType) {
@@ -567,17 +625,14 @@ ${routeElements.join('\n')}
         baseClass = 'animate-slide-right';
         break;
       default:
-        return '';
+        return isExplicitlyHidden ? 'is-initially-hidden' : '';
     }
 
-    const isHidden = !!node.animation?.initiallyHidden;
-
-    if (isHidden) {
+    if (isExplicitlyHidden) {
       if (trigger === 'hover') return 'is-initially-hidden cursor-pointer';
       if (trigger === 'focus') return 'is-initially-hidden cursor-pointer outline-none';
       if (trigger === 'click' || trigger === 'dblclick') return 'is-initially-hidden cursor-pointer';
       if (trigger === 'scroll') return 'is-initially-hidden transition-all';
-      if (trigger === 'auto') return baseClass;
       return 'is-initially-hidden';
     }
 
@@ -602,57 +657,287 @@ ${routeElements.join('\n')}
     }
   }
 
-  private static getAnimReverseClass(animType: string): string {
+  private static getAnimReverseClass(animType: string, isHidden: boolean = false): string {
     switch (animType) {
-      case 'bounce': return 'animate-fade-out';
-      case 'pulse': return 'animate-fade-out';
-      case 'spin': return 'animate-fade-out';
-      case 'fade-in': return 'animate-fade-out';
       case 'slide-up': return 'animate-slide-up-reverse';
       case 'slide-down': return 'animate-slide-down-reverse';
       case 'slide-left': return 'animate-slide-left-reverse';
       case 'slide-right': return 'animate-slide-right-reverse';
-      default: return 'animate-fade-out';
+      case 'fade-in': return 'animate-fade-out';
+      default: return isHidden ? 'animate-fade-out' : '';
     }
   }
 
-  private static generateNodeEventHandlers(node: CanvasNode, allNodes: CanvasNode[]): string {
+  private static cleanDefaultValue(val: any, type?: string): any {
+    if (val === undefined || val === null) {
+      if (type === 'number') return 0;
+      if (type === 'boolean') return false;
+      if (type === 'array') return [];
+      if (type === 'object') return {};
+      return '';
+    }
+    if (type === 'string' || typeof val === 'string') {
+      const s = String(val).trim();
+      if (s === '""' || s === "''") return '';
+      if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+        return s.slice(1, -1);
+      }
+      return val;
+    }
+    return val;
+  }
+
+  private static sanitizeVarName(rawName: string): string {
+    if (!rawName) return 'varState';
+    let clean = rawName.replace(/[^a-zA-Z0-9_$]/g, '_');
+    if (/^[0-9]/.test(clean)) clean = 'var_' + clean;
+    return clean;
+  }
+
+  private static resolveBindingExpr(expr: string, stateVariables: StateVariable[]): string {
+    if (!expr) return '';
+    if (expr.startsWith('item') || expr.includes('.')) return expr;
+    const sv = (stateVariables || []).find(v => v.id === expr || v.name === expr);
+    if (sv) return this.sanitizeVarName(sv.name);
+    return this.sanitizeVarName(expr);
+  }
+
+  private static getRelatedNodes(node: CanvasNode, allNodes: CanvasNode[]): CanvasNode[] {
+    const primaryId = node.sourceNodeId || node.id;
+    return allNodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
+  }
+
+  private static getRelatedNodeIds(node: CanvasNode, allNodes: CanvasNode[]): Set<string> {
+    const ids = new Set<string>([node.id]);
+    const primaryId = node.sourceNodeId || node.id;
+    ids.add(primaryId);
+    for (const n of allNodes) {
+      if (n.sourceNodeId === primaryId || n.id === primaryId) {
+        ids.add(n.id);
+        if (n.sourceNodeId) ids.add(n.sourceNodeId);
+      }
+    }
+    return ids;
+  }
+
+  private static generateNodeEventHandlers(
+    node: CanvasNode, 
+    allNodes: CanvasNode[],
+    pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
+    stateVariables: StateVariable[] = []
+  ): string {
     const onClickStatements: string[] = [];
     const onDblClickStatements: string[] = [];
     const onMouseEnterStatements: string[] = [];
     const onMouseLeaveStatements: string[] = [];
     const onFocusStatements: string[] = [];
     const onBlurStatements: string[] = [];
+    const onChangeStatements: string[] = [];
+    const onSubmitStatements: string[] = [];
     let refProp = '';
 
-    // 1. Cross-element triggers (where node.id is the triggerNodeId for target nodes)
-    const triggeredNodes = allNodes.filter(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
-    triggeredNodes.forEach(targetNode => {
+    // 1. Action Sequences (Stage 4) - Check self, related variants, or ancestors for action sequences
+    let targetForSequences = node;
+    let currSeqNode: CanvasNode | undefined = node;
+    while (currSeqNode) {
+      const related = this.getRelatedNodes(currSeqNode, allNodes);
+      const hasAnyActions = related.some(r => r.actionSequences && r.actionSequences.length > 0);
+      if (hasAnyActions) {
+        targetForSequences = currSeqNode;
+        break;
+      }
+      if (!currSeqNode.parentId) break;
+      const parent = allNodes.find(n => n.id === currSeqNode!.parentId);
+      if (!parent || parent.type === 'Frame' || parent.type === 'FormContainer') break;
+      currSeqNode = parent;
+    }
+
+    let actionSequences = targetForSequences.actionSequences || [];
+    if (actionSequences.length === 0) {
+      const related = this.getRelatedNodes(targetForSequences, allNodes);
+      for (const r of related) {
+        if (r.actionSequences && r.actionSequences.length > 0) {
+          actionSequences = r.actionSequences;
+          break;
+        }
+      }
+    }
+
+    if (actionSequences.length > 0) {
+      actionSequences.forEach(seq => {
+        const statements: string[] = [];
+        seq.actions.forEach(act => {
+          if (act.enabled === false) return;
+          if (act.type === 'setState') {
+            const sv = stateVariables.find(v => v.id === act.stateVariableId || v.name === act.stateVariableId);
+            const rawVarName = sv ? sv.name : (act.stateVariableId || 'stateVar');
+            const varName = this.sanitizeVarName(rawVarName);
+            if (varName) {
+              const setter = `set${varName.charAt(0).toUpperCase() + varName.slice(1)}`;
+              const op = act.stateOperation || 'set';
+              if (op === 'set') {
+                let val: string;
+                if (sv && sv.type === 'number') {
+                  const num = Number(act.value);
+                  val = isNaN(num) ? '0' : String(num);
+                } else if (sv && sv.type === 'boolean') {
+                  val = (act.value === 'true' || act.value === true) ? 'true' : 'false';
+                } else if (sv && sv.type === 'string') {
+                  let s = String(act.value ?? '').trim();
+                  if (s === '""' || s === "''") s = '';
+                  else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+                  val = `'${s.replace(/'/g, "\\'")}'`;
+                } else {
+                  if (act.value === 'true' || act.value === true) {
+                    val = 'true';
+                  } else if (act.value === 'false' || act.value === false) {
+                    val = 'false';
+                  } else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') {
+                    val = String(Number(act.value));
+                  } else if (act.value !== undefined && act.value !== '') {
+                    val = `'${String(act.value).replace(/'/g, "\\'")}'`;
+                  } else if (node.type === 'TextInput' || node.type === 'TextArea' || node.type === 'SelectDropdown') {
+                    val = 'e.target.value';
+                  } else {
+                    val = 'true';
+                  }
+                }
+                statements.push(`${setter}(${val});`);
+              } else if (op === 'toggle') {
+                statements.push(`${setter}(prev => !prev);`);
+              } else if (op === 'increment') {
+                const step = (act.value !== undefined && act.value !== '') ? (Number(act.value) || 1) : 1;
+                statements.push(`${setter}(prev => (Number(prev) || 0) + ${step});`);
+              } else if (op === 'decrement') {
+                const step = (act.value !== undefined && act.value !== '') ? (Number(act.value) || 1) : 1;
+                statements.push(`${setter}(prev => (Number(prev) || 0) - ${step});`);
+              } else if (op === 'setInputVal') {
+                if (node.type === 'Checkbox' || node.type === 'Switch') {
+                  statements.push(`${setter}(e.target.checked);`);
+                } else {
+                  statements.push(`${setter}(e.target.value);`);
+                }
+              }
+            }
+          } else if (act.type === 'navigate') {
+            const route = act.targetPageId ? this.getRouteForTarget(act.targetPageId, pageRouteMap) : '';
+            if (route) {
+              statements.push(`navigate('${route}');`);
+            }
+          } else if (act.type === 'triggerAnimation') {
+            const targetId = act.targetNodeId || node.id;
+            const targetNode = allNodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+            const primaryTargetId = targetNode?.sourceNodeId || targetNode?.id || targetId;
+            const animType = act.animationType || targetNode?.animation?.type || 'bounce';
+            const baseClass = this.getAnimBaseClass(animType);
+            const isHidden = !!targetNode?.animation?.initiallyHidden;
+            const reverseClass = this.getAnimReverseClass(animType, isHidden);
+            if (baseClass) {
+              const allAnimClasses = [
+                'animate-bounce-subtle', 'animate-pulse-subtle', 'animate-spin-smooth',
+                'animate-fade-in', 'animate-fade-out',
+                'animate-slide-up', 'animate-slide-up-reverse',
+                'animate-slide-down', 'animate-slide-down-reverse',
+                'animate-slide-left', 'animate-slide-left-reverse',
+                'animate-slide-right', 'animate-slide-right-reverse'
+              ].map(c => `'${c}'`).join(', ');
+
+              if (reverseClass) {
+                statements.push(`const animContainer = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (animContainer) { const animEl = animContainer.querySelector('[data-anim="true"]') || animContainer; animContainer.classList.remove('hidden', 'is-initially-hidden'); animContainer.style.pointerEvents = 'auto'; if (animEl.classList.contains('${baseClass}')) { animEl.classList.remove(${allAnimClasses}); void animEl.offsetWidth; animEl.classList.add('${reverseClass}'); ${isHidden ? "animEl.classList.add('is-initially-hidden');" : ""} } else { animEl.classList.remove(${allAnimClasses}, 'is-initially-hidden', 'hidden'); animEl.style.opacity = '1'; animEl.style.pointerEvents = 'auto'; void animEl.offsetWidth; animEl.classList.add('${baseClass}'); } }`);
+              } else {
+                statements.push(`const animContainer = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (animContainer) { const animEl = animContainer.querySelector('[data-anim="true"]') || animContainer; animContainer.classList.remove('hidden', 'is-initially-hidden'); animContainer.style.pointerEvents = 'auto'; animEl.classList.remove(${allAnimClasses}, 'is-initially-hidden', 'hidden'); animEl.style.opacity = '1'; animEl.style.pointerEvents = 'auto'; animEl.style.animationIterationCount = '1'; void animEl.offsetWidth; animEl.classList.add('${baseClass}'); setTimeout(() => { animEl.classList.remove('${baseClass}'); animEl.style.animationIterationCount = ''; }, 1000); }`);
+              }
+            }
+          } else if (act.type === 'toggleVisibility') {
+            const targetId = act.targetNodeId || (node.type !== 'FormContainer' ? node.id : undefined);
+            if (targetId) {
+              const targetNode = allNodes.find(n => n.id === targetId);
+              const primaryTargetId = targetNode?.sourceNodeId || targetId;
+              const visAction = act.visibilityAction || 'toggle';
+              if (visAction === 'show') {
+                statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; }`);
+              } else if (visAction === 'hide') {
+                statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; }`);
+              } else {
+                statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { if (visEl.classList.contains('hidden') || visEl.classList.contains('is-initially-hidden')) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; } else { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; } }`);
+              }
+            }
+          } else if (act.type === 'resetForm') {
+            const targetFormQuery = act.targetNodeId ? `document.querySelector('[data-node-id="${act.targetNodeId}"]') || document.getElementById('node-${act.targetNodeId}') || ` : '';
+            statements.push(`const formEl = ${targetFormQuery}e.currentTarget.closest('form') || document.querySelector('form'); const targetForm = formEl ? (formEl.tagName === 'FORM' ? formEl : formEl.closest('form')) : null; if (targetForm) targetForm.reset();`);
+          } else if (act.type === 'submitForm') {
+            const targetFormQuery = act.targetNodeId ? `document.querySelector('[data-node-id="${act.targetNodeId}"]') || document.getElementById('node-${act.targetNodeId}') || ` : '';
+            statements.push(`const formEl = ${targetFormQuery}e.currentTarget.closest('form') || document.querySelector('form'); const targetForm = formEl ? (formEl.tagName === 'FORM' ? formEl : formEl.closest('form')) : null; if (targetForm) { if (typeof targetForm.requestSubmit === 'function') targetForm.requestSubmit(); else targetForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); }`);
+          }
+        });
+
+        if (statements.length > 0) {
+          if (seq.event === 'onClick') onClickStatements.push(...statements);
+          else if (seq.event === 'onChange') onChangeStatements.push(...statements);
+          else if (seq.event === 'onSubmit') {
+            if (node.type === 'FormContainer') {
+              onSubmitStatements.push(...statements);
+            }
+          }
+          else if (seq.event === 'onHover') onMouseEnterStatements.push(...statements);
+          else if (seq.event === 'onFocus') onFocusStatements.push(...statements);
+        }
+      });
+    }
+
+    // 2. Cross-element triggers (matching triggers across variants and ancestors)
+    const triggerMatchIds = new Set<string>();
+    let currParent: CanvasNode | undefined = node;
+    while (currParent) {
+      this.getRelatedNodeIds(currParent, allNodes).forEach(id => triggerMatchIds.add(id));
+      currParent = currParent.parentId ? allNodes.find(n => n.id === currParent!.parentId) : undefined;
+    }
+
+    const selfRelatedIds = this.getRelatedNodeIds(node, allNodes);
+
+    const triggeredNodes = allNodes.filter(n => {
+      const anim = n.animation;
+      if (!anim || anim.type === 'none' || !anim.triggerNodeId) return false;
+      if (selfRelatedIds.has(n.id)) return false;
+      return triggerMatchIds.has(anim.triggerNodeId);
+    });
+
+    const seenTargetPrimaryIds = new Set<string>();
+    const uniqueTriggeredNodes: CanvasNode[] = [];
+    triggeredNodes.forEach(tn => {
+      const pId = tn.sourceNodeId || tn.id;
+      if (!seenTargetPrimaryIds.has(pId)) {
+        seenTargetPrimaryIds.add(pId);
+        uniqueTriggeredNodes.push(tn);
+      }
+    });
+
+    uniqueTriggeredNodes.forEach(targetNode => {
       const animType = targetNode.animation!.type;
       const baseClass = this.getAnimBaseClass(animType);
-      const reverseClass = this.getAnimReverseClass(animType);
+      const isHidden = !!targetNode.animation!.initiallyHidden;
+      const reverseClass = this.getAnimReverseClass(animType, isHidden);
       if (!baseClass) return;
 
       const trigger = targetNode.animation!.trigger || 'click';
-      const isHidden = !!targetNode.animation!.initiallyHidden;
-      const targetIdStr = `node-${targetNode.id}`;
-      const targetQuery = `const el = document.getElementById('${targetIdStr}'); if (el) { const target = el.querySelector('[data-anim="true"]') || el;`;
+      const primaryTargetId = targetNode.sourceNodeId || targetNode.id;
+      const targetQuery = `const el = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetNode.id}') || document.getElementById('node-${primaryTargetId}'); if (el) { const target = el.querySelector('[data-anim="true"]') || el;`;
 
-      if (trigger === 'click') {
+      if (trigger === 'click' || trigger === 'dblclick') {
+        const stmts = trigger === 'click' ? onClickStatements : onDblClickStatements;
         if (isHidden) {
-          onClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
+          stmts.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); target.classList.add('is-initially-hidden'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
+        } else if (reverseClass) {
+          stmts.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
         } else {
-          onClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
-        }
-      } else if (trigger === 'dblclick') {
-        if (isHidden) {
-          onDblClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
-        } else {
-          onDblClickStatements.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
+          stmts.push(`${targetQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { void target.offsetWidth; target.classList.add('${baseClass}'); } }`);
         }
       } else if (trigger === 'hover') {
         if (isHidden) {
           onMouseEnterStatements.push(`${targetQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          onMouseLeaveStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); target.classList.add('is-initially-hidden'); }`);
+        } else if (reverseClass) {
+          onMouseEnterStatements.push(`${targetQuery} target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
           onMouseLeaveStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); }`);
         } else {
           onMouseEnterStatements.push(`${targetQuery} target.classList.add('${baseClass}'); }`);
@@ -661,6 +946,9 @@ ${routeElements.join('\n')}
       } else if (trigger === 'focus') {
         if (isHidden) {
           onFocusStatements.push(`${targetQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          onBlurStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); target.classList.add('is-initially-hidden'); }`);
+        } else if (reverseClass) {
+          onFocusStatements.push(`${targetQuery} target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
           onBlurStatements.push(`${targetQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); }`);
         } else {
           onFocusStatements.push(`${targetQuery} target.classList.add('${baseClass}'); }`);
@@ -669,31 +957,35 @@ ${routeElements.join('\n')}
       }
     });
 
-    // 2. Self-triggered animation (if node itself has animation and is self-triggered)
-    if (node.animation && node.animation.type !== 'none' && (!node.animation.triggerNodeId || node.animation.triggerNodeId === node.id)) {
-      const animType = node.animation.type;
+    // 3. Self-triggered animation (if node itself has animation and is self-triggered)
+    const selfAnim = node.animation && node.animation.type !== 'none' 
+      ? node.animation 
+      : (this.getRelatedNodes(node, allNodes).find(n => n.animation && n.animation.type !== 'none')?.animation);
+
+    if (selfAnim && selfAnim.type !== 'none' && (!selfAnim.triggerNodeId || selfRelatedIds.has(selfAnim.triggerNodeId))) {
+      const animType = selfAnim.type;
       const baseClass = this.getAnimBaseClass(animType);
-      const reverseClass = this.getAnimReverseClass(animType);
+      const isHidden = !!selfAnim.initiallyHidden;
+      const reverseClass = this.getAnimReverseClass(animType, isHidden);
       if (baseClass) {
-        const trigger = node.animation.trigger || 'auto';
-        const isHidden = !!node.animation.initiallyHidden;
+        const trigger = selfAnim.trigger || 'auto';
         const selfQuery = `const target = e.currentTarget.querySelector('[data-anim="true"]') || e.currentTarget;`;
 
-        if (trigger === 'click') {
+        if (trigger === 'click' || trigger === 'dblclick') {
+          const stmts = trigger === 'click' ? onClickStatements : onDblClickStatements;
           if (isHidden) {
-            onClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+            stmts.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); target.classList.add('is-initially-hidden'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+          } else if (reverseClass) {
+            stmts.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
           } else {
-            onClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
-          }
-        } else if (trigger === 'dblclick') {
-          if (isHidden) {
-            onDblClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); } else { target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
-          } else {
-            onDblClickStatements.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}'); }`);
+            stmts.push(`${selfQuery} if (target.classList.contains('${baseClass}')) { target.classList.remove('${baseClass}'); } else { void target.offsetWidth; target.classList.add('${baseClass}'); }`);
           }
         } else if (trigger === 'hover') {
           if (isHidden) {
             onMouseEnterStatements.push(`${selfQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}');`);
+            onMouseLeaveStatements.push(`${selfQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); target.classList.add('is-initially-hidden');`);
+          } else if (reverseClass) {
+            onMouseEnterStatements.push(`${selfQuery} target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}');`);
             onMouseLeaveStatements.push(`${selfQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}');`);
           } else {
             onMouseEnterStatements.push(`${selfQuery} target.classList.add('${baseClass}');`);
@@ -702,6 +994,9 @@ ${routeElements.join('\n')}
         } else if (trigger === 'focus') {
           if (isHidden) {
             onFocusStatements.push(`${selfQuery} target.classList.remove('${reverseClass}'); target.classList.remove('is-initially-hidden'); void target.offsetWidth; target.classList.add('${baseClass}');`);
+            onBlurStatements.push(`${selfQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}'); target.classList.add('is-initially-hidden');`);
+          } else if (reverseClass) {
+            onFocusStatements.push(`${selfQuery} target.classList.remove('${reverseClass}'); void target.offsetWidth; target.classList.add('${baseClass}');`);
             onBlurStatements.push(`${selfQuery} target.classList.remove('${baseClass}'); void target.offsetWidth; target.classList.add('${reverseClass}');`);
           } else {
             onFocusStatements.push(`${selfQuery} target.classList.add('${baseClass}');`);
@@ -713,25 +1008,35 @@ ${routeElements.join('\n')}
       }
     }
 
+    const formatStatements = (stmts: string[]) => stmts.map(s => `{ ${s} }`).join(' ');
+
     const handlerParts: string[] = [];
 
     if (onClickStatements.length > 0) {
-      handlerParts.push(`onClick={(e) => { ${onClickStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+      handlerParts.push(`onClick={(e) => { ${formatStatements(onClickStatements)} }}`);
     }
     if (onDblClickStatements.length > 0) {
-      handlerParts.push(`onDoubleClick={(e) => { ${onDblClickStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+      handlerParts.push(`onDoubleClick={(e) => { ${formatStatements(onDblClickStatements)} }}`);
     }
     if (onMouseEnterStatements.length > 0) {
-      handlerParts.push(`onMouseEnter={(e) => { ${onMouseEnterStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+      handlerParts.push(`onMouseEnter={(e) => { ${formatStatements(onMouseEnterStatements)} }}`);
     }
     if (onMouseLeaveStatements.length > 0) {
-      handlerParts.push(`onMouseLeave={(e) => { ${onMouseLeaveStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+      handlerParts.push(`onMouseLeave={(e) => { ${formatStatements(onMouseLeaveStatements)} }}`);
     }
     if (onFocusStatements.length > 0) {
-      handlerParts.push(`tabIndex={0} onFocus={(e) => { ${onFocusStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+      handlerParts.push(`tabIndex={0} onFocus={(e) => { ${formatStatements(onFocusStatements)} }}`);
     }
     if (onBlurStatements.length > 0) {
-      handlerParts.push(`onBlur={(e) => { ${onBlurStatements.map(s => `{ ${s} }`).join(' ')} }}`);
+      handlerParts.push(`onBlur={(e) => { ${formatStatements(onBlurStatements)} }}`);
+    }
+    if (onChangeStatements.length > 0) {
+      handlerParts.push(`onChange={(e) => { ${formatStatements(onChangeStatements)} }}`);
+    }
+    if (onSubmitStatements.length > 0) {
+      handlerParts.push(`onSubmit={(e) => { e.preventDefault(); ${formatStatements(onSubmitStatements)} }}`);
+    } else if (node.type === 'FormContainer') {
+      handlerParts.push(`onSubmit={(e) => { e.preventDefault(); }}`);
     }
     if (refProp) {
       handlerParts.push(refProp.trim());
@@ -740,6 +1045,7 @@ ${routeElements.join('\n')}
     if (handlerParts.length === 0) return '';
     return ' ' + handlerParts.join(' ');
   }
+
 
   private static generateNodeAnimationStyles(node: CanvasNode, parentNode?: CanvasNode): string {
     if (!node.animation || node.animation.type === 'none') return '';
@@ -798,6 +1104,8 @@ ${routeElements.join('\n')}
     }
     if (node.animation.startOpacity !== undefined) {
       styleProps.push(`'--fade-start': '${node.animation.startOpacity / 100}'`);
+    } else if (!node.animation.initiallyHidden) {
+      styleProps.push(`'--fade-start': '1'`);
     }
 
     if (isInf) {
@@ -811,7 +1119,7 @@ ${routeElements.join('\n')}
     return ` style={{ ${styleProps.join(', ')} }}`;
   }
 
-  private static generateNodePositionStyles(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode, extraStyles: string[] = []): string {
+  private static generateNodePositionStyles(node: CanvasNode, isRoot: boolean = false, parentNode?: CanvasNode, extraStyles: string[] = [], offset?: { x: number; y: number }): string {
     if (isRoot) return '';
     const round = (val: number) => Math.round(val);
     const scaleX = node.scaleX || 1;
@@ -826,6 +1134,19 @@ ${routeElements.join('\n')}
     
     let cssX = node.x;
     let cssY = node.y;
+
+    if (offset) {
+      cssX -= offset.x;
+      cssY -= offset.y;
+    } else if (parentNode) {
+      if (cssX >= (parentNode.width || 0) && cssX >= (parentNode.x || 0)) {
+        cssX -= (parentNode.x || 0);
+      }
+      if (cssY >= (parentNode.height || 0) && cssY >= (parentNode.y || 0)) {
+        cssY -= (parentNode.y || 0);
+      }
+    }
+
     let nodeW = node.width;
     let nodeH = node.height;
 
@@ -836,7 +1157,7 @@ ${routeElements.join('\n')}
       cssY -= node.radius * scaleY;
     }
 
-    if (parentNode) {
+    if (parentNode && !offset) {
       if (nodeW && parentNode.width && Math.abs(nodeW - parentNode.width) < 5) {
         isFullWidth = true;
       } else if (nodeW && parentNode.width) {
@@ -1113,17 +1434,51 @@ ${routeElements.join('\n')}
     pageRouteMap: { frameId: string; route: string; componentName: string }[],
     nodesById?: Record<string, CanvasNode>
   ): string {
+    if (!targetId) return '/';
+    
+    // 1. Direct match on frameId
     let match = pageRouteMap.find(p => p.frameId === targetId);
     if (match) return match.route;
 
-    if (nodesById && nodesById[targetId] && nodesById[targetId].variantOf) {
-      const parentFrameId = nodesById[targetId].variantOf;
-      match = pageRouteMap.find(p => p.frameId === parentFrameId);
-      if (match) return match.route;
+    // 2. Check if targetId belongs to a node inside a root frame
+    if (nodesById && nodesById[targetId]) {
+      let curr: CanvasNode | undefined = nodesById[targetId];
+      if (curr.variantOf) {
+        match = pageRouteMap.find(p => p.frameId === curr!.variantOf);
+        if (match) return match.route;
+      }
+      while (curr && curr.parentId) {
+        curr = nodesById[curr.parentId];
+      }
+      if (curr) {
+        match = pageRouteMap.find(p => p.frameId === curr.id);
+        if (match) return match.route;
+      }
     }
 
+    // 3. Match componentName or route slug
+    const cleanTarget = targetId.toLowerCase().replace(/[^a-z0-9]/g, '');
+    match = pageRouteMap.find(p => p.componentName.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanTarget);
+    if (match) return match.route;
+
+    match = pageRouteMap.find(p => p.route.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanTarget);
+    if (match) return match.route;
+
     if (targetId === 'virtual_root_page') return '/';
-    return `/${targetId}`;
+    
+    // Fallback: If pageRouteMap has items, return match by index or default page route
+    if (pageRouteMap.length > 0) {
+      const numMatch = targetId.match(/\d+/);
+      if (numMatch) {
+        const pageIdx = parseInt(numMatch[0], 10) - 1;
+        if (pageIdx >= 0 && pageIdx < pageRouteMap.length) {
+          return pageRouteMap[pageIdx].route;
+        }
+      }
+      return pageRouteMap[0].route;
+    }
+
+    return targetId.startsWith('/') ? targetId : `/${targetId}`;
   }
 
   private static generateFrameChildrenJsx(
@@ -1138,6 +1493,7 @@ ${routeElements.join('\n')}
     indent: string = '        '
   ): string {
     const children = allNodes.filter(n => n.parentId === frame.id);
+
     if (!frame.repeaterBinding) {
       return children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}`);
     }
@@ -1146,7 +1502,6 @@ ${routeElements.join('\n')}
     const staticChildren = children.filter(c => c.excludeFromRepeater);
 
     const rawStaticJsx = staticChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}`);
-    const rawRepeatedJsx = repeatedChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}    `);
 
     const itemName = frame.repeaterBinding.itemName || 'item';
     const varId = frame.repeaterBinding.arrayVariableId;
@@ -1158,27 +1513,28 @@ ${routeElements.join('\n')}
 
     const targetForBounds = repeatedChildren.length > 0 ? repeatedChildren : children;
 
+    const minX = targetForBounds.length > 0 ? Math.min(...targetForBounds.map(c => c.x || 0)) : 0;
+    const minY = targetForBounds.length > 0 ? Math.min(...targetForBounds.map(c => c.y || 0)) : 0;
+
     let itemH = 0;
     let itemW = 0;
     if (targetForBounds.length > 0) {
       const childrenMaxY = Math.max(...targetForBounds.map(c => (c.y || 0) + (c.height || (c.fontSize ? c.fontSize * 1.3 : 24))));
-      itemH = Math.max(10, Math.round(childrenMaxY));
+      itemH = Math.max(10, Math.round(childrenMaxY - minY));
       const childrenMaxX = Math.max(...targetForBounds.map(c => (c.x || 0) + (c.width || 100)));
-      itemW = Math.max(10, Math.round(childrenMaxX));
+      itemW = Math.max(10, Math.round(childrenMaxX - minX));
     } else {
       itemH = Math.round(frame.height || 100);
       itemW = Math.round(frame.width || 200);
     }
 
-    const itemContainerStyle = isHorizontal
-      ? `style={{ width: '${itemW}px', height: '100%' }}`
-      : `style={{ width: '100%', height: '${itemH}px' }}`;
+    const rawRepeatedJsx = repeatedChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables, { x: minX, y: minY })).join(`\n${indent}    `);
 
     const staticContentJsx = rawStaticJsx ? `${rawStaticJsx}\n${indent}` : '';
 
-    return `${staticContentJsx}<div className="flex ${flexDir} gap-[${gapPx}px] w-full">
+    return `${staticContentJsx}<div className="flex ${flexDir} gap-[${gapPx}px] pointer-events-none" style={{ position: 'absolute', left: '${minX}px', top: '${minY}px' }}>
 ${indent}  {(${arrayVarName} || []).map((${itemName}, index) => (
-${indent}    <div key={index} className="relative shrink-0" ${itemContainerStyle}>
+${indent}    <div key={index} className="relative shrink-0 pointer-events-none" style={{ width: '${itemW}px', height: '${itemH}px' }}>
 ${indent}      ${rawRepeatedJsx}
 ${indent}    </div>
 ${indent}  ))}
@@ -1194,7 +1550,8 @@ ${indent}</div>`;
     parentNode?: CanvasNode,
     pages: CanvasNode[] = [],
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
-    stateVariables: StateVariable[] = []
+    stateVariables: StateVariable[] = [],
+    offset?: { x: number; y: number }
   ): string {
     const round = (val: number) => Math.round(val);
 
@@ -1231,6 +1588,11 @@ ${indent}</div>`;
       const compName = this.getComponentName(master);
 
       let propsStr = '';
+      (stateVariables || []).forEach(sv => {
+        const cleanName = this.sanitizeVarName(sv.name);
+        const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+        propsStr += ` ${cleanName}={${cleanName}} ${setter}={${setter}}`;
+      });
       if (node.propOverrides) {
         Object.keys(node.propOverrides).forEach(propId => {
           const val = node.propOverrides![propId];
@@ -1242,14 +1604,24 @@ ${indent}</div>`;
         });
       }
 
-      const posStyleStr = this.generateNodePositionStyles(node, false, parentNode);
-      const animClasses = this.generateNodeAnimationClasses(node);
-      const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
-      const eventHandlers = this.generateNodeEventHandlers(node, allNodes);
+      const nodeRelated = this.getRelatedNodes(node, allNodes);
+      const nodeRelatedIds = this.getRelatedNodeIds(node, allNodes);
+      const isTriggerSource = allNodes.some(n => {
+        const anim = n.animation;
+        if (!anim || anim.type === 'none' || !anim.triggerNodeId) return false;
+        return nodeRelatedIds.has(anim.triggerNodeId) && !nodeRelatedIds.has(n.id);
+      });
+      const hasActions = nodeRelated.some(n => n.actionSequences && n.actionSequences.length > 0);
+      const isInteractive = !!(targetRoute || isTriggerSource || hasActions);
+      const posExtraStyles: string[] = isInteractive ? ["zIndex: 10"] : [];
 
-      const isTriggerSource = allNodes.some(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
-      const cursorClass = (targetRoute || isTriggerSource) ? ' cursor-pointer' : '';
-      const elemIdAttr = ` id="node-${node.id}"`;
+      const posStyleStr = this.generateNodePositionStyles(node, false, parentNode, posExtraStyles, offset);
+      const animClasses = this.generateNodeAnimationClasses(node, allNodes);
+      const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
+      const eventHandlers = this.generateNodeEventHandlers(node, allNodes, pageRouteMap, stateVariables);
+
+      const cursorClass = isInteractive ? ' cursor-pointer z-10 pointer-events-auto' : ' pointer-events-auto';
+      const elemIdAttr = ` id="node-${node.id}" data-node-id="${node.sourceNodeId || node.id}"`;
 
       let scaleStyleStr = '';
       let sx = node.scaleX !== undefined ? node.scaleX : 1;
@@ -1287,29 +1659,42 @@ ${indent}</div>`;
     </div>`;
     }
 
-    const posStyleStr = this.generateNodePositionStyles(node, false, parentNode);
-    let styleClasses = this.generateNodeStyleClasses(node, false, parentNode);
-    const animClasses = this.generateNodeAnimationClasses(node);
-    const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
-    const eventHandlers = this.generateNodeEventHandlers(node, allNodes);
+    const nodeRelated = this.getRelatedNodes(node, allNodes);
+    const nodeRelatedIds = this.getRelatedNodeIds(node, allNodes);
+    const isTriggerSource = allNodes.some(n => {
+      const anim = n.animation;
+      if (!anim || anim.type === 'none' || !anim.triggerNodeId) return false;
+      return nodeRelatedIds.has(anim.triggerNodeId) && !nodeRelatedIds.has(n.id);
+    });
+    const hasActions = nodeRelated.some(n => n.actionSequences && n.actionSequences.length > 0);
+    const isFormInput = node.type === 'TextInput' || node.type === 'TextArea' || node.type === 'Checkbox' || node.type === 'Switch' || node.type === 'SelectDropdown';
+    const isInteractive = !!(targetRoute || isTriggerSource || hasActions || isFormInput);
+    const posExtraStyles: string[] = isInteractive ? ["zIndex: 10"] : [];
 
-    const isTriggerSource = allNodes.some(n => n.animation && n.animation.type !== 'none' && n.animation.triggerNodeId === node.id && n.id !== node.id);
-    const cursorClass = (targetRoute || isTriggerSource) ? ' cursor-pointer' : '';
-    const elemIdAttr = ` id="node-${node.id}"`;
+    const posStyleStr = this.generateNodePositionStyles(node, false, parentNode, posExtraStyles, offset);
+    let styleClasses = this.generateNodeStyleClasses(node, false, parentNode);
+    const animClasses = this.generateNodeAnimationClasses(node, allNodes);
+    const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
+    const eventHandlers = this.generateNodeEventHandlers(node, allNodes, pageRouteMap, stateVariables);
+
+    const cursorClass = (targetRoute || isTriggerSource || hasActions) ? ' cursor-pointer z-10 pointer-events-auto' : (isInteractive ? ' z-10 pointer-events-auto' : ' pointer-events-auto');
+    const elemIdAttr = ` id="node-${node.id}" data-node-id="${node.sourceNodeId || node.id}"`;
 
     const dynamicProps = this.resolveBoundProps(node, isMasterComponentDef);
     
     let fillStyle = '';
     if ((dynamicProps.fill || node.bindings?.fill) && node.type !== 'Text') {
       styleClasses = styleClasses.replace(/bg-\[[^\]]+\]/g, '');
-      const fillExpr = node.bindings?.fill ? node.bindings.fill : (dynamicProps.fill?.expression || `'${node.fill || '#000000'}'`);
-      fillStyle = ` style={{ backgroundColor: ${fillExpr} || '${dynamicProps.fill?.defaultValue || node.fill || '#000000'}' }}`;
+      const rawExpr = node.bindings?.fill ? this.resolveBindingExpr(node.bindings.fill, stateVariables) : (dynamicProps.fill?.expression || `'${node.fill || '#000000'}'`);
+      const activeCol = node.fill || '#4A3AFF';
+      fillStyle = ` style={{ backgroundColor: typeof ${rawExpr} === 'boolean' ? (${rawExpr} ? '${activeCol}' : 'transparent') : (${rawExpr} || '${dynamicProps.fill?.defaultValue || node.fill || '#000000'}') }}`;
     }
     let textColorStyle = '';
     if ((dynamicProps.fill || node.bindings?.fill) && node.type === 'Text') {
       styleClasses = styleClasses.replace(/text-\[#[^\]]+\]/g, '');
-      const colorExpr = node.bindings?.fill ? node.bindings.fill : (dynamicProps.fill?.expression || `'${node.fill || '#000000'}'`);
-      textColorStyle = ` style={{ color: ${colorExpr} || '${dynamicProps.fill?.defaultValue || node.fill || '#000000'}' }}`;
+      const rawExpr = node.bindings?.fill ? this.resolveBindingExpr(node.bindings.fill, stateVariables) : (dynamicProps.fill?.expression || `'${node.fill || '#000000'}'`);
+      const activeCol = node.fill || '#000000';
+      textColorStyle = ` style={{ color: typeof ${rawExpr} === 'boolean' ? (${rawExpr} ? '${activeCol}' : '#64748b') : (${rawExpr} || '${dynamicProps.fill?.defaultValue || node.fill || '#000000'}') }}`;
     }
 
     const inlineStyle = fillStyle || textColorStyle || '';
@@ -1317,34 +1702,44 @@ ${indent}</div>`;
     let innerContent = '';
 
     if (node.type === 'TextInput') {
-      const extraStyles: string[] = [];
+      const extraStyles: string[] = isInteractive ? ["zIndex: 10"] : [];
       if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
-      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
-      const placeholderVal = node.bindings?.placeholder ? `{${node.bindings.placeholder} ?? "${node.placeholder || ''}"}` : (node.placeholder ? `"${node.placeholder}"` : '""');
-      const defaultVal = node.bindings?.defaultValue || node.bindings?.text ? `{${node.bindings?.defaultValue || node.bindings?.text} ?? "${node.defaultValue || ''}"}` : (node.defaultValue ? `"${node.defaultValue}"` : '""');
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles, offset);
+      const boundPlaceholder = node.bindings?.placeholder ? this.resolveBindingExpr(node.bindings.placeholder, stateVariables) : null;
+      const placeholderVal = boundPlaceholder ? `{${boundPlaceholder} ?? "${node.placeholder || ''}"}` : (node.placeholder ? `"${node.placeholder}"` : '""');
+      const rawDefault = node.bindings?.defaultValue || node.bindings?.text;
+      const boundDefault = rawDefault ? this.resolveBindingExpr(rawDefault, stateVariables) : null;
+      const defaultVal = boundDefault ? `{${boundDefault} ?? "${node.defaultValue || ''}"}` : (node.defaultValue ? `"${node.defaultValue}"` : '""');
       const inputType = node.inputType || 'text';
       return `<input${elemIdAttr} type="${inputType}" placeholder=${placeholderVal} defaultValue=${defaultVal}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
     } else if (node.type === 'TextArea') {
-      const extraStyles: string[] = [];
+      const extraStyles: string[] = isInteractive ? ["zIndex: 10"] : [];
       if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
-      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
-      const placeholderVal = node.bindings?.placeholder ? `{${node.bindings.placeholder} ?? "${node.placeholder || ''}"}` : (node.placeholder ? `"${node.placeholder}"` : '""');
-      const defaultVal = node.bindings?.defaultValue || node.bindings?.text ? `{${node.bindings?.defaultValue || node.bindings?.text} ?? "${node.defaultValue || ''}"}` : (node.defaultValue ? `"${node.defaultValue}"` : '""');
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles, offset);
+      const boundPlaceholder = node.bindings?.placeholder ? this.resolveBindingExpr(node.bindings.placeholder, stateVariables) : null;
+      const placeholderVal = boundPlaceholder ? `{${boundPlaceholder} ?? "${node.placeholder || ''}"}` : (node.placeholder ? `"${node.placeholder}"` : '""');
+      const rawDefault = node.bindings?.defaultValue || node.bindings?.text;
+      const boundDefault = rawDefault ? this.resolveBindingExpr(rawDefault, stateVariables) : null;
+      const defaultVal = boundDefault ? `{${boundDefault} ?? "${node.defaultValue || ''}"}` : (node.defaultValue ? `"${node.defaultValue}"` : '""');
       return `<textarea${elemIdAttr} placeholder=${placeholderVal} defaultValue=${defaultVal}${inputStyleStr}${eventHandlers} className="px-3 py-2 border rounded-md font-sans text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800" />`;
     } else if (node.type === 'Checkbox') {
-      const boundChecked = node.bindings?.defaultChecked || node.bindings?.checked;
+      const rawChecked = node.bindings?.defaultChecked || node.bindings?.checked;
+      const boundChecked = rawChecked ? this.resolveBindingExpr(rawChecked, stateVariables) : null;
       const isCheckedAttr = boundChecked ? ` defaultChecked={!!(${boundChecked})}` : (node.defaultChecked ? ' defaultChecked' : '');
-      const labelText = node.bindings?.text ? `{${node.bindings.text} ?? "${node.text || 'Checkbox'}"}` : (node.text || 'Checkbox');
+      const boundText = node.bindings?.text ? this.resolveBindingExpr(node.bindings.text, stateVariables) : null;
+      const labelText = boundText ? `{${boundText} ?? "${node.text || 'Checkbox'}"}` : (node.text || 'Checkbox');
       return `<label${elemIdAttr}${posStyleStr}${eventHandlers} className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 select-none whitespace-nowrap">
         <input type="checkbox"${isCheckedAttr} className="w-4 h-4 text-[#4A3AFF] rounded border-slate-300 focus:ring-indigo-500 cursor-pointer" />
         <span>${labelText}</span>
       </label>`;
     } else if (node.type === 'Switch') {
-      const boundChecked = node.bindings?.defaultChecked || node.bindings?.checked;
+      const rawChecked = node.bindings?.defaultChecked || node.bindings?.checked;
+      const boundChecked = rawChecked ? this.resolveBindingExpr(rawChecked, stateVariables) : null;
       const isCheckedAttr = boundChecked ? ` defaultChecked={!!(${boundChecked})}` : (node.defaultChecked ? ' defaultChecked' : '');
-      const labelText = node.bindings?.text ? `{${node.bindings.text} ?? "${node.text || 'Toggle'}"}` : (node.text || 'Toggle');
+      const boundText = node.bindings?.text ? this.resolveBindingExpr(node.bindings.text, stateVariables) : null;
+      const labelText = boundText ? `{${boundText} ?? "${node.text || 'Toggle'}"}` : (node.text || 'Toggle');
       return `<label${elemIdAttr}${posStyleStr}${eventHandlers} className="inline-flex items-center cursor-pointer select-none whitespace-nowrap">
         <input type="checkbox"${isCheckedAttr} className="sr-only peer" />
         <div className="w-10 h-5 bg-slate-300 peer-checked:bg-[#4A3AFF] peer-checked:[&>div]:translate-x-5 rounded-full p-0.5 transition-colors duration-200 flex items-center shrink-0">
@@ -1353,10 +1748,10 @@ ${indent}</div>`;
         <span className="ml-2 text-sm font-medium text-slate-700 whitespace-nowrap">${labelText}</span>
       </label>`;
     } else if (node.type === 'SelectDropdown') {
-      const extraStyles: string[] = [];
+      const extraStyles: string[] = isInteractive ? ["zIndex: 10"] : [];
       if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
-      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles, offset);
       const placeholderOpt = node.placeholder ? `<option value="" disabled>${node.placeholder}</option>` : '';
       const defaultValAttr = node.defaultValue ? ` defaultValue="${node.defaultValue}"` : '';
       const optionsHtml = (node.options || ['Option 1', 'Option 2']).map(opt => `<option value="${opt}">${opt}</option>`).join('\n          ');
@@ -1365,10 +1760,10 @@ ${indent}</div>`;
         ${optionsHtml}
       </select>`;
     } else if (node.type === 'FormContainer') {
-      const extraStyles: string[] = [];
+      const extraStyles: string[] = isInteractive ? ["zIndex: 10"] : [];
       if (node.fill) extraStyles.push(`backgroundColor: '${node.fill}'`);
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
-      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles);
+      const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles, offset);
       const children = allNodes.filter(n => n.parentId === node.id);
       const innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap, stateVariables)).join('\n      ');
       return `<form${elemIdAttr}${inputStyleStr}${eventHandlers} className="p-4 border border-dashed rounded-lg relative">
@@ -1379,21 +1774,37 @@ ${indent}</div>`;
     if (node.type === 'Frame') {
       innerContent = this.generateFrameChildrenJsx(node, allNodes, nodesById, masterComponents, isMasterComponentDef, pages, pageRouteMap, stateVariables, '      ');
     } else if (node.type === 'Text') {
-      const boundText = node.bindings?.text;
-      const fallbackText = (node.text && node.text.trim() !== '') ? node.text : 'Repeater Item';
-      innerContent = boundText
-        ? `{${boundText} || item?.text || item?.title || item?.name || "${fallbackText}"}`
-        : (dynamicProps.text 
-            ? `{${dynamicProps.text.expression} || "${dynamicProps.text.defaultValue}"}` 
-            : (node.text || 'Repeater Item'));
+      const boundExpr = node.bindings?.text || (nodeRelated.find(n => n.bindings?.text)?.bindings?.text);
+      const boundText = boundExpr ? this.resolveBindingExpr(boundExpr, stateVariables) : null;
+      let fallbackText = (node.text && node.text.trim() !== '') ? node.text : '';
+      if (fallbackText === '""' || fallbackText === "''") fallbackText = '';
+      if (boundText) {
+        if (boundText.startsWith('item') || boundText.includes('.')) {
+          innerContent = `{typeof ${boundText} === 'boolean' ? String(${boundText}) : (${boundText} || item?.text || item?.title || item?.name || "${fallbackText}")}`;
+        } else {
+          innerContent = `{typeof ${boundText} === 'boolean' ? String(${boundText}) : (${boundText} !== undefined && ${boundText} !== null ? ${boundText} : "${fallbackText}")}`;
+        }
+      } else {
+        let textVal = node.text || '';
+        if (textVal === '""' || textVal === "''") textVal = '';
+        innerContent = dynamicProps.text 
+          ? `{typeof ${dynamicProps.text.expression} === 'boolean' ? String(${dynamicProps.text.expression}) : (${dynamicProps.text.expression} || "${dynamicProps.text.defaultValue}")}` 
+          : textVal;
+      }
     } else if (node.type === 'Image') {
-      const boundSrc = node.bindings?.src;
+      const boundSrc = node.bindings?.src || (nodeRelated.find(n => n.bindings?.src)?.bindings?.src);
       const imgSrc = boundSrc
         ? `{${boundSrc} || item?.src || item?.image || "${node.src || ''}"}`
         : (dynamicProps.src 
             ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue}"}`
             : `"${node.src || ''}"`);
       innerContent = `<img src=${imgSrc} className="w-full h-full object-cover" alt="image" />`;
+    }
+
+    const nonFrameChildren = allNodes.filter(n => n.parentId === node.id);
+    if (node.type !== 'Frame' && nonFrameChildren.length > 0) {
+      const childrenJsx = nonFrameChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap, stateVariables)).join('\n        ');
+      innerContent = innerContent ? `${childrenJsx}\n        ${innerContent}` : childrenJsx;
     }
 
     const animAttrStr = `${animStyleStr}${inlineStyle}`;
@@ -1414,28 +1825,127 @@ ${indent}</div>`;
     </div>`;
   }
 
+  private static getDescendants(nodeId: string, allNodes: CanvasNode[]): CanvasNode[] {
+    const descendants: CanvasNode[] = [];
+    const queue = [nodeId];
+    while (queue.length > 0) {
+      const parentId = queue.shift()!;
+      const children = allNodes.filter(n => n.parentId === parentId);
+      descendants.push(...children);
+      children.forEach(c => queue.push(c.id));
+    }
+    return descendants;
+  }
+
   private static generateComponentCode(
     comp: CanvasNode, 
     allNodes: CanvasNode[], 
     nodesById: Record<string, CanvasNode>,
     pages: CanvasNode[] = [],
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
-    stateVariables: StateVariable[] = []
+    stateVariables: StateVariable[] = [],
+    masterComponents: CanvasNode[] = []
   ): string {
     const componentName = this.getComponentName(comp);
+    const compDescendants = [comp, ...this.getDescendants(comp.id, allNodes)];
     
-    const children = allNodes.filter(n => n.parentId === comp.id);
-    const hasAnyLink = children.some(c => c.linkTo);
-    const linkImport = hasAnyLink ? "import { Link } from 'react-router-dom';\n" : '';
+    // Find nested master component instances used inside this component
+    const instancesUsed = new Set<string>();
+    compDescendants.forEach(node => {
+      if (node.id !== comp.id && node.componentId) {
+        const master = masterComponents.find(m => m.id === node.componentId);
+        if (master) {
+          const childCompName = this.getComponentName(master);
+          if (childCompName !== componentName) {
+            instancesUsed.add(childCompName);
+          }
+        }
+      }
+    });
+
+    const compImports = Array.from(instancesUsed).map(name => `import ${name} from './${name}';`).join('\n');
+
+    // Check if any descendant has linkTo
+    const hasLink = compDescendants.some(n => n.linkTo);
+
+    // Check if any descendant has navigate action sequence
+    const hasNavigate = compDescendants.some(n => 
+      n.actionSequences && n.actionSequences.some(seq => 
+        seq.actions.some(act => act.enabled !== false && act.type === 'navigate')
+      )
+    );
+
+    const routerImports: string[] = [];
+    if (hasLink) routerImports.push('Link');
+    if (hasNavigate) routerImports.push('useNavigate');
+    const routerImportStr = routerImports.length > 0 ? `import { ${routerImports.join(', ')} } from 'react-router-dom';\n` : '';
+
+    // Collect state variable declarations for this component
+    const declaredVarNames = new Set<string>();
+    const stateDeclarations: string[] = [];
+
+    compDescendants.forEach(node => {
+      if (node.bindings) {
+        Object.values(node.bindings).forEach(expr => {
+          if (expr && !expr.startsWith('item') && !expr.includes('.')) {
+            const sv = (stateVariables || []).find(v => v.id === expr || v.name === expr);
+            const rawName = sv ? sv.name : expr;
+            const cleanName = this.sanitizeVarName(rawName);
+            if (!declaredVarNames.has(cleanName)) {
+              declaredVarNames.add(cleanName);
+              const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+              const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+              stateDeclarations.push(`const [internal_${cleanName}, setInternal_${cleanName}] = useState(${defaultVal});`);
+              stateDeclarations.push(`const ${cleanName} = props['${cleanName}'] !== undefined ? props['${cleanName}'] : internal_${cleanName};`);
+              stateDeclarations.push(`const ${setter} = props['${setter}'] || setInternal_${cleanName};`);
+            }
+          }
+        });
+      }
+      if (node.actionSequences && node.actionSequences.length > 0) {
+        node.actionSequences.forEach(seq => {
+          seq.actions.forEach(act => {
+            if (act.enabled !== false && act.type === 'setState' && act.stateVariableId) {
+              const sv = (stateVariables || []).find(v => v.id === act.stateVariableId || v.name === act.stateVariableId);
+              const rawName = sv ? sv.name : act.stateVariableId;
+              const cleanName = this.sanitizeVarName(rawName);
+              if (!declaredVarNames.has(cleanName)) {
+                declaredVarNames.add(cleanName);
+                const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+                const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+                stateDeclarations.push(`const [internal_${cleanName}, setInternal_${cleanName}] = useState(${defaultVal});`);
+                stateDeclarations.push(`const ${cleanName} = props['${cleanName}'] !== undefined ? props['${cleanName}'] : internal_${cleanName};`);
+                stateDeclarations.push(`const ${setter} = props['${setter}'] || setInternal_${cleanName};`);
+              }
+            }
+          });
+        });
+      }
+    });
+
+    const hasState = stateDeclarations.length > 0;
+    const reactImport = hasState ? "import React, { useState } from 'react';" : "import React from 'react';";
+
+    const bodyLines: string[] = [];
+    if (hasNavigate) {
+      bodyLines.push('  const navigate = useNavigate();');
+    }
+    if (stateDeclarations.length > 0) {
+      bodyLines.push(...stateDeclarations.map(s => '  ' + s));
+    }
+
+    const bodyStr = bodyLines.length > 0 ? bodyLines.join('\n') + '\n' : '';
     
-    const childrenJsx = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, [], true, comp, pages, pageRouteMap, stateVariables)).join('\n      ');
+    const directChildren = allNodes.filter(n => n.parentId === comp.id);
+    const childrenJsx = directChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, true, comp, pages, pageRouteMap, stateVariables)).join('\n      ');
     
     const rootClasses = this.generateNodeTailwindClasses(comp, true);
+    const compImportsStr = compImports ? compImports + '\n' : '';
     
-    return `import React from 'react';
-${linkImport}
+    return `${reactImport}
+${routerImportStr}${compImportsStr}
 export default function ${componentName}(props) {
-  return (
+${bodyStr}  return (
     <div className="${rootClasses}">
       ${childrenJsx}
     </div>
@@ -1523,16 +2033,54 @@ export default function ${componentName}(props) {
     const stateDeclarations: string[] = [];
 
     (stateVariables || []).forEach(sv => {
-      if (declaredVarNames.has(sv.name)) return;
-      declaredVarNames.add(sv.name);
-      const val = JSON.stringify(sv.defaultValue !== undefined ? sv.defaultValue : (sv.type === 'array' ? [] : ''));
-      const setter = `set${sv.name.charAt(0).toUpperCase() + sv.name.slice(1)}`;
-      stateDeclarations.push(`const [${sv.name}, ${setter}] = useState(${val});`);
+      const cleanName = this.sanitizeVarName(sv.name);
+      if (declaredVarNames.has(cleanName)) return;
+      declaredVarNames.add(cleanName);
+      const val = JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type));
+      const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+      stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${val});`);
+    });
+
+    // Collect all node bindings and action sequence state variable references across page nodes
+    allNodes.forEach(node => {
+      if (node.bindings) {
+        Object.values(node.bindings).forEach(expr => {
+          if (expr && !expr.startsWith('item') && !expr.includes('.')) {
+            const sv = (stateVariables || []).find(v => v.id === expr || v.name === expr);
+            const rawName = sv ? sv.name : expr;
+            const cleanName = this.sanitizeVarName(rawName);
+            if (!declaredVarNames.has(cleanName)) {
+              declaredVarNames.add(cleanName);
+              const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+              const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+              stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
+            }
+          }
+        });
+      }
+      if (node.actionSequences && node.actionSequences.length > 0) {
+        node.actionSequences.forEach(seq => {
+          seq.actions.forEach(act => {
+            if (act.type === 'setState' && act.stateVariableId) {
+              const sv = (stateVariables || []).find(v => v.id === act.stateVariableId || v.name === act.stateVariableId);
+              const rawName = sv ? sv.name : act.stateVariableId;
+              const cleanName = this.sanitizeVarName(rawName);
+              if (!declaredVarNames.has(cleanName)) {
+                declaredVarNames.add(cleanName);
+                const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+                const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+                stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
+              }
+            }
+          });
+        });
+      }
     });
 
     requiredArrayVars.forEach(varName => {
-      if (declaredVarNames.has(varName)) return;
-      declaredVarNames.add(varName);
+      const cleanName = this.sanitizeVarName(varName);
+      if (declaredVarNames.has(cleanName)) return;
+      declaredVarNames.add(cleanName);
 
       const stateVar = stateVariables.find(v => v.name === varName || v.id === varName);
       let defaultArray = [
@@ -1545,8 +2093,8 @@ export default function ${componentName}(props) {
         defaultArray = stateVar.defaultValue;
       }
 
-      const setter = `set${varName.charAt(0).toUpperCase() + varName.slice(1)}`;
-      stateDeclarations.push(`const [${varName}, ${setter}] = useState(${JSON.stringify(defaultArray, null, 2)});`);
+      const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+      stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${JSON.stringify(defaultArray, null, 2)});`);
     });
 
     const stateDeclStr = stateDeclarations.length > 0 ? '\n  ' + stateDeclarations.join('\n  ') + '\n' : '';
@@ -1607,6 +2155,9 @@ ${stateDeclStr}
     return () => window.removeEventListener('resize', updateScale);
   }, []);
 
+  const safeScaleX = Math.max(0.01, (isNaN(scaleX) || !scaleX) ? 1 : scaleX);
+  const safeScaleY = Math.max(0.01, (isNaN(scaleY) || !scaleY) ? 1 : scaleY);
+
   return (
     <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${dBg}' }}>
       <div 
@@ -1614,7 +2165,7 @@ ${stateDeclStr}
         style={{ 
           width: '${dW}px', 
           height: '${dH}px',
-          transform: \`scale(\${scaleX}, \${scaleY})\`,
+          transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
           transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
         }}
       >
@@ -1665,6 +2216,9 @@ ${stateDeclStr}
     return () => window.removeEventListener('resize', updateScale);
   }, []);
 
+  const safeScaleX = Math.max(0.01, (isNaN(scaleX) || !scaleX) ? 1 : scaleX);
+  const safeScaleY = Math.max(0.01, (isNaN(scaleY) || !scaleY) ? 1 : scaleY);
+
   ${mobileFrame ? `if (screenType === 'mobile') {
     return (
       <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${mBg}' }}>
@@ -1673,7 +2227,7 @@ ${stateDeclStr}
           style={{ 
             width: '${mW}px', 
             height: '${mH}px',
-            transform: \`scale(\${scaleX}, \${scaleY})\`,
+            transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
             transformOrigin: 'top left'${getFrameEffectStyles(mobileFrame)}
           }}
         >
@@ -1691,7 +2245,7 @@ ${stateDeclStr}
           style={{ 
             width: '${tW}px', 
             height: '${tH}px',
-            transform: \`scale(\${scaleX}, \${scaleY})\`,
+            transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
             transformOrigin: 'top left'${getFrameEffectStyles(tabletFrame)}
           }}
         >
@@ -1708,7 +2262,7 @@ ${stateDeclStr}
         style={{ 
           width: '${dW}px', 
           height: '${dH}px',
-          transform: \`scale(\${scaleX}, \${scaleY})\`,
+          transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
           transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
         }}
       >

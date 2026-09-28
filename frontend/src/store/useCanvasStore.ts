@@ -126,6 +126,54 @@ export interface CanvasNode {
     trigger?: 'auto' | 'click' | 'dblclick' | 'hover' | 'focus' | 'scroll';
     triggerNodeId?: string;
   };
+
+  // Action Sequences
+  actionSequences?: NodeActionSequence[];
+}
+
+export type ActionType = 
+  | 'navigate' 
+  | 'setState' 
+  | 'triggerAnimation' 
+  | 'toggleVisibility' 
+  | 'resetForm'
+  | 'submitForm';
+
+export interface NodeAction {
+  id: string;
+  type: ActionType;
+  enabled?: boolean;
+  
+  // Navigate parameters
+  targetPageId?: string;
+  
+  // Set State parameters
+  stateVariableId?: string;
+  stateOperation?: 'set' | 'toggle' | 'increment' | 'decrement' | 'setInputVal';
+  value?: any;
+  
+  // Animation / Visibility parameters
+  targetNodeId?: string;
+  animationType?: 'bounce' | 'pulse' | 'spin' | 'fade-in' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right';
+  visibilityAction?: 'show' | 'hide' | 'toggle';
+
+  // Optional delay (ms)
+  delay?: number;
+}
+
+export interface NodeActionSequence {
+  id: string;
+  event: 'onClick' | 'onChange' | 'onSubmit' | 'onHover' | 'onFocus';
+  actions: NodeAction[];
+}
+
+export interface PickingActionTarget {
+  nodeId: string;
+  sequenceId: string;
+  actionId: string;
+  actionType: string;
+  targetField?: 'targetNodeId' | 'targetPageId';
+  allowedTypes?: string[];
 }
 
 export type AppMode = 'select' | 'connect' | 'preview';
@@ -145,6 +193,7 @@ interface CanvasState {
   previewFrameId: string | null;
 
   pickingTriggerForNodeId: string | null;
+  pickingActionTarget: PickingActionTarget | null;
 
   // State Variables
   stateVariables: StateVariable[];
@@ -158,6 +207,7 @@ interface CanvasState {
   setConnectingSourceId: (id: string | null) => void;
   setPreviewFrameId: (id: string | null) => void;
   setPickingTriggerForNodeId: (id: string | null) => void;
+  setPickingActionTarget: (target: PickingActionTarget | null) => void;
   
   toastMessage: string | null;
   setToastMessage: (msg: string | null) => void;
@@ -207,6 +257,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   connectingSourceId: null,
   previewFrameId: null,
   pickingTriggerForNodeId: null,
+  pickingActionTarget: null,
 
   stateVariables: [],
   addStateVariable: (v) => {
@@ -239,10 +290,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
   },
 
-  setMode: (mode) => set({ mode, connectingSourceId: null, pickingTriggerForNodeId: null }),
+  setMode: (mode) => set({ mode, connectingSourceId: null, pickingTriggerForNodeId: null, pickingActionTarget: null }),
   setConnectingSourceId: (connectingSourceId) => set({ connectingSourceId }),
   setPreviewFrameId: (previewFrameId) => set({ previewFrameId }),
   setPickingTriggerForNodeId: (pickingTriggerForNodeId) => set({ pickingTriggerForNodeId }),
+  setPickingActionTarget: (pickingActionTarget) => set({ pickingActionTarget }),
   
   toastMessage: null,
   setToastMessage: (toastMessage) => {
@@ -298,76 +350,127 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const { nodes, selectedIds, past } = get();
     if (selectedIds.length === 0) return;
     
-    // Also delete any children if we are deleting a frame/group
-    const idsToDelete = new Set([...selectedIds]);
-    nodes.forEach(n => {
-      if (n.parentId && idsToDelete.has(n.parentId)) {
-        idsToDelete.add(n.id);
-      }
-    });
+    // Also delete any descendants if we are deleting a frame/group/container
+    const idsToDelete = new Set<string>(selectedIds);
+    let added = true;
+    while (added) {
+      added = false;
+      nodes.forEach(n => {
+        if (n.parentId && idsToDelete.has(n.parentId) && !idsToDelete.has(n.id)) {
+          idsToDelete.add(n.id);
+          added = true;
+        }
+      });
+    }
 
+    const count = selectedIds.length;
     set({
       past: [...past, nodes],
       future: [],
       nodes: nodes.filter(n => !idsToDelete.has(n.id)),
       selectedIds: [],
     });
+    get().setToastMessage(`🗑️ Deleted ${count} element${count > 1 ? 's' : ''}`);
   },
 
   duplicateNodes: () => {
     const { nodes, selectedIds, past } = get();
     if (selectedIds.length === 0) return;
     
-    const nodesToDuplicate = nodes.filter(n => selectedIds.includes(n.id));
-    const newIds: string[] = [];
-    const newNodes = nodesToDuplicate.map(node => {
-      const newId = uuidv4();
-      newIds.push(newId);
+    // Recursively collect all selected nodes and their descendants
+    const idsToDuplicate = new Set<string>(selectedIds);
+    let added = true;
+    while (added) {
+      added = false;
+      nodes.forEach(n => {
+        if (n.parentId && idsToDuplicate.has(n.parentId) && !idsToDuplicate.has(n.id)) {
+          idsToDuplicate.add(n.id);
+          added = true;
+        }
+      });
+    }
+
+    const idMap = new Map<string, string>();
+    idsToDuplicate.forEach(id => {
+      idMap.set(id, uuidv4());
+    });
+
+    const nodesToDup = nodes.filter(n => idsToDuplicate.has(n.id));
+    const newNodes = nodesToDup.map(node => {
+      const newId = idMap.get(node.id)!;
+      const isRootInSelection = !node.parentId || !idMap.has(node.parentId);
       return {
         ...node,
         id: newId,
-        x: node.x + 20,
-        y: node.y + 20,
+        x: isRootInSelection ? node.x + 20 : node.x,
+        y: isRootInSelection ? node.y + 20 : node.y,
+        parentId: node.parentId && idMap.has(node.parentId) ? idMap.get(node.parentId) : node.parentId,
       };
     });
     
+    const topLevelNewIds = newNodes.filter(n => !n.parentId || !idMap.has(n.parentId)).map(n => n.id);
+
     set({
       past: [...past, nodes],
       future: [],
       nodes: [...nodes, ...newNodes],
-      selectedIds: newIds,
+      selectedIds: topLevelNewIds.length > 0 ? topLevelNewIds : newNodes.map(n => n.id),
     });
+    get().setToastMessage(`✨ Duplicated ${selectedIds.length} element${selectedIds.length > 1 ? 's' : ''}`);
   },
 
   copyNodes: () => {
     const { nodes, selectedIds } = get();
     if (selectedIds.length === 0) return;
-    const nodesToCopy = nodes.filter(n => selectedIds.includes(n.id));
+    
+    // Copy selected nodes and all of their descendants so frames copy with children
+    const idsToCopy = new Set<string>(selectedIds);
+    let added = true;
+    while (added) {
+      added = false;
+      nodes.forEach(n => {
+        if (n.parentId && idsToCopy.has(n.parentId) && !idsToCopy.has(n.id)) {
+          idsToCopy.add(n.id);
+          added = true;
+        }
+      });
+    }
+
+    const nodesToCopy = nodes.filter(n => idsToCopy.has(n.id));
     set({ clipboard: nodesToCopy });
+    get().setToastMessage(`📋 Copied ${selectedIds.length} element${selectedIds.length > 1 ? 's' : ''}`);
   },
 
   pasteNodes: () => {
     const { nodes, clipboard, past } = get();
     if (!clipboard || clipboard.length === 0) return;
     
-    const newIds: string[] = [];
+    const idMap = new Map<string, string>();
+    clipboard.forEach(node => {
+      idMap.set(node.id, uuidv4());
+    });
+
     const newNodes = clipboard.map(node => {
-      const newId = uuidv4();
-      newIds.push(newId);
+      const newId = idMap.get(node.id)!;
+      const isRootInClipboard = !node.parentId || !idMap.has(node.parentId);
       return {
         ...node,
         id: newId,
-        x: node.x + 20,
-        y: node.y + 20,
+        x: isRootInClipboard ? node.x + 20 : node.x,
+        y: isRootInClipboard ? node.y + 20 : node.y,
+        parentId: node.parentId && idMap.has(node.parentId) ? idMap.get(node.parentId) : node.parentId,
       };
     });
     
+    const topLevelNewIds = newNodes.filter(n => !n.parentId || !idMap.has(n.parentId)).map(n => n.id);
+
     set({
       past: [...past, nodes],
       future: [],
       nodes: [...nodes, ...newNodes],
-      selectedIds: newIds,
+      selectedIds: topLevelNewIds.length > 0 ? topLevelNewIds : newNodes.map(n => n.id),
     });
+    get().setToastMessage(`📋 Pasted ${topLevelNewIds.length} element${topLevelNewIds.length > 1 ? 's' : ''}`);
   },
 
   reorderNodes: (action) => {
@@ -949,6 +1052,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: previous,
       selectedIds: [], 
     });
+    get().setToastMessage('↩️ Undo');
   },
 
   redo: () => {
@@ -964,5 +1068,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: next,
       selectedIds: [],
     });
+    get().setToastMessage('↪️ Redo');
   },
 }));

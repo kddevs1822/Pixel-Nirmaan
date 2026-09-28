@@ -36,18 +36,29 @@ export const LeftSidebar: React.FC = () => {
   const handleAdd = (type: NodeType | 'Frame-Desktop' | 'Frame-Tablet' | 'Frame-Mobile' | 'Curve') => {
     const { x, y } = getCenterOffset();
     const frames = nodes.filter(n => n.type === 'Frame');
+    const containers = nodes.filter(n => n.type === 'Frame' || n.type === 'FormContainer');
+    containers.sort((a, b) => {
+      const areaA = (a.width || 0) * (a.height || 0);
+      const areaB = (b.width || 0) * (b.height || 0);
+      return areaA - areaB;
+    });
     
     let parentId = undefined;
     let localX = x;
     let localY = y;
 
     if (!type.startsWith('Frame')) {
-      for (let i = frames.length - 1; i >= 0; i--) {
-        const f = frames[i];
-        if (x >= f.x && x <= f.x + (f.width || 0) && y >= f.y && y <= f.y + (f.height || 0)) {
+      for (const f of containers) {
+        let frameAbsX = f.x;
+        let frameAbsY = f.y;
+        if (f.parentId) {
+          const pf = nodes.find(n => n.id === f.parentId);
+          if (pf) { frameAbsX += pf.x; frameAbsY += pf.y; }
+        }
+        if (x >= frameAbsX && x <= frameAbsX + (f.width || 0) && y >= frameAbsY && y <= frameAbsY + (f.height || 0)) {
           parentId = f.id;
-          localX = x - f.x;
-          localY = y - f.y;
+          localX = x - frameAbsX;
+          localY = y - frameAbsY;
           break;
         }
       }
@@ -58,7 +69,7 @@ export const LeftSidebar: React.FC = () => {
     else if (type === 'Triangle') addNode({ type: 'Triangle', x: localX + 50, y: localY + 50, radius: 50, fill: '#F2A93B', parentId });
     else if (type === 'Line') addNode({ type: 'Line', x: localX, y: localY, points: [0, 0, 100, 100], stroke: '#1A1A1D', strokeWidth: 4, parentId });
     else if (type === 'Curve') addNode({ type: 'Line', x: localX, y: localY, points: [0, 0, 50, 0, 100, 0], tension: 0.5, stroke: '#1A1A1D', strokeWidth: 4, parentId });
-    else if (type === 'Text') addNode({ type: 'Text', x: localX, y: localY, text: 'Modern Craft', fontSize: 32, fontFamily: 'Space Grotesk', fill: '#1A1A1D', parentId });
+    else if (type === 'Text') addNode({ type: 'Text', x: localX, y: localY, text: 'Pixel Nirmaan', fontSize: 32, fontFamily: 'Space Grotesk', fill: '#1A1A1D', parentId });
     else if (type === 'Image') fileInputRef.current?.click();
     else if (type === 'Frame-Desktop') addNode({ type: 'Frame', x: x - (window.innerWidth / 2) + 50, y: y - (window.innerHeight / 2) + 50, width: window.innerWidth, height: window.innerHeight, fill: '#ffffff', frameType: 'desktop', name: `Desktop ${frames.length + 1}` });
     else if (type === 'Frame-Tablet') addNode({ type: 'Frame', x: x - 384 + 50, y: y - 512 + 50, width: 768, height: 1024, fill: '#ffffff', frameType: 'tablet', name: `Tablet ${frames.length + 1}` });
@@ -77,16 +88,26 @@ export const LeftSidebar: React.FC = () => {
       const reader = new FileReader();
       reader.onload = (event) => {
         const { x, y } = getCenterOffset();
-        const frames = nodes.filter(n => n.type === 'Frame');
+        const containers = nodes.filter(n => n.type === 'Frame' || n.type === 'FormContainer');
+        containers.sort((a, b) => {
+          const areaA = (a.width || 0) * (a.height || 0);
+          const areaB = (b.width || 0) * (b.height || 0);
+          return areaA - areaB;
+        });
         let parentId = undefined;
         let localX = x;
         let localY = y;
-        for (let i = frames.length - 1; i >= 0; i--) {
-          const f = frames[i];
-          if (x >= f.x && x <= f.x + (f.width || 0) && y >= f.y && y <= f.y + (f.height || 0)) {
+        for (const f of containers) {
+          let frameAbsX = f.x;
+          let frameAbsY = f.y;
+          if (f.parentId) {
+            const pf = nodes.find(n => n.id === f.parentId);
+            if (pf) { frameAbsX += pf.x; frameAbsY += pf.y; }
+          }
+          if (x >= frameAbsX && x <= frameAbsX + (f.width || 0) && y >= frameAbsY && y <= frameAbsY + (f.height || 0)) {
             parentId = f.id;
-            localX = x - f.x;
-            localY = y - f.y;
+            localX = x - frameAbsX;
+            localY = y - frameAbsY;
             break;
           }
         }
@@ -103,8 +124,19 @@ export const LeftSidebar: React.FC = () => {
   };
 
   const parseVariableDefaultValue = (str: string, type: string) => {
-    if (type === 'number') return Number(str) || 0;
+    if (type === 'number') {
+      const num = Number(str);
+      return isNaN(num) ? 0 : num;
+    }
     if (type === 'boolean') return str === 'true' || str === '1';
+    if (type === 'string') {
+      const trimmed = str.trim();
+      if (trimmed === '""' || trimmed === "''") return '';
+      if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1);
+      }
+      return str;
+    }
     if (type === 'array' || type === 'object') {
       if (!str.trim()) return type === 'array' ? [] : {};
       try {
@@ -151,7 +183,15 @@ export const LeftSidebar: React.FC = () => {
     setEditingVarId(v.id);
     setVarName(v.name);
     setVarType(v.type);
-    setVarDefaultVal(typeof v.defaultValue === 'object' ? JSON.stringify(v.defaultValue) : String(v.defaultValue ?? ''));
+    let defVal = typeof v.defaultValue === 'object' ? JSON.stringify(v.defaultValue) : String(v.defaultValue ?? '');
+    if (v.type === 'string') {
+      const trimmed = defVal.trim();
+      if (trimmed === '""' || trimmed === "''") defVal = '';
+      else if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        defVal = trimmed.slice(1, -1);
+      }
+    }
+    setVarDefaultVal(defVal);
     setShowAddVarModal(true);
   };
 
@@ -342,7 +382,15 @@ export const LeftSidebar: React.FC = () => {
                   <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Type</label>
                   <select
                     value={varType}
-                    onChange={(e) => setVarType(e.target.value as any)}
+                    onChange={(e) => {
+                      const nextType = e.target.value as any;
+                      setVarType(nextType);
+                      if (nextType === 'number' && (varDefaultVal === '' || isNaN(Number(varDefaultVal)))) {
+                        setVarDefaultVal('0');
+                      } else if (nextType === 'boolean' && varDefaultVal !== 'true' && varDefaultVal !== 'false') {
+                        setVarDefaultVal('false');
+                      }
+                    }}
                     className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
                   >
                     <option value="string">String</option>
@@ -355,13 +403,32 @@ export const LeftSidebar: React.FC = () => {
 
                 <div>
                   <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Default Value</label>
-                  <input
-                    type="text"
-                    placeholder={varType === 'boolean' ? 'true / false' : varType === 'object' ? "{ name: 'John' }" : 'Initial value'}
-                    value={varDefaultVal}
-                    onChange={(e) => setVarDefaultVal(e.target.value)}
-                    className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-                  />
+                  {varType === 'boolean' ? (
+                    <select
+                      value={varDefaultVal === 'true' ? 'true' : 'false'}
+                      onChange={(e) => setVarDefaultVal(e.target.value)}
+                      className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    >
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </select>
+                  ) : varType === 'number' ? (
+                    <input
+                      type="number"
+                      placeholder="0"
+                      value={varDefaultVal}
+                      onChange={(e) => setVarDefaultVal(e.target.value)}
+                      className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder={varType === 'object' ? "{ name: 'John' }" : varType === 'array' ? '["item1", "item2"]' : 'Initial value'}
+                      value={varDefaultVal}
+                      onChange={(e) => setVarDefaultVal(e.target.value)}
+                      className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  )}
                 </div>
 
                 <div className="flex justify-end gap-2 mt-1">
@@ -401,7 +468,9 @@ export const LeftSidebar: React.FC = () => {
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 truncate mt-0.5">
-                        Default: <span className="font-mono text-slate-600">{JSON.stringify(v.defaultValue)}</span>
+                        Default: <span className="font-mono text-slate-600">
+                          {v.type === 'string' && (v.defaultValue === '' || v.defaultValue === '""' || v.defaultValue === "''") ? '(empty string)' : JSON.stringify(v.defaultValue)}
+                        </span>
                       </p>
                     </div>
 

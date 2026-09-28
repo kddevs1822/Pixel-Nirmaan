@@ -3,6 +3,8 @@ import { useCanvasStore } from '../store/useCanvasStore';
 import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Repeat } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
+import { ActionSequenceBuilder } from './ActionSequenceBuilder';
+
 
 const generateReactCode = (master: CanvasNode, descendants: CanvasNode[]) => {
   const propsDef = master.propsDefinition || [];
@@ -556,6 +558,7 @@ export const RightSidebar: React.FC = () => {
 
   const [activeVariantTab, setActiveVariantTab] = useState<'default' | 'hover' | 'active' | 'disabled'>('default');
   const [showCodePreview, setShowCodePreview] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<'design' | 'actions'>('design');
 
   const handleToggleExposedProp = (masterId: string, childId: string, field: 'text' | 'fill' | 'src') => {
     const master = nodes.find(n => n.id === masterId);
@@ -752,7 +755,7 @@ export const RightSidebar: React.FC = () => {
   const hasRadius = selectedNodes.some(n => n.type === 'Circle' || n.type === 'Triangle');
   
   return (
-    <div className="w-72 bg-white border-l border-slate-200 p-6 flex flex-col gap-6 z-10 shadow-sm overflow-y-auto shrink-0">
+    <div className="w-72 max-w-72 bg-white border-l border-slate-200 p-6 flex flex-col gap-6 z-10 shadow-sm overflow-y-auto overflow-x-hidden shrink-0 box-border">
       <div className="flex items-center justify-between">
         <h3 className="font-heading font-bold text-lg text-slate-800 flex items-center gap-2">
           {primaryNode.isMasterComponent && <Component size={18} className="text-[#4A3AFF]" />}
@@ -764,7 +767,39 @@ export const RightSidebar: React.FC = () => {
         </span>
       </div>
 
-      {/* Component UI */}
+      {selectedNodes.length === 1 && (
+        <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 gap-1">
+          <button
+            type="button"
+            onClick={() => setSidebarTab('design')}
+            className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              sidebarTab === 'design'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            Design
+          </button>
+          <button
+            type="button"
+            onClick={() => setSidebarTab('actions')}
+            className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              sidebarTab === 'actions'
+                ? 'bg-[#4A3AFF] text-white shadow-xs'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <span>⚡ Actions</span>
+            {primaryNode.actionSequences && primaryNode.actionSequences.length > 0 && (
+              <span className={`w-2 h-2 rounded-full ${sidebarTab === 'actions' ? 'bg-amber-300' : 'bg-[#4A3AFF]'}`} />
+            )}
+          </button>
+        </div>
+      )}
+
+      {(selectedNodes.length > 1 || sidebarTab === 'design') && (
+        <>
+          {/* Component UI */}
       {selectedNodes.length >= 1 && selectedNodes.every(n => !n.isMasterComponent && !n.componentId) && (
         <div className="flex flex-col gap-3 pb-4 border-b border-slate-100">
           <button 
@@ -1441,12 +1476,12 @@ export const RightSidebar: React.FC = () => {
               <div className="flex flex-col gap-3 pt-1 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 shadow-xs">
                 {primaryNode.id !== parentRepeaterFrame.id && (
                   <>
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-1 rounded-lg">
-                      <span>Scope: {parentRepeaterFrame.name || 'Repeater Frame'}</span>
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-1 rounded-lg overflow-hidden max-w-full">
+                      <span className="truncate max-w-[120px]">Scope: {parentRepeaterFrame.name || 'Repeater Frame'}</span>
                       <button
                         type="button"
                         onClick={() => selectNodes([parentRepeaterFrame.id])}
-                        className="text-[10px] text-indigo-600 underline font-bold"
+                        className="text-[10px] text-indigo-600 underline font-bold shrink-0 ml-1"
                       >
                         Select Frame
                       </button>
@@ -1611,6 +1646,7 @@ export const RightSidebar: React.FC = () => {
           </div>
         );
       })()}
+
 
       {/* Effects Panel */}
       <div className="flex flex-col gap-3 pt-4 border-t border-slate-100">
@@ -2300,6 +2336,36 @@ export const RightSidebar: React.FC = () => {
           </div>
         </div>
       )}
+        </>
+      )}
+
+      {selectedNodes.length === 1 && sidebarTab === 'actions' && (
+        <div className="flex flex-col gap-6">
+          <ActionSequenceBuilder node={primaryNode} />
+
+          {isConnectable && compatibleFrames.length > 0 && (
+            <div className="flex flex-col gap-2 pt-4 border-t border-slate-100">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Prototyping</label>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Navigate To</label>
+                <select 
+                  value={primaryNode.linkTo || ''}
+                  onChange={(e) => updateNodes(selectedIds, { linkTo: e.target.value || undefined }, true)}
+                  className="border border-slate-200 rounded px-2 py-1.5 text-sm bg-slate-50 w-full"
+                >
+                  <option value="">None</option>
+                  {compatibleFrames.map((frame) => (
+                    <option key={frame.id} value={frame.id}>
+                      {`Frame - ${Math.round(frame.width || 0)}x${Math.round(frame.height || 0)} (ID: ${frame.id.slice(0,4)})`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
+

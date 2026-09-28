@@ -766,13 +766,31 @@ export const TopBar: React.FC = () => {
             </div>
             
             <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Keyboard Shortcuts</h3>
-            <div className="flex flex-col gap-3 text-sm mb-6">
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Copy</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + C</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Paste</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + V</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Duplicate</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + D</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Undo</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + Z</kbd></div>
-              <div className="flex justify-between border-b border-slate-100 pb-2"><span>Redo</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Ctrl + Shift + Z</kbd></div>
-              <div className="flex justify-between pt-1"><span>Delete</span><kbd className="bg-slate-100 px-2 py-1 rounded font-mono text-xs font-semibold">Del / Backspace</kbd></div>
+            <div className="flex flex-col gap-2.5 text-sm mb-6">
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-1">Editing & Clipboard</div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Save Project</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + S</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Copy</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + C</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Paste</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + V</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Duplicate</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + D</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Cut</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + X</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Select All</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + A</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Delete</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Del / Backspace</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Undo</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + Z</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Redo</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + Shift + Z</kbd></div>
+              
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mt-2">Tools & Navigation</div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Select Tool</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">V</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Connect Tool</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">C</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Toggle Preview</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">P</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Add Rectangle</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">R</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Add Circle</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">O</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Add Text</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">T</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Add Desktop Frame</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">F</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Add Line</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">L</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Nudge Element</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Arrow Keys (Shift: 10px)</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Layer Order</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">[ / ]</kbd></div>
+              <div className="flex justify-between border-b border-slate-100 pb-1.5"><span>Zoom In / Out</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Ctrl + / -</kbd></div>
+              <div className="flex justify-between pt-1"><span>Deselect / Exit Preview</span><kbd className="bg-slate-100 px-2 py-0.5 rounded font-mono text-xs font-semibold">Esc</kbd></div>
             </div>
 
             <h3 className="font-semibold text-sm text-slate-800 mb-3 border-b border-slate-100 pb-2">Components & Props</h3>

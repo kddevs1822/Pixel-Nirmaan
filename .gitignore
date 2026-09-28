@@ -7,3 +7,5 @@ test-export*
 .env.*
 !.env.example
 *.log
+exported_test_app/
+scratch/
