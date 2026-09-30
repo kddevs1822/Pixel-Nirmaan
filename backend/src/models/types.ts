@@ -128,13 +128,46 @@ export interface CanvasNode {
   actionSequences?: NodeActionSequence[];
 }
 
+export interface DataSourceHeader {
+  id: string;
+  key: string;
+  value: string;
+  enabled: boolean;
+}
+
+export interface DataSource {
+  id: string;
+  name: string;
+  url: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  headers?: DataSourceHeader[];
+  bodyTemplate?: string;
+  fetchOnLoad?: boolean;
+  targetFrameId?: string;
+  targetVariableId?: string;
+  responsePath?: string;
+}
+
 export type ActionType = 
   | 'navigate' 
   | 'setState' 
   | 'triggerAnimation' 
   | 'toggleVisibility' 
   | 'resetForm'
-  | 'submitForm';
+  | 'submitForm'
+  | 'callApi'
+  | 'condition';
+
+export type ConditionOperator = 
+  | '==' 
+  | '!=' 
+  | '>' 
+  | '<' 
+  | '>=' 
+  | '<=' 
+  | 'contains' 
+  | 'isEmpty' 
+  | 'isNotEmpty';
 
 export interface NodeAction {
   id: string;
@@ -153,6 +186,24 @@ export interface NodeAction {
   targetNodeId?: string;
   animationType?: 'bounce' | 'pulse' | 'spin' | 'fade-in' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right';
   visibilityAction?: 'show' | 'hide' | 'toggle';
+
+  // Call API parameters
+  dataSourceId?: string;
+  apiMethod?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  apiUrl?: string;
+  apiHeaders?: DataSourceHeader[];
+  apiBody?: string;
+  apiTargetVariableId?: string;
+  apiResponsePath?: string;
+
+  // Condition parameters
+  conditionVariableId?: string;
+  conditionOperator?: ConditionOperator;
+  conditionValue?: any;
+  conditionCompareType?: 'static' | 'variable';
+  conditionCompareVariableId?: string;
+  trueActions?: NodeAction[];
+  falseActions?: NodeAction[];
 
   // Optional delay (ms)
   delay?: number;

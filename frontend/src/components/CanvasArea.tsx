@@ -7,6 +7,7 @@ import type { KonvaEventObject } from 'konva/lib/Node';
 import useImage from 'use-image';
 import { X, AlertCircle, Monitor, Tablet, Smartphone, Target } from 'lucide-react';
 import { getNodeDescriptiveLabel } from '../utils/nodeUtils';
+import { normalizeApiUrl, executeApiFetch } from '../utils/urlUtils';
 
 const URLImage = ({ node, commonProps, shapeRef, shadowProps }: any) => {
   const [image] = useImage(node.src || '');
@@ -59,6 +60,7 @@ interface NodeContext {
   executeFormSubmit?: (formNode: CanvasNode, activeStage?: Konva.Stage | null) => void;
   executeFormReset?: (formNode: CanvasNode) => void;
   findTargetForm?: (originNode: CanvasNode, targetId?: string) => CanvasNode | undefined;
+  executeSequenceActions?: (actions: NodeAction[], originNode: CanvasNode, activeStage?: Konva.Stage | null) => Promise<void>;
 }
 
 const getKonvaEasing = (timing?: string) => {
@@ -169,9 +171,46 @@ const RenderNode: React.FC<{
       }
     }
 
-    const foundVar = stateVariables.find(v => v.name === expr || v.id === expr);
+    // Support nested path access on state variables: e.g. arr.length, arr[0].title, arr.0.title, obj.a
+    const normalized = expr.replace(/\[\s*(['"])?([a-zA-Z0-9_$]+)\1\s*\]/g, '.$2');
+    const parts = normalized.split('.');
+    const baseVarName = parts[0];
+    const subPath = parts.slice(1);
+
+    const foundVar = stateVariables.find(v => v.name === baseVarName || v.id === baseVarName || v.name === expr || v.id === expr);
     if (foundVar && foundVar.defaultValue !== undefined) {
       let val = foundVar.defaultValue;
+      if (typeof val === 'string' && (foundVar.type === 'array' || foundVar.type === 'object')) {
+        try {
+          val = JSON.parse(val);
+        } catch {
+          // keep as string
+        }
+      }
+
+      if (subPath.length > 0) {
+        let current = val;
+        for (const p of subPath) {
+          if (current === undefined || current === null) {
+            current = undefined;
+            break;
+          }
+          current = current[p];
+        }
+        if (current !== undefined && current !== null) {
+          if (typeof current === 'object') {
+            return Array.isArray(current) ? `[${current.length} items]` : JSON.stringify(current);
+          }
+          return String(current);
+        }
+        return '';
+      }
+
+      if (typeof val === 'object' && val !== null) {
+        if (Array.isArray(val)) return `[${val.length} items]`;
+        return JSON.stringify(val);
+      }
+
       if (foundVar.type === 'string' || typeof val === 'string') {
         const trimmed = String(val).trim();
         if (trimmed === '""' || trimmed === "''") return '';
@@ -875,78 +914,8 @@ const RenderNode: React.FC<{
     }
 
     const focusSeq = seqs.find(s => s.event === 'onFocus');
-    if (focusSeq) {
-      focusSeq.actions.forEach(act => {
-        if (act.enabled === false) return;
-        if (act.type === 'navigate' && act.targetPageId) {
-          const targetPage = nodes.find(n => n.id === act.targetPageId);
-          if (targetPage) {
-            const primaryTargetId = targetPage.variantOf || targetPage.id;
-            const setPreview = (useCanvasStore.getState() as any).setPreviewFrameId;
-            if (setPreview) setPreview(primaryTargetId);
-          }
-        } else if (act.type === 'setState' && act.stateVariableId) {
-          const currentVars = useCanvasStore.getState().stateVariables;
-          const stateVar = currentVars.find((v: any) => v.id === act.stateVariableId || v.name === act.stateVariableId);
-          if (stateVar) {
-            let newVal: any = stateVar.defaultValue;
-            const op = act.stateOperation || 'set';
-            if (op === 'set') {
-              if (stateVar.type === 'number') {
-                const num = Number(act.value);
-                newVal = isNaN(num) ? 0 : num;
-              } else if (stateVar.type === 'boolean') {
-                newVal = act.value === 'true' || act.value === true;
-              } else if (stateVar.type === 'string') {
-                let s = String(act.value ?? '').trim();
-                if (s === '""' || s === "''") s = '';
-                else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
-                newVal = s;
-              } else {
-                if (act.value === 'true' || act.value === true) newVal = true;
-                else if (act.value === 'false' || act.value === false) newVal = false;
-                else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') newVal = Number(act.value);
-                else newVal = act.value !== undefined ? act.value : '';
-              }
-            } else if (op === 'toggle') {
-              newVal = !Boolean(stateVar.defaultValue);
-            } else if (op === 'increment') {
-              const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
-              newVal = (Number(stateVar.defaultValue) || 0) + step;
-            } else if (op === 'decrement') {
-              const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
-              newVal = (Number(stateVar.defaultValue) || 0) - step;
-            }
-            useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: newVal });
-          }
-        } else if (act.type === 'triggerAnimation') {
-          const targetId = act.targetNodeId || node.id;
-          const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
-          if (targetNode && context.playNodeAnimation) {
-            const activeStage = shapeRef.current?.getStage() || null;
-            context.playNodeAnimation(targetNode, activeStage, act.animationType);
-          }
-        } else if (act.type === 'toggleVisibility') {
-          const targetId = act.targetNodeId || node.id;
-          const activeStage = shapeRef.current?.getStage() || null;
-          if (activeStage) {
-            const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId);
-            let shape: any = null;
-            for (const tv of targetVariants) {
-              shape = activeStage.findOne('#node-' + tv.id);
-              if (shape) break;
-            }
-            if (shape) {
-              const currentVis = shape.visible();
-              const actVis = act.visibilityAction || 'toggle';
-              if (actVis === 'show') shape.visible(true);
-              else if (actVis === 'hide') shape.visible(false);
-              else shape.visible(!currentVis);
-              activeStage.batchDraw();
-            }
-          }
-        }
-      });
+    if (focusSeq && context.executeSequenceActions) {
+      context.executeSequenceActions(focusSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
     }
   };
 
@@ -967,88 +936,8 @@ const RenderNode: React.FC<{
         }
       }
       const clickSeq = seqs.find(s => s.event === 'onClick');
-      if (clickSeq) {
-        clickSeq.actions.forEach(act => {
-          if (act.enabled === false) return;
-          if (act.type === 'navigate' && act.targetPageId) {
-            const targetPage = nodes.find(n => n.id === act.targetPageId);
-            if (targetPage) {
-              const primaryTargetId = targetPage.variantOf || targetPage.id;
-              const setPreview = (useCanvasStore.getState() as any).setPreviewFrameId;
-              if (setPreview) setPreview(primaryTargetId);
-            }
-          } else if (act.type === 'setState' && act.stateVariableId) {
-            const currentVars = useCanvasStore.getState().stateVariables;
-            const stateVar = currentVars.find((v: any) => v.id === act.stateVariableId || v.name === act.stateVariableId);
-            if (stateVar) {
-              let newVal: any = stateVar.defaultValue;
-              const op = act.stateOperation || 'set';
-              if (op === 'set') {
-                if (stateVar.type === 'number') {
-                  const num = Number(act.value);
-                  newVal = isNaN(num) ? 0 : num;
-                } else if (stateVar.type === 'boolean') {
-                  newVal = act.value === 'true' || act.value === true;
-                } else if (stateVar.type === 'string') {
-                  let s = String(act.value ?? '').trim();
-                  if (s === '""' || s === "''") s = '';
-                  else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
-                  newVal = s;
-                } else {
-                  if (act.value === 'true' || act.value === true) newVal = true;
-                  else if (act.value === 'false' || act.value === false) newVal = false;
-                  else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') newVal = Number(act.value);
-                  else newVal = act.value !== undefined ? act.value : '';
-                }
-              } else if (op === 'toggle') {
-                newVal = !Boolean(stateVar.defaultValue);
-              } else if (op === 'increment') {
-                const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
-                newVal = (Number(stateVar.defaultValue) || 0) + step;
-              } else if (op === 'decrement') {
-                const step = act.value !== undefined && act.value !== '' ? Number(act.value) || 1 : 1;
-                newVal = (Number(stateVar.defaultValue) || 0) - step;
-              }
-              useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: newVal });
-            }
-          } else if (act.type === 'triggerAnimation') {
-            const targetId = act.targetNodeId || node.id;
-            const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
-            if (targetNode && context.playNodeAnimation) {
-              const activeStage = shapeRef.current?.getStage() || null;
-              context.playNodeAnimation(targetNode, activeStage, act.animationType);
-            }
-          } else if (act.type === 'toggleVisibility') {
-            const targetId = act.targetNodeId || (resolvedNode.type !== 'FormContainer' ? resolvedNode.id : undefined);
-            const activeStage = shapeRef.current?.getStage() || null;
-            if (targetId && activeStage) {
-              const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId);
-              let shape: any = null;
-              for (const tv of targetVariants) {
-                shape = activeStage.findOne('#node-' + tv.id);
-                if (shape) break;
-              }
-              if (shape) {
-                const currentVis = shape.visible();
-                const actVis = act.visibilityAction || 'toggle';
-                if (actVis === 'show') shape.visible(true);
-                else if (actVis === 'hide') shape.visible(false);
-                else shape.visible(!currentVis);
-                activeStage.batchDraw();
-              }
-            }
-          } else if (act.type === 'resetForm') {
-            if (context.executeFormReset) {
-              const targetForm = context.findTargetForm ? context.findTargetForm(resolvedNode, act.targetNodeId) : (resolvedNode.type === 'FormContainer' ? resolvedNode : undefined);
-              if (targetForm) context.executeFormReset(targetForm);
-            }
-          } else if (act.type === 'submitForm') {
-            if (context.executeFormSubmit) {
-              const targetForm = context.findTargetForm ? context.findTargetForm(resolvedNode, act.targetNodeId) : (resolvedNode.type === 'FormContainer' ? resolvedNode : undefined);
-              if (targetForm) context.executeFormSubmit(targetForm, shapeRef.current?.getStage() || null);
-            }
-          }
-        });
+      if (clickSeq && context.executeSequenceActions) {
+        context.executeSequenceActions(clickSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
       }
 
       executeFocusActions();
@@ -2052,8 +1941,13 @@ export const CanvasArea: React.FC = () => {
     }
   };
 
-  const executeAction = (act: NodeAction, originNode: CanvasNode, activeStage?: Konva.Stage | null) => {
+  const executeAction = async (act: NodeAction, originNode: CanvasNode, activeStage?: Konva.Stage | null) => {
     if (act.enabled === false) return;
+
+    if (act.delay && act.delay > 0) {
+      await new Promise(r => setTimeout(r, act.delay));
+    }
+
     if (act.type === 'navigate' && act.targetPageId) {
       const targetPage = nodes.find(n => n.id === act.targetPageId);
       if (targetPage) {
@@ -2094,6 +1988,61 @@ export const CanvasArea: React.FC = () => {
         }
         useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: newVal });
       }
+    } else if (act.type === 'callApi') {
+      const currentDataSources = useCanvasStore.getState().dataSources;
+      let url = act.apiUrl || '';
+      let method = act.apiMethod || 'GET';
+      let headers = act.apiHeaders || [];
+      let body = act.apiBody;
+      let targetVarId = act.apiTargetVariableId;
+      let responsePath = act.apiResponsePath;
+
+      if (act.dataSourceId && act.dataSourceId !== 'custom') {
+        const ds = currentDataSources.find(d => d.id === act.dataSourceId);
+        if (ds) {
+          url = ds.url;
+          method = ds.method;
+          headers = ds.headers || [];
+          if (!body && ds.bodyTemplate) body = ds.bodyTemplate;
+          if (!targetVarId && ds.targetVariableId) targetVarId = ds.targetVariableId;
+          if (!responsePath && ds.responsePath) responsePath = ds.responsePath;
+        }
+      }
+
+      const cleanUrl = normalizeApiUrl(url);
+      if (cleanUrl) {
+        try {
+          const headersObj: Record<string, string> = {};
+          (headers || []).filter(h => h.enabled && h.key.trim()).forEach(h => {
+            headersObj[h.key.trim()] = h.value;
+          });
+
+          const res = await executeApiFetch(cleanUrl, {
+            method,
+            headers: headersObj,
+            body: ['POST', 'PUT', 'PATCH'].includes(method) && body ? body : undefined,
+          });
+
+          let extracted = res.data;
+          if (responsePath && typeof res.data === 'object' && res.data !== null) {
+            extracted = responsePath.split('.').reduce((acc, part) => (acc ? acc[part] : undefined), res.data);
+          }
+
+          if (targetVarId) {
+            const currentVars = useCanvasStore.getState().stateVariables;
+            const targetVar = currentVars.find(v => v.id === targetVarId || v.name === targetVarId);
+            const resolvedVarId = targetVar ? targetVar.id : targetVarId;
+            useCanvasStore.getState().updateStateVariable(resolvedVarId, { defaultValue: extracted });
+            const varName = targetVar?.name || resolvedVarId;
+            useCanvasStore.getState().setToastMessage(`⚡ API response saved to state variable "${varName}"`);
+          } else {
+            useCanvasStore.getState().setToastMessage(`⚡ API call successful (Status ${res.status})`);
+          }
+        } catch (err: any) {
+          console.error('callApi failed:', err);
+          useCanvasStore.getState().setToastMessage(`❌ API call failed: ${err.message}`);
+        }
+      }
     } else if (act.type === 'triggerAnimation') {
       const targetId = act.targetNodeId || originNode.id;
       const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
@@ -2126,8 +2075,14 @@ export const CanvasArea: React.FC = () => {
     } else if (act.type === 'submitForm') {
       const targetForm = findTargetForm(originNode, act.targetNodeId);
       if (targetForm) {
-        executeFormSubmit(targetForm, activeStage);
+        await executeFormSubmit(targetForm, activeStage);
       }
+    }
+  };
+
+  const executeSequenceActions = async (actions: NodeAction[], originNode: CanvasNode, activeStage?: Konva.Stage | null) => {
+    for (const act of actions) {
+      await executeAction(act, originNode, activeStage);
     }
   };
 
@@ -2158,7 +2113,7 @@ export const CanvasArea: React.FC = () => {
     return forms[0];
   };
 
-  const executeFormSubmit = (formNode: CanvasNode, activeStage?: Konva.Stage | null) => {
+  const executeFormSubmit = async (formNode: CanvasNode, activeStage?: Konva.Stage | null) => {
     const primaryId = formNode.sourceNodeId || formNode.id;
     const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
     let seqs = formNode.actionSequences || [];
@@ -2172,7 +2127,7 @@ export const CanvasArea: React.FC = () => {
     }
     const submitSeq = seqs.find(s => s.event === 'onSubmit');
     if (!submitSeq) return;
-    submitSeq.actions.forEach(act => executeAction(act, formNode, activeStage));
+    await executeSequenceActions(submitSeq.actions, formNode, activeStage);
   };
 
   const executeFormReset = (formNode: CanvasNode) => {
@@ -2350,14 +2305,14 @@ export const CanvasArea: React.FC = () => {
       if (seqs.length > 0) {
         const clickSeq = seqs.find(s => s.event === 'onClick');
         if (clickSeq) {
-          clickSeq.actions.forEach(act => executeAction(act, node, activeStage));
+          executeSequenceActions(clickSeq.actions, node, activeStage);
         } else if (targetForAction.type === 'FormContainer') {
           executeFormSubmit(targetForAction, activeStage);
         }
 
         const focusSeq = seqs.find(s => s.event === 'onFocus');
         if (focusSeq && node.type !== 'TextInput' && node.type !== 'TextArea' && node.type !== 'SelectDropdown' && node.type !== 'Checkbox' && node.type !== 'Switch') {
-          focusSeq.actions.forEach(act => executeAction(act, node, activeStage));
+          executeSequenceActions(focusSeq.actions, node, activeStage);
         }
       } else {
         const parentForm = findTargetForm(node);
@@ -2517,7 +2472,7 @@ export const CanvasArea: React.FC = () => {
         const hoverSeq = seqs.find(s => s.event === 'onHover');
         if (hoverSeq) {
           const activeStage = e?.target ? e.target.getStage() : null;
-          hoverSeq.actions.forEach(act => executeAction(act, targetForAction, activeStage));
+          executeSequenceActions(hoverSeq.actions, targetForAction, activeStage);
         }
       }
     } else {
@@ -2558,6 +2513,46 @@ export const CanvasArea: React.FC = () => {
 
   useEffect(() => {
     setActiveEditingInput(null);
+
+    // Auto-fetch data sources configured for page load in preview mode
+    if (mode === 'preview') {
+      const { dataSources, updateStateVariable } = useCanvasStore.getState();
+      const loadSources = (dataSources || []).filter(ds => ds.fetchOnLoad);
+
+      loadSources.forEach(async (ds) => {
+        // Check if data source applies to current frame or global
+        if (ds.targetFrameId && previewFrameId) {
+          const currentFrame = nodes.find(n => n.id === previewFrameId);
+          const frameMatch = ds.targetFrameId === previewFrameId || 
+                             (currentFrame && (ds.targetFrameId === currentFrame.sourceNodeId || ds.targetFrameId === currentFrame.variantOf));
+          if (!frameMatch) return;
+        }
+
+        try {
+          const headersObj: Record<string, string> = {};
+          (ds.headers || []).filter(h => h.enabled && h.key.trim()).forEach(h => {
+            headersObj[h.key.trim()] = h.value;
+          });
+
+          const res = await executeApiFetch(ds.url, {
+            method: ds.method || 'GET',
+            headers: headersObj,
+            body: ['POST', 'PUT', 'PATCH'].includes(ds.method || 'GET') && ds.bodyTemplate ? ds.bodyTemplate : undefined,
+          });
+
+          let extracted = res.data;
+          if (ds.responsePath && typeof res.data === 'object' && res.data !== null) {
+            extracted = ds.responsePath.split('.').reduce((acc, part) => (acc ? acc[part] : undefined), res.data);
+          }
+
+          if (ds.targetVariableId) {
+            updateStateVariable(ds.targetVariableId, { defaultValue: extracted });
+          }
+        } catch (err) {
+          console.error(`Auto-fetch failed for "${ds.name}":`, err);
+        }
+      });
+    }
   }, [mode, previewFrameId]);
 
   const openInputOverlay = (node: CanvasNode, shape: any, displayValue: string, onUpdate: (val: string) => void) => {
@@ -2686,6 +2681,7 @@ export const CanvasArea: React.FC = () => {
     executeFormSubmit,
     executeFormReset,
     findTargetForm,
+    executeSequenceActions,
   };
 
   if (mode === 'preview' && previewFrameId) {

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import type { CanvasNode, NodeActionSequence, NodeAction, ActionType, StateVariable } from '../store/useCanvasStore';
-import { Plus, Trash2, ChevronUp, ChevronDown, Zap, Target, X } from 'lucide-react';
+import type { CanvasNode, NodeActionSequence, NodeAction, ActionType, StateVariable, DataSource } from '../store/useCanvasStore';
+import { Plus, Trash2, ChevronUp, ChevronDown, Zap, Target, X, Database, Play, Check, AlertCircle, RefreshCw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { getNodeDescriptiveLabel } from '../utils/nodeUtils';
+import { normalizeApiUrl, executeApiFetch } from '../utils/urlUtils';
 
 interface TargetElementPickerProps {
   originNode: CanvasNode;
@@ -154,11 +155,87 @@ interface ActionSequenceBuilderProps {
 }
 
 export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ node }) => {
-  const { nodes, stateVariables, updateNodes, setToastMessage } = useCanvasStore();
+  const { nodes, stateVariables, dataSources, updateNodes, setToastMessage } = useCanvasStore();
 
   const actionSequences = node.actionSequences || [];
   const frames = nodes.filter(n => n.type === 'Frame');
   const availablePages = frames.filter(f => !f.parentId);
+
+  const [testingActionId, setTestingActionId] = useState<string | null>(null);
+  const [actionTestResult, setActionTestResult] = useState<{
+    actionId: string;
+    ok: boolean;
+    status?: number;
+    timeMs?: number;
+    data?: any;
+    extracted?: any;
+    error?: string;
+  } | null>(null);
+
+  const handleTestActionApi = async (action: NodeAction) => {
+    setTestingActionId(action.id);
+    setActionTestResult(null);
+    const startTime = performance.now();
+
+    try {
+      let url = action.apiUrl || '';
+      let method = action.apiMethod || 'GET';
+      let headersObj: Record<string, string> = {};
+      let body = action.apiBody;
+      let responsePath = action.apiResponsePath;
+
+      if (action.dataSourceId && action.dataSourceId !== 'custom') {
+        const ds = dataSources.find(d => d.id === action.dataSourceId);
+        if (ds) {
+          url = ds.url;
+          method = ds.method;
+          (ds.headers || []).filter(h => h.enabled && h.key).forEach(h => {
+            headersObj[h.key] = h.value;
+          });
+          if (['POST', 'PUT', 'PATCH'].includes(method) && ds.bodyTemplate) {
+            body = ds.bodyTemplate;
+          }
+          if (!responsePath && ds.responsePath) {
+            responsePath = ds.responsePath;
+          }
+        }
+      }
+
+      const cleanUrl = normalizeApiUrl(url);
+      if (!cleanUrl) {
+        throw new Error('No API endpoint URL specified');
+      }
+
+      const res = await executeApiFetch(cleanUrl, {
+        method,
+        headers: headersObj,
+        body: ['POST', 'PUT', 'PATCH'].includes(method) && body ? body : undefined,
+      });
+
+      let extracted: any = undefined;
+      if (responsePath && typeof res.data === 'object' && res.data !== null) {
+        extracted = responsePath.split('.').reduce((acc, part) => (acc ? acc[part] : undefined), res.data);
+      }
+
+      setActionTestResult({
+        actionId: action.id,
+        ok: res.ok,
+        status: res.status,
+        timeMs: res.timeMs,
+        data: res.data,
+        extracted,
+      });
+    } catch (err: any) {
+      setActionTestResult({
+        actionId: action.id,
+        ok: false,
+        timeMs: err.timeMs || 0,
+        error: err.message || 'API request failed',
+      });
+    } finally {
+      setTestingActionId(null);
+    }
+  };
 
   const updateSequences = (newSequences: NodeActionSequence[]) => {
     updateNodes([node.id], { actionSequences: newSequences }, true);
@@ -406,6 +483,7 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
                         >
                           <option value="setState">Set State Variable</option>
                           <option value="navigate">Navigate Page</option>
+                          <option value="callApi">Call API (REST)</option>
                           <option value="triggerAnimation">Trigger Animation</option>
                           <option value="toggleVisibility">Toggle Visibility</option>
                           <option value="resetForm">Reset Form</option>
@@ -573,6 +651,222 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
                         />
                       </div>
                     )}
+
+                    {action.type === 'callApi' && (() => {
+                      const selectedDs = dataSources.find(d => d.id === action.dataSourceId);
+                      const isCustom = !action.dataSourceId || action.dataSourceId === 'custom';
+
+                      return (
+                        <div className="flex flex-col gap-2 pt-1.5 border-t border-slate-100 w-full">
+                          {/* Endpoint selection: Saved Data Source vs Inline */}
+                          <div className="flex flex-col gap-0.5">
+                            <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                              API Data Source
+                            </label>
+                            <select
+                              value={action.dataSourceId || 'custom'}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === 'custom') {
+                                  handleUpdateAction(seq.id, action.id, {
+                                    dataSourceId: 'custom',
+                                    apiMethod: action.apiMethod || 'GET',
+                                    apiUrl: action.apiUrl || '',
+                                  });
+                                } else {
+                                  const ds = dataSources.find(d => d.id === val);
+                                  handleUpdateAction(seq.id, action.id, {
+                                    dataSourceId: val,
+                                    apiTargetVariableId: action.apiTargetVariableId || ds?.targetVariableId,
+                                    apiResponsePath: action.apiResponsePath || ds?.responsePath,
+                                  });
+                                }
+                              }}
+                              className="border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-slate-50 text-slate-800 w-full truncate focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            >
+                              <option value="custom">⚙️ Custom / Inline API Endpoint</option>
+                              {dataSources.map(ds => (
+                                <option key={ds.id} value={ds.id}>
+                                  {ds.method} - {ds.name} ({ds.url})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* If Saved Data Source chosen */}
+                          {!isCustom && selectedDs && (
+                            <div className="p-2 bg-slate-50 rounded border border-slate-200 text-[10.5px] flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-sky-100 text-sky-800 border border-sky-200">
+                                  {selectedDs.method}
+                                </span>
+                                <span className="font-mono text-slate-700 truncate">{selectedDs.url}</span>
+                              </div>
+                              {selectedDs.targetVariableId && (
+                                <span className="text-[9.5px] text-slate-500">
+                                  Default store: <strong className="text-slate-700 font-mono">{stateVariables.find(v => v.id === selectedDs.targetVariableId)?.name || selectedDs.targetVariableId}</strong>
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* If Custom / Inline API */}
+                          {isCustom && (
+                            <div className="flex flex-col gap-1.5">
+                              <div className="grid grid-cols-4 gap-1.5">
+                                <div className="col-span-1">
+                                  <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Method</label>
+                                  <select
+                                    value={action.apiMethod || 'GET'}
+                                    onChange={(e) => handleUpdateAction(seq.id, action.id, { apiMethod: e.target.value as any })}
+                                    className="w-full border border-slate-200 rounded px-1 py-1 text-[10px] bg-slate-50 text-slate-800 font-bold"
+                                  >
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                    <option value="PATCH">PATCH</option>
+                                  </select>
+                                </div>
+                                <div className="col-span-3">
+                                  <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">URL</label>
+                                  <input
+                                    type="url"
+                                    placeholder="https://api.example.com/items"
+                                    value={action.apiUrl || ''}
+                                    onChange={(e) => handleUpdateAction(seq.id, action.id, { apiUrl: e.target.value })}
+                                    onBlur={() => {
+                                      if (action.apiUrl?.trim()) {
+                                        handleUpdateAction(seq.id, action.id, { apiUrl: normalizeApiUrl(action.apiUrl) });
+                                      }
+                                    }}
+                                    className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                </div>
+                              </div>
+
+                              {['POST', 'PUT', 'PATCH'].includes(action.apiMethod || 'GET') && (
+                                <div className="flex flex-col gap-0.5">
+                                  <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Body (JSON)</label>
+                                  <textarea
+                                    rows={2}
+                                    placeholder='{ "title": "New item" }'
+                                    value={action.apiBody || ''}
+                                    onChange={(e) => handleUpdateAction(seq.id, action.id, { apiBody: e.target.value })}
+                                    className="w-full border border-slate-200 rounded p-1 text-[10px] font-mono bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Target State Variable Selection */}
+                          <div className="flex flex-col gap-0.5">
+                            <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                              Store Result in State Variable
+                            </label>
+                            <select
+                              value={action.apiTargetVariableId || ''}
+                              onChange={(e) => handleUpdateAction(seq.id, action.id, { apiTargetVariableId: e.target.value || undefined })}
+                              className="border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-slate-50 text-slate-800 w-full truncate focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            >
+                              <option value="">
+                                {selectedDs?.targetVariableId 
+                                  ? `Default from Data Source (${stateVariables.find(v => v.id === selectedDs.targetVariableId)?.name || 'Linked'})` 
+                                  : '-- Select State Variable (Optional) --'}
+                              </option>
+                              {stateVariables.map(v => (
+                                <option key={v.id} value={v.id}>
+                                  {v.name} ({v.type})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Response Path Selection */}
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Response Path</label>
+                              <span className="text-[8.5px] text-slate-400">e.g. data.items or products</span>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder={selectedDs?.responsePath || 'Leave empty for full response'}
+                              value={action.apiResponsePath || ''}
+                              onChange={(e) => handleUpdateAction(seq.id, action.id, { apiResponsePath: e.target.value })}
+                              className="border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+
+                          {/* Optional Delay */}
+                          <div className="flex items-center justify-between pt-0.5">
+                            <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Delay (ms)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={100}
+                              placeholder="0"
+                              value={action.delay || ''}
+                              onChange={(e) => handleUpdateAction(seq.id, action.id, { delay: e.target.value ? Number(e.target.value) : undefined })}
+                              className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] bg-slate-50 text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+
+                          {/* Test Button & Result */}
+                          <div className="pt-1 flex flex-col gap-1">
+                            <button
+                              type="button"
+                              disabled={testingActionId === action.id}
+                              onClick={() => handleTestActionApi(action)}
+                              className="w-full py-1 px-2 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-700 border border-indigo-200 rounded text-[10px] font-medium flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                            >
+                              {testingActionId === action.id ? (
+                                <>
+                                  <RefreshCw size={11} className="animate-spin text-indigo-600" />
+                                  Testing API...
+                                </>
+                              ) : (
+                                <>
+                                  <Play size={10} className="fill-indigo-700" />
+                                  Test This API Action
+                                </>
+                              )}
+                            </button>
+
+                            {actionTestResult && actionTestResult.actionId === action.id && (
+                              <div className={`p-1.5 rounded border text-[9.5px] flex flex-col gap-1 ${actionTestResult.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'}`}>
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold flex items-center gap-1">
+                                    {actionTestResult.ok ? <Check size={11} className="text-emerald-600" /> : <AlertCircle size={11} className="text-rose-600" />}
+                                    Status: {actionTestResult.status || (actionTestResult.ok ? '200 OK' : 'Error')}
+                                  </span>
+                                  <span className="text-[9px] opacity-75">{actionTestResult.timeMs}ms</span>
+                                </div>
+
+                                {actionTestResult.error && (
+                                  <span className="text-rose-700">{actionTestResult.error}</span>
+                                )}
+
+                                {actionTestResult.extracted !== undefined ? (
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[9px] font-semibold text-emerald-800">
+                                      Extracted ({Array.isArray(actionTestResult.extracted) ? actionTestResult.extracted.length + ' items' : typeof actionTestResult.extracted}):
+                                    </span>
+                                    <pre className="max-h-20 overflow-y-auto bg-slate-900 text-emerald-300 p-1.5 rounded font-mono text-[9px]">
+                                      {JSON.stringify(actionTestResult.extracted, null, 2)}
+                                    </pre>
+                                  </div>
+                                ) : actionTestResult.data !== undefined ? (
+                                  <pre className="max-h-20 overflow-y-auto bg-slate-900 text-slate-100 p-1.5 rounded font-mono text-[9px]">
+                                    {typeof actionTestResult.data === 'object' ? JSON.stringify(actionTestResult.data, null, 2) : String(actionTestResult.data)}
+                                  </pre>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {action.type === 'triggerAnimation' && (
                       <div className="flex flex-col gap-1.5 pt-1.5 border-t border-slate-100 w-full">

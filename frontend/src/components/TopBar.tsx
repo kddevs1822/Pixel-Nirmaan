@@ -7,7 +7,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useProjectStore } from '../store/useProjectStore';
 
 export const TopBar: React.FC = () => {
-  const { undo, redo, zoom, setZoom, past, future, selectedIds, nodes, setMode, setPreviewFrameId, stateVariables } = useCanvasStore();
+  const { undo, redo, zoom, setZoom, past, future, selectedIds, nodes, setMode, setPreviewFrameId, stateVariables, dataSources } = useCanvasStore();
   const { user, logout, openAuthModal } = useAuthStore();
   const {
     projects,
@@ -128,7 +128,7 @@ export const TopBar: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ nodes, stateVariables })
+        body: JSON.stringify({ nodes, stateVariables, dataSources })
       });
       
       if (!response.ok) {
@@ -187,7 +187,7 @@ export const TopBar: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ nodes, stateVariables, outputPath: outputPath.trim() })
+        body: JSON.stringify({ nodes, stateVariables, dataSources, outputPath: outputPath.trim() })
       });
 
       const data = await response.json();

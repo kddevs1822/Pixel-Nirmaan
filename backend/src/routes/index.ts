@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { checkHealth } from '../controllers/healthController';
 import { generateCode, generateToFolder, selectFolder } from '../controllers/generateController';
+import { proxyRequest } from '../controllers/proxyController';
 import { googleAuth, getMe } from '../controllers/authController';
 import {
   getProjects,
@@ -17,6 +18,7 @@ router.get('/health', checkHealth);
 router.post('/generate', generateCode);
 router.post('/generate-to-folder', generateToFolder);
 router.post('/select-folder', selectFolder);
+router.post('/proxy-request', proxyRequest);
 
 // Auth routes
 router.post('/auth/google', googleAuth);

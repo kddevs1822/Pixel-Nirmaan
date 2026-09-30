@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/useAuthStore';
 export const useAutoSave = () => {
   const nodes = useCanvasStore((state) => state.nodes);
   const stateVariables = useCanvasStore((state) => state.stateVariables);
+  const dataSources = useCanvasStore((state) => state.dataSources);
   const activeProject = useProjectStore((state) => state.activeProject);
   const saveCurrentProjectNodes = useProjectStore((state) => state.saveCurrentProjectNodes);
   const user = useAuthStore((state) => state.user);
@@ -22,7 +23,7 @@ export const useAutoSave = () => {
     }
   }, [activeProject?.id]);
 
-  // Debounced auto-save on node or state variable changes
+  // Debounced auto-save on node, state variable, or data source changes
   useEffect(() => {
     if (!user || !activeProject) return;
 
@@ -32,7 +33,7 @@ export const useAutoSave = () => {
       return;
     }
 
-    const payload = { nodes, stateVariables };
+    const payload = { nodes, stateVariables, dataSources };
     const currentJson = JSON.stringify(payload);
     if (currentJson === lastSavedJson.current) return;
 
@@ -52,7 +53,7 @@ export const useAutoSave = () => {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [nodes, stateVariables, activeProject?.id, user, saveCurrentProjectNodes]);
+  }, [nodes, stateVariables, dataSources, activeProject?.id, user, saveCurrentProjectNodes]);
 
   // Manual save with Ctrl+S / Cmd+S
   useEffect(() => {
@@ -63,7 +64,7 @@ export const useAutoSave = () => {
       if (cmdOrCtrl && e.key === 's') {
         e.preventDefault();
         if (user && activeProject) {
-          const payload = { nodes, stateVariables };
+          const payload = { nodes, stateVariables, dataSources };
           saveCurrentProjectNodes(payload as any);
           lastSavedJson.current = JSON.stringify(payload);
         }
@@ -72,5 +73,5 @@ export const useAutoSave = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [nodes, stateVariables, activeProject, user, saveCurrentProjectNodes]);
+  }, [nodes, stateVariables, dataSources, activeProject, user, saveCurrentProjectNodes]);
 };

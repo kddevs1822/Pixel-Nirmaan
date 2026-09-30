@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Repeat } from 'lucide-react';
+import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Repeat, Image as ImageIcon } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
 import { ActionSequenceBuilder } from './ActionSequenceBuilder';
+import { DEFAULT_IMAGE_PLACEHOLDER } from '../utils/nodeUtils';
 
 
 const generateReactCode = (master: CanvasNode, descendants: CanvasNode[]) => {
@@ -475,7 +476,10 @@ const VariableBindingControl: React.FC<{
             
             <div className="flex items-center gap-1 flex-wrap pt-0.5">
               <span className="text-[9px] text-slate-400">Presets:</span>
-              {['item.name', 'item.title', 'item.avatar', 'item.price'].map(chip => (
+              {(propertyKey === 'src'
+                ? ['item.thumbnail', 'item.images[0]', 'item.image', 'item.avatar', 'item.src', 'products.thumbnail']
+                : ['item.name', 'item.title', 'item.avatar', 'item.price']
+              ).map(chip => (
                 <button
                   key={chip}
                   type="button"
@@ -1288,6 +1292,49 @@ export const RightSidebar: React.FC = () => {
         </div>
       )}
 
+      {hasType('Image') && (
+        <div className="flex flex-col gap-3 pt-3 border-t border-slate-100">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <VariableBindingControl 
+                node={primaryNode} 
+                propertyKey="src" 
+                label="Image Source / URL" 
+              />
+              {primaryNode.src && primaryNode.src !== DEFAULT_IMAGE_PLACEHOLDER && (
+                <button
+                  type="button"
+                  onClick={() => updateNode(primaryNode.id, { src: DEFAULT_IMAGE_PLACEHOLDER }, true)}
+                  className="text-[10px] text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                  title="Reset to default placeholder thumbnail"
+                >
+                  Use Placeholder
+                </button>
+              )}
+            </div>
+            <input 
+              type="text" 
+              value={primaryNode.src === DEFAULT_IMAGE_PLACEHOLDER ? '' : ((getValue('src') as string) || '')} 
+              placeholder={primaryNode.src === DEFAULT_IMAGE_PLACEHOLDER ? "Using placeholder thumbnail (paste URL to replace)" : "https://example.com/image.jpg"}
+              onChange={(e) => handleChange(e, 'src', false)}
+              className="border border-slate-200 rounded px-2 py-1.5 text-xs bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono text-slate-800 focus:outline-none"
+            />
+          </div>
+          {primaryNode.src && (
+            <div className="relative w-full h-24 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 flex items-center justify-center shadow-inner">
+              <img 
+                src={primaryNode.src} 
+                alt="preview" 
+                className="w-full h-full object-contain p-1"
+                onError={(e) => {
+                  (e.currentTarget as HTMLElement).style.display = 'none';
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Interactive Input Properties Panel */}
       {selectedNodes.length === 1 && (primaryNode.type === 'TextInput' || primaryNode.type === 'TextArea' || primaryNode.type === 'Checkbox' || primaryNode.type === 'Switch' || primaryNode.type === 'SelectDropdown' || primaryNode.type === 'FormContainer') && (
         <div className="flex flex-col gap-3 pt-4 border-t border-slate-100">
@@ -1436,51 +1483,90 @@ export const RightSidebar: React.FC = () => {
 
       {/* List Repeater Panel */}
       {(() => {
+        const isFrame = primaryNode.type === 'Frame' || primaryNode.type === 'FormContainer';
+        const parentFrame = primaryNode.parentId ? nodes.find(n => n.id === primaryNode.parentId && (n.type === 'Frame' || n.type === 'FormContainer')) : null;
         const parentRepeaterFrame = primaryNode.repeaterBinding 
           ? primaryNode 
           : (primaryNode.parentId ? nodes.find(n => n.id === primaryNode.parentId && n.repeaterBinding) : null);
 
-        if (!parentRepeaterFrame) return null;
+        if (!isFrame && !parentRepeaterFrame && !parentFrame) return null;
+
+        // If a non-frame node is selected and parent is not yet a repeater, show a helpful shortcut
+        if (!isFrame && !parentRepeaterFrame && parentFrame) {
+          return (
+            <div className="flex flex-col gap-2 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-xs text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                  <Repeat size={14} className="text-indigo-600" /> List Repeater
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                <span className="text-slate-600 text-[11px] leading-tight">To repeat items, enable Repeater on parent Frame ({parentFrame.name || 'Frame'}).</span>
+                <button
+                  type="button"
+                  onClick={() => selectNodes([parentFrame.id])}
+                  className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-md border border-indigo-200 text-[11px] ml-2 shrink-0 transition-colors cursor-pointer"
+                >
+                  Select Frame
+                </button>
+              </div>
+            </div>
+          );
+        }
+
+        const activeRepeaterFrame = parentRepeaterFrame || (isFrame ? primaryNode : null);
+        if (!activeRepeaterFrame) return null;
+
+        const isRepeaterActive = !!activeRepeaterFrame.repeaterBinding;
 
         return (
           <div className="flex flex-col gap-3 pt-4 border-t border-slate-100">
             <div className="flex items-center justify-between">
-              <span className="font-semibold text-xs text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-                <Repeat size={14} className="text-indigo-600" /> List Repeater Spacing
+              <span className="font-semibold text-xs text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Repeat size={14} className="text-indigo-600" /> List Repeater
               </span>
-              {(primaryNode.type === 'Frame' || primaryNode.type === 'FormContainer') && (
-                <input
-                  type="checkbox"
-                  checked={!!primaryNode.repeaterBinding}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      const firstArrayVar = stateVariables.find(v => v.type === 'array') || stateVariables[0];
-                      updateNodes([primaryNode.id], {
-                        repeaterBinding: {
-                          arrayVariableId: firstArrayVar ? firstArrayVar.id : '',
-                          itemName: 'item',
-                          direction: 'vertical',
-                          gap: 16
-                        }
-                      }, true);
-                    } else {
-                      updateNodes([primaryNode.id], { repeaterBinding: undefined }, true);
-                    }
-                  }}
-                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                />
+              {isFrame && (
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isRepeaterActive}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        const firstArrayVar = stateVariables.find(v => v.type === 'array') || stateVariables[0];
+                        updateNodes([primaryNode.id], {
+                          repeaterBinding: {
+                            arrayVariableId: firstArrayVar ? firstArrayVar.id : '',
+                            itemName: 'item',
+                            direction: 'vertical',
+                            gap: 16
+                          }
+                        }, true);
+                      } else {
+                        updateNodes([primaryNode.id], { repeaterBinding: undefined }, true);
+                      }
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
               )}
             </div>
 
-            {parentRepeaterFrame.repeaterBinding && (
+            {!isRepeaterActive && isFrame && (
+              <p className="text-[11px] text-slate-500 leading-normal">
+                Enable to turn this Frame into a dynamic list repeater bound to an array variable (e.g. <code className="font-mono text-indigo-600 font-semibold bg-indigo-50 px-1 py-0.5 rounded">arr</code>).
+              </p>
+            )}
+
+            {isRepeaterActive && activeRepeaterFrame.repeaterBinding && (
               <div className="flex flex-col gap-3 pt-1 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 shadow-xs">
-                {primaryNode.id !== parentRepeaterFrame.id && (
+                {primaryNode.id !== activeRepeaterFrame.id && (
                   <>
                     <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2 py-1 rounded-lg overflow-hidden max-w-full">
-                      <span className="truncate max-w-[120px]">Scope: {parentRepeaterFrame.name || 'Repeater Frame'}</span>
+                      <span className="truncate max-w-[120px]">Scope: {activeRepeaterFrame.name || 'Repeater Frame'}</span>
                       <button
                         type="button"
-                        onClick={() => selectNodes([parentRepeaterFrame.id])}
+                        onClick={() => selectNodes([activeRepeaterFrame.id])}
                         className="text-[10px] text-indigo-600 underline font-bold shrink-0 ml-1"
                       >
                         Select Frame
@@ -1509,7 +1595,7 @@ export const RightSidebar: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <label className="text-[11px] font-semibold text-slate-700">Distance Between Items (Gap)</label>
                     <span className="font-mono text-xs font-bold text-indigo-600 bg-white px-1.5 py-0.5 rounded border border-indigo-200">
-                      {parentRepeaterFrame.repeaterBinding.gap ?? 16}px
+                      {activeRepeaterFrame.repeaterBinding.gap ?? 16}px
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1518,19 +1604,19 @@ export const RightSidebar: React.FC = () => {
                       min="0"
                       max="100"
                       step="2"
-                      value={parentRepeaterFrame.repeaterBinding.gap ?? 16}
+                      value={activeRepeaterFrame.repeaterBinding.gap ?? 16}
                       onChange={(e) => {
-                        updateNodes([parentRepeaterFrame.id], {
+                        updateNodes([activeRepeaterFrame.id], {
                           repeaterBinding: {
-                            ...parentRepeaterFrame.repeaterBinding!,
+                            ...activeRepeaterFrame.repeaterBinding!,
                             gap: parseInt(e.target.value) || 0
                           }
                         }, false);
                       }}
                       onMouseUp={(e: any) => {
-                        updateNodes([parentRepeaterFrame.id], {
+                        updateNodes([activeRepeaterFrame.id], {
                           repeaterBinding: {
-                            ...parentRepeaterFrame.repeaterBinding!,
+                            ...activeRepeaterFrame.repeaterBinding!,
                             gap: parseInt(e.target.value) || 0
                           }
                         }, true);
@@ -1541,11 +1627,11 @@ export const RightSidebar: React.FC = () => {
                       type="number"
                       min="0"
                       max="300"
-                      value={parentRepeaterFrame.repeaterBinding.gap ?? 16}
+                      value={activeRepeaterFrame.repeaterBinding.gap ?? 16}
                       onChange={(e) => {
-                        updateNodes([parentRepeaterFrame.id], {
+                        updateNodes([activeRepeaterFrame.id], {
                           repeaterBinding: {
-                            ...parentRepeaterFrame.repeaterBinding!,
+                            ...activeRepeaterFrame.repeaterBinding!,
                             gap: parseInt(e.target.value) || 0
                           }
                         }, true);
@@ -1561,15 +1647,15 @@ export const RightSidebar: React.FC = () => {
                         key={preset}
                         type="button"
                         onClick={() => {
-                          updateNodes([parentRepeaterFrame.id], {
+                          updateNodes([activeRepeaterFrame.id], {
                             repeaterBinding: {
-                              ...parentRepeaterFrame.repeaterBinding!,
+                              ...activeRepeaterFrame.repeaterBinding!,
                               gap: preset
                             }
                           }, true);
                         }}
                         className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
-                          (parentRepeaterFrame.repeaterBinding?.gap ?? 16) === preset
+                          (activeRepeaterFrame.repeaterBinding?.gap ?? 16) === preset
                             ? 'bg-indigo-600 text-white font-bold border-indigo-600'
                             : 'bg-white hover:bg-indigo-100 text-slate-600 border-slate-200'
                         }`}
@@ -1584,11 +1670,11 @@ export const RightSidebar: React.FC = () => {
                   <div>
                     <label className="text-[11px] font-medium text-slate-600 block mb-1">Layout</label>
                     <select
-                      value={parentRepeaterFrame.repeaterBinding.direction || 'vertical'}
+                      value={activeRepeaterFrame.repeaterBinding.direction || 'vertical'}
                       onChange={(e) => {
-                        updateNodes([parentRepeaterFrame.id], {
+                        updateNodes([activeRepeaterFrame.id], {
                           repeaterBinding: {
-                            ...parentRepeaterFrame.repeaterBinding!,
+                            ...activeRepeaterFrame.repeaterBinding!,
                             direction: e.target.value as any
                           }
                         }, true);
@@ -1603,11 +1689,11 @@ export const RightSidebar: React.FC = () => {
                   <div>
                     <label className="text-[11px] font-medium text-slate-600 block mb-1">Data Variable</label>
                     <select
-                      value={parentRepeaterFrame.repeaterBinding.arrayVariableId}
+                      value={activeRepeaterFrame.repeaterBinding.arrayVariableId}
                       onChange={(e) => {
-                        updateNodes([parentRepeaterFrame.id], {
+                        updateNodes([activeRepeaterFrame.id], {
                           repeaterBinding: {
-                            ...parentRepeaterFrame.repeaterBinding!,
+                            ...activeRepeaterFrame.repeaterBinding!,
                             arrayVariableId: e.target.value
                           }
                         }, true);
@@ -1628,12 +1714,12 @@ export const RightSidebar: React.FC = () => {
                   <label className="text-[11px] font-medium text-slate-600 block mb-1">Item Scope Name</label>
                   <input
                     type="text"
-                    value={parentRepeaterFrame.repeaterBinding.itemName || 'item'}
+                    value={activeRepeaterFrame.repeaterBinding.itemName || 'item'}
                     placeholder="e.g. item, user, product"
                     onChange={(e) => {
-                      updateNodes([parentRepeaterFrame.id], {
+                      updateNodes([activeRepeaterFrame.id], {
                         repeaterBinding: {
-                          ...parentRepeaterFrame.repeaterBinding!,
+                          ...activeRepeaterFrame.repeaterBinding!,
                           itemName: e.target.value || 'item'
                         }
                       }, true);

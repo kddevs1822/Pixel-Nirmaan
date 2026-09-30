@@ -1,7 +1,7 @@
-import { CanvasNode, StateVariable } from '../models/types';
+import { CanvasNode, StateVariable, DataSource } from '../models/types';
 
 export class CodeGeneratorService {
-  static generate(nodes: CanvasNode[], stateVariables: StateVariable[] = []): Record<string, string> {
+  static generate(nodes: CanvasNode[], stateVariables: StateVariable[] = [], dataSources: DataSource[] = []): Record<string, string> {
     const hasFrame = nodes.some(n => n.type === 'Frame');
     if (!hasFrame) {
       throw new Error('Cannot export: No Frame found on canvas. Please add at least one Frame before exporting.');
@@ -143,14 +143,14 @@ export class CodeGeneratorService {
     // Components
     masterComponents.forEach(comp => {
       const componentName = this.getComponentName(comp);
-      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap, stateVariables, masterComponents);
+      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap, stateVariables, masterComponents, dataSources);
     });
 
     // Generate page code
     pages.forEach((page, index) => {
       const routeInfo = pageRouteMap.find(p => p.frameId === page.id);
       const pageName = routeInfo ? routeInfo.componentName : `Page${index + 1}`;
-      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap, pageName, stateVariables);
+      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap, pageName, stateVariables, dataSources);
     });
 
     // App & Router
@@ -694,12 +694,52 @@ ${routeElements.join('\n')}
     return clean;
   }
 
+  private static normalizeUrl(rawUrl: string): string {
+    let url = (rawUrl || '').trim();
+    if (!url) return '';
+    if (/^ttps?:\/\//i.test(url)) {
+      url = 'h' + url;
+    } else if (/^\/\//.test(url)) {
+      url = 'https:' + url;
+    } else if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(url)) {
+      if (url.startsWith('localhost') || url.startsWith('127.0.0.1')) {
+        url = 'http://' + url;
+      } else {
+        url = 'https://' + url;
+      }
+    }
+    return url;
+  }
+
+  private static toSafeJsPath(expr: string, stateVariables: StateVariable[]): string {
+    if (!expr) return '';
+    const normalized = expr.replace(/\[\s*(['"])?([a-zA-Z0-9_$]+)\1\s*\]/g, '.$2');
+    const parts = normalized.split('.');
+    const base = parts[0];
+    const rest = parts.slice(1);
+
+    let cleanBase = base;
+    if (base !== 'item') {
+      const sv = (stateVariables || []).find(v => v.id === base || v.name === base);
+      cleanBase = sv ? this.sanitizeVarName(sv.name) : this.sanitizeVarName(base);
+    }
+
+    if (rest.length === 0) return cleanBase;
+
+    let path = cleanBase;
+    for (const part of rest) {
+      if (/^\d+$/.test(part)) {
+        path += `?.[${part}]`;
+      } else {
+        path += `?.${part}`;
+      }
+    }
+    return path;
+  }
+
   private static resolveBindingExpr(expr: string, stateVariables: StateVariable[]): string {
     if (!expr) return '';
-    if (expr.startsWith('item') || expr.includes('.')) return expr;
-    const sv = (stateVariables || []).find(v => v.id === expr || v.name === expr);
-    if (sv) return this.sanitizeVarName(sv.name);
-    return this.sanitizeVarName(expr);
+    return this.toSafeJsPath(expr, stateVariables);
   }
 
   private static getRelatedNodes(node: CanvasNode, allNodes: CanvasNode[]): CanvasNode[] {
@@ -720,11 +760,18 @@ ${routeElements.join('\n')}
     return ids;
   }
 
+  private static generatePathAccess(base: string, pathStr: string): string {
+    const parts = pathStr.split('.').filter(Boolean);
+    if (parts.length === 0) return base;
+    return base + '?.' + parts.join('?.');
+  }
+
   private static generateNodeEventHandlers(
     node: CanvasNode, 
     allNodes: CanvasNode[],
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
-    stateVariables: StateVariable[] = []
+    stateVariables: StateVariable[] = [],
+    dataSources: DataSource[] = []
   ): string {
     const onClickStatements: string[] = [];
     const onDblClickStatements: string[] = [];
@@ -868,6 +915,54 @@ ${routeElements.join('\n')}
           } else if (act.type === 'submitForm') {
             const targetFormQuery = act.targetNodeId ? `document.querySelector('[data-node-id="${act.targetNodeId}"]') || document.getElementById('node-${act.targetNodeId}') || ` : '';
             statements.push(`const formEl = ${targetFormQuery}e.currentTarget.closest('form') || document.querySelector('form'); const targetForm = formEl ? (formEl.tagName === 'FORM' ? formEl : formEl.closest('form')) : null; if (targetForm) { if (typeof targetForm.requestSubmit === 'function') targetForm.requestSubmit(); else targetForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); }`);
+          } else if (act.type === 'callApi') {
+            let url = act.apiUrl || '';
+            let method = act.apiMethod || 'GET';
+            let headersObj: Record<string, string> = {};
+            let body = act.apiBody;
+            let targetVarId = act.apiTargetVariableId;
+            let responsePath = act.apiResponsePath;
+
+            if (act.dataSourceId && act.dataSourceId !== 'custom') {
+              const ds = (dataSources || []).find(d => d.id === act.dataSourceId);
+              if (ds) {
+                url = ds.url;
+                method = ds.method;
+                (ds.headers || []).filter(h => h.enabled && h.key).forEach(h => {
+                  headersObj[h.key] = h.value;
+                });
+                if (!body && ds.bodyTemplate) body = ds.bodyTemplate;
+                if (!targetVarId && ds.targetVariableId) targetVarId = ds.targetVariableId;
+                if (!responsePath && ds.responsePath) responsePath = ds.responsePath;
+              }
+            } else if (act.apiHeaders) {
+              act.apiHeaders.filter(h => h.enabled && h.key).forEach(h => {
+                headersObj[h.key] = h.value;
+              });
+            }
+
+            const finalUrl = this.normalizeUrl(url);
+            if (finalUrl) {
+              if (act.delay && act.delay > 0) {
+                statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+              }
+
+              const sv = targetVarId ? (stateVariables || []).find(v => v.id === targetVarId || v.name === targetVarId) : undefined;
+              const rawVarName = sv ? sv.name : targetVarId;
+              const cleanVarName = rawVarName ? this.sanitizeVarName(rawVarName) : '';
+              const setter = cleanVarName ? `set${cleanVarName.charAt(0).toUpperCase() + cleanVarName.slice(1)}` : '';
+
+              const headersStr = JSON.stringify(headersObj);
+              const bodyStr = (['POST', 'PUT', 'PATCH'].includes(method) && body)
+                ? `, body: ${JSON.stringify(body)}`
+                : '';
+
+              const pathAccess = responsePath ? `result = ${this.generatePathAccess('data', responsePath)};` : '';
+              const setterCall = setter ? `${setter}(result);` : '';
+              const logCall = cleanVarName ? `console.log('⚡ [PixelNirmaan] API response saved to "${cleanVarName}":', result);` : `console.log('⚡ [PixelNirmaan] API call success:', result);`;
+
+              statements.push(`try { const res = await fetch('${finalUrl}', { method: '${method}', headers: ${headersStr}${bodyStr} }); const data = await res.json(); let result = data; ${pathAccess} ${setterCall} ${logCall} } catch (err) { console.error('API call error:', err); }`);
+            }
           }
         });
 
@@ -1013,28 +1108,36 @@ ${routeElements.join('\n')}
     const handlerParts: string[] = [];
 
     if (onClickStatements.length > 0) {
-      handlerParts.push(`onClick={(e) => { ${formatStatements(onClickStatements)} }}`);
+      const isAsync = onClickStatements.some(s => s.includes('await '));
+      handlerParts.push(`onClick={${isAsync ? 'async ' : ''}(e) => { ${formatStatements(onClickStatements)} }}`);
     }
     if (onDblClickStatements.length > 0) {
-      handlerParts.push(`onDoubleClick={(e) => { ${formatStatements(onDblClickStatements)} }}`);
+      const isAsync = onDblClickStatements.some(s => s.includes('await '));
+      handlerParts.push(`onDoubleClick={${isAsync ? 'async ' : ''}(e) => { ${formatStatements(onDblClickStatements)} }}`);
     }
     if (onMouseEnterStatements.length > 0) {
-      handlerParts.push(`onMouseEnter={(e) => { ${formatStatements(onMouseEnterStatements)} }}`);
+      const isAsync = onMouseEnterStatements.some(s => s.includes('await '));
+      handlerParts.push(`onMouseEnter={${isAsync ? 'async ' : ''}(e) => { ${formatStatements(onMouseEnterStatements)} }}`);
     }
     if (onMouseLeaveStatements.length > 0) {
-      handlerParts.push(`onMouseLeave={(e) => { ${formatStatements(onMouseLeaveStatements)} }}`);
+      const isAsync = onMouseLeaveStatements.some(s => s.includes('await '));
+      handlerParts.push(`onMouseLeave={${isAsync ? 'async ' : ''}(e) => { ${formatStatements(onMouseLeaveStatements)} }}`);
     }
     if (onFocusStatements.length > 0) {
-      handlerParts.push(`tabIndex={0} onFocus={(e) => { ${formatStatements(onFocusStatements)} }}`);
+      const isAsync = onFocusStatements.some(s => s.includes('await '));
+      handlerParts.push(`tabIndex={0} onFocus={${isAsync ? 'async ' : ''}(e) => { ${formatStatements(onFocusStatements)} }}`);
     }
     if (onBlurStatements.length > 0) {
-      handlerParts.push(`onBlur={(e) => { ${formatStatements(onBlurStatements)} }}`);
+      const isAsync = onBlurStatements.some(s => s.includes('await '));
+      handlerParts.push(`onBlur={${isAsync ? 'async ' : ''}(e) => { ${formatStatements(onBlurStatements)} }}`);
     }
     if (onChangeStatements.length > 0) {
-      handlerParts.push(`onChange={(e) => { ${formatStatements(onChangeStatements)} }}`);
+      const isAsync = onChangeStatements.some(s => s.includes('await '));
+      handlerParts.push(`onChange={${isAsync ? 'async ' : ''}(e) => { ${formatStatements(onChangeStatements)} }}`);
     }
     if (onSubmitStatements.length > 0) {
-      handlerParts.push(`onSubmit={(e) => { e.preventDefault(); ${formatStatements(onSubmitStatements)} }}`);
+      const isAsync = onSubmitStatements.some(s => s.includes('await '));
+      handlerParts.push(`onSubmit={${isAsync ? 'async ' : ''}(e) => { e.preventDefault(); ${formatStatements(onSubmitStatements)} }}`);
     } else if (node.type === 'FormContainer') {
       handlerParts.push(`onSubmit={(e) => { e.preventDefault(); }}`);
     }
@@ -1490,18 +1593,19 @@ ${routeElements.join('\n')}
     pages: CanvasNode[],
     pageRouteMap: { frameId: string; route: string; componentName: string }[],
     stateVariables: StateVariable[],
-    indent: string = '        '
+    indent: string = '        ',
+    dataSources: DataSource[] = []
   ): string {
     const children = allNodes.filter(n => n.parentId === frame.id);
 
     if (!frame.repeaterBinding) {
-      return children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}`);
+      return children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables, undefined, dataSources)).join(`\n${indent}`);
     }
 
     const repeatedChildren = children.filter(c => !c.excludeFromRepeater);
     const staticChildren = children.filter(c => c.excludeFromRepeater);
 
-    const rawStaticJsx = staticChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables)).join(`\n${indent}`);
+    const rawStaticJsx = staticChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables, undefined, dataSources)).join(`\n${indent}`);
 
     const itemName = frame.repeaterBinding.itemName || 'item';
     const varId = frame.repeaterBinding.arrayVariableId;
@@ -1528,7 +1632,7 @@ ${routeElements.join('\n')}
       itemW = Math.round(frame.width || 200);
     }
 
-    const rawRepeatedJsx = repeatedChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables, { x: minX, y: minY })).join(`\n${indent}    `);
+    const rawRepeatedJsx = repeatedChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, frame, pages, pageRouteMap, stateVariables, { x: minX, y: minY }, dataSources)).join(`\n${indent}    `);
 
     const staticContentJsx = rawStaticJsx ? `${rawStaticJsx}\n${indent}` : '';
 
@@ -1551,7 +1655,8 @@ ${indent}</div>`;
     pages: CanvasNode[] = [],
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
     stateVariables: StateVariable[] = [],
-    offset?: { x: number; y: number }
+    offset?: { x: number; y: number },
+    dataSources: DataSource[] = []
   ): string {
     const round = (val: number) => Math.round(val);
 
@@ -1618,7 +1723,7 @@ ${indent}</div>`;
       const posStyleStr = this.generateNodePositionStyles(node, false, parentNode, posExtraStyles, offset);
       const animClasses = this.generateNodeAnimationClasses(node, allNodes);
       const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
-      const eventHandlers = this.generateNodeEventHandlers(node, allNodes, pageRouteMap, stateVariables);
+      const eventHandlers = this.generateNodeEventHandlers(node, allNodes, pageRouteMap, stateVariables, dataSources);
 
       const cursorClass = isInteractive ? ' cursor-pointer z-10 pointer-events-auto' : ' pointer-events-auto';
       const elemIdAttr = ` id="node-${node.id}" data-node-id="${node.sourceNodeId || node.id}"`;
@@ -1675,7 +1780,7 @@ ${indent}</div>`;
     let styleClasses = this.generateNodeStyleClasses(node, false, parentNode);
     const animClasses = this.generateNodeAnimationClasses(node, allNodes);
     const animStyleStr = this.generateNodeAnimationStyles(node, parentNode);
-    const eventHandlers = this.generateNodeEventHandlers(node, allNodes, pageRouteMap, stateVariables);
+    const eventHandlers = this.generateNodeEventHandlers(node, allNodes, pageRouteMap, stateVariables, dataSources);
 
     const cursorClass = (targetRoute || isTriggerSource || hasActions) ? ' cursor-pointer z-10 pointer-events-auto' : (isInteractive ? ' z-10 pointer-events-auto' : ' pointer-events-auto');
     const elemIdAttr = ` id="node-${node.id}" data-node-id="${node.sourceNodeId || node.id}"`;
@@ -1765,25 +1870,21 @@ ${indent}</div>`;
       if (node.stroke) extraStyles.push(`borderColor: '${node.stroke}'`);
       const inputStyleStr = this.generateNodePositionStyles(node, false, parentNode, extraStyles, offset);
       const children = allNodes.filter(n => n.parentId === node.id);
-      const innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap, stateVariables)).join('\n      ');
+      const innerContent = children.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap, stateVariables, undefined, dataSources)).join('\n      ');
       return `<form${elemIdAttr}${inputStyleStr}${eventHandlers} className="p-4 border border-dashed rounded-lg relative">
         ${innerContent}
       </form>`;
     }
 
     if (node.type === 'Frame') {
-      innerContent = this.generateFrameChildrenJsx(node, allNodes, nodesById, masterComponents, isMasterComponentDef, pages, pageRouteMap, stateVariables, '      ');
+      innerContent = this.generateFrameChildrenJsx(node, allNodes, nodesById, masterComponents, isMasterComponentDef, pages, pageRouteMap, stateVariables, '      ', dataSources);
     } else if (node.type === 'Text') {
       const boundExpr = node.bindings?.text || (nodeRelated.find(n => n.bindings?.text)?.bindings?.text);
       const boundText = boundExpr ? this.resolveBindingExpr(boundExpr, stateVariables) : null;
       let fallbackText = (node.text && node.text.trim() !== '') ? node.text : '';
       if (fallbackText === '""' || fallbackText === "''") fallbackText = '';
       if (boundText) {
-        if (boundText.startsWith('item') || boundText.includes('.')) {
-          innerContent = `{typeof ${boundText} === 'boolean' ? String(${boundText}) : (${boundText} || item?.text || item?.title || item?.name || "${fallbackText}")}`;
-        } else {
-          innerContent = `{typeof ${boundText} === 'boolean' ? String(${boundText}) : (${boundText} !== undefined && ${boundText} !== null ? ${boundText} : "${fallbackText}")}`;
-        }
+        innerContent = `{typeof ${boundText} === 'boolean' ? String(${boundText}) : (typeof ${boundText} === 'object' && ${boundText} !== null ? (Array.isArray(${boundText}) ? \`[\${${boundText}.length} items]\` : JSON.stringify(${boundText})) : (${boundText} ?? "${fallbackText}"))}`;
       } else {
         let textVal = node.text || '';
         if (textVal === '""' || textVal === "''") textVal = '';
@@ -1793,8 +1894,9 @@ ${indent}</div>`;
       }
     } else if (node.type === 'Image') {
       const boundSrc = node.bindings?.src || (nodeRelated.find(n => n.bindings?.src)?.bindings?.src);
-      const imgSrc = boundSrc
-        ? `{${boundSrc} || item?.src || item?.image || "${node.src || ''}"}`
+      const resolvedSrc = boundSrc ? this.resolveBindingExpr(boundSrc, stateVariables) : null;
+      const imgSrc = resolvedSrc
+        ? `{${resolvedSrc} || "${node.src || ''}"}`
         : (dynamicProps.src 
             ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue}"}`
             : `"${node.src || ''}"`);
@@ -1803,7 +1905,7 @@ ${indent}</div>`;
 
     const nonFrameChildren = allNodes.filter(n => n.parentId === node.id);
     if (node.type !== 'Frame' && nonFrameChildren.length > 0) {
-      const childrenJsx = nonFrameChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap, stateVariables)).join('\n        ');
+      const childrenJsx = nonFrameChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, isMasterComponentDef, node, pages, pageRouteMap, stateVariables, undefined, dataSources)).join('\n        ');
       innerContent = innerContent ? `${childrenJsx}\n        ${innerContent}` : childrenJsx;
     }
 
@@ -1844,7 +1946,8 @@ ${indent}</div>`;
     pages: CanvasNode[] = [],
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
     stateVariables: StateVariable[] = [],
-    masterComponents: CanvasNode[] = []
+    masterComponents: CanvasNode[] = [],
+    dataSources: DataSource[] = []
   ): string {
     const componentName = this.getComponentName(comp);
     const compDescendants = [comp, ...this.getDescendants(comp.id, allNodes)];
@@ -1917,6 +2020,21 @@ ${indent}</div>`;
                 stateDeclarations.push(`const ${cleanName} = props['${cleanName}'] !== undefined ? props['${cleanName}'] : internal_${cleanName};`);
                 stateDeclarations.push(`const ${setter} = props['${setter}'] || setInternal_${cleanName};`);
               }
+            } else if (act.enabled !== false && act.type === 'callApi') {
+              const targetVarId = act.apiTargetVariableId || (act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId)?.targetVariableId : undefined);
+              if (targetVarId) {
+                const sv = (stateVariables || []).find(v => v.id === targetVarId || v.name === targetVarId);
+                const rawName = sv ? sv.name : targetVarId;
+                const cleanName = this.sanitizeVarName(rawName);
+                if (!declaredVarNames.has(cleanName)) {
+                  declaredVarNames.add(cleanName);
+                  const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+                  const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+                  stateDeclarations.push(`const [internal_${cleanName}, setInternal_${cleanName}] = useState(${defaultVal});`);
+                  stateDeclarations.push(`const ${cleanName} = props['${cleanName}'] !== undefined ? props['${cleanName}'] : internal_${cleanName};`);
+                  stateDeclarations.push(`const ${setter} = props['${setter}'] || setInternal_${cleanName};`);
+                }
+              }
             }
           });
         });
@@ -1937,7 +2055,7 @@ ${indent}</div>`;
     const bodyStr = bodyLines.length > 0 ? bodyLines.join('\n') + '\n' : '';
     
     const directChildren = allNodes.filter(n => n.parentId === comp.id);
-    const childrenJsx = directChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, true, comp, pages, pageRouteMap, stateVariables)).join('\n      ');
+    const childrenJsx = directChildren.map(child => this.generateJsxForNode(child, allNodes, nodesById, masterComponents, true, comp, pages, pageRouteMap, stateVariables, undefined, dataSources)).join('\n      ');
     
     const rootClasses = this.generateNodeTailwindClasses(comp, true);
     const compImportsStr = compImports ? compImports + '\n' : '';
@@ -1962,7 +2080,8 @@ ${bodyStr}  return (
     pages: CanvasNode[] = [],
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
     pageName: string = 'Page',
-    stateVariables: StateVariable[] = []
+    stateVariables: StateVariable[] = [],
+    dataSources: DataSource[] = []
   ): string {
     // Find all variant frames for this primary page
     const baseName = (page.name || '').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
@@ -2045,15 +2164,19 @@ ${bodyStr}  return (
     allNodes.forEach(node => {
       if (node.bindings) {
         Object.values(node.bindings).forEach(expr => {
-          if (expr && !expr.startsWith('item') && !expr.includes('.')) {
-            const sv = (stateVariables || []).find(v => v.id === expr || v.name === expr);
-            const rawName = sv ? sv.name : expr;
-            const cleanName = this.sanitizeVarName(rawName);
-            if (!declaredVarNames.has(cleanName)) {
-              declaredVarNames.add(cleanName);
-              const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
-              const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
-              stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
+          if (expr) {
+            const normalized = expr.replace(/\[\s*(['"])?([a-zA-Z0-9_$]+)\1\s*\]/g, '.$2');
+            const baseName = normalized.split('.')[0];
+            if (baseName && baseName !== 'item') {
+              const sv = (stateVariables || []).find(v => v.id === baseName || v.name === baseName);
+              const rawName = sv ? sv.name : baseName;
+              const cleanName = this.sanitizeVarName(rawName);
+              if (!declaredVarNames.has(cleanName)) {
+                declaredVarNames.add(cleanName);
+                const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+                const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+                stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
+              }
             }
           }
         });
@@ -2070,6 +2193,19 @@ ${bodyStr}  return (
                 const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
                 const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
                 stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
+              }
+            } else if (act.type === 'callApi') {
+              const targetVarId = act.apiTargetVariableId || (act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId)?.targetVariableId : undefined);
+              if (targetVarId) {
+                const sv = (stateVariables || []).find(v => v.id === targetVarId || v.name === targetVarId);
+                const rawName = sv ? sv.name : targetVarId;
+                const cleanName = this.sanitizeVarName(rawName);
+                if (!declaredVarNames.has(cleanName)) {
+                  declaredVarNames.add(cleanName);
+                  const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+                  const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+                  stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
+                }
               }
             }
           });
@@ -2097,12 +2233,63 @@ ${bodyStr}  return (
       stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${JSON.stringify(defaultArray, null, 2)});`);
     });
 
+    // Generate page-load auto-fetch effects
+    const pageLoadDataSources = (dataSources || []).filter(ds => 
+      ds.fetchOnLoad && (!ds.targetFrameId || pageFrameIds.has(ds.targetFrameId) || (desktopFrame && ds.targetFrameId === desktopFrame.sourceNodeId))
+    );
+
+    const autoFetchEffects: string[] = [];
+    pageLoadDataSources.forEach(ds => {
+      const sv = ds.targetVariableId ? (stateVariables || []).find(v => v.id === ds.targetVariableId || v.name === ds.targetVariableId) : undefined;
+      const rawVarName = sv ? sv.name : ds.targetVariableId;
+      const cleanVarName = rawVarName ? this.sanitizeVarName(rawVarName) : '';
+      if (cleanVarName && !declaredVarNames.has(cleanVarName)) {
+        declaredVarNames.add(cleanVarName);
+        const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+        const setter = `set${cleanVarName.charAt(0).toUpperCase() + cleanVarName.slice(1)}`;
+        stateDeclarations.push(`const [${cleanVarName}, ${setter}] = useState(${defaultVal});`);
+      }
+
+      const headersObj: Record<string, string> = {};
+      (ds.headers || []).filter(h => h.enabled && h.key).forEach(h => {
+        headersObj[h.key] = h.value;
+      });
+
+      const method = ds.method || 'GET';
+      const bodyStr = (['POST', 'PUT', 'PATCH'].includes(method) && ds.bodyTemplate)
+        ? `,\n        body: ${JSON.stringify(ds.bodyTemplate)}`
+        : '';
+      const setter = cleanVarName ? `set${cleanVarName.charAt(0).toUpperCase() + cleanVarName.slice(1)}` : '';
+      const pathAccess = ds.responsePath ? `result = ${this.generatePathAccess('data', ds.responsePath)};` : '';
+      const setterCall = setter ? `${setter}(result);` : '';
+
+      autoFetchEffects.push(`  useEffect(() => {
+    const fetch_${this.sanitizeVarName(ds.name || 'data')} = async () => {
+      try {
+        const res = await fetch('${this.normalizeUrl(ds.url)}', {
+          method: '${method}',
+          headers: ${JSON.stringify(headersObj)}${bodyStr}
+        });
+        const data = await res.json();
+        let result = data;
+        ${pathAccess}
+        ${setterCall}
+      } catch (err) {
+        console.error('Failed to load data for ${ds.name}:', err);
+      }
+    };
+    fetch_${this.sanitizeVarName(ds.name || 'data')}();
+  }, []);`);
+    });
+
+    const autoFetchStr = autoFetchEffects.length > 0 ? '\n' + autoFetchEffects.join('\n\n') + '\n' : '';
+
     const stateDeclStr = stateDeclarations.length > 0 ? '\n  ' + stateDeclarations.join('\n  ') + '\n' : '';
 
     // Generate JSX for children of each frame
-    const desktopJsx = desktopFrame ? this.generateFrameChildrenJsx(desktopFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ') : '';
-    const tabletJsx = tabletFrame ? this.generateFrameChildrenJsx(tabletFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ') : '';
-    const mobileJsx = mobileFrame ? this.generateFrameChildrenJsx(mobileFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ') : '';
+    const desktopJsx = desktopFrame ? this.generateFrameChildrenJsx(desktopFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ', dataSources) : '';
+    const tabletJsx = tabletFrame ? this.generateFrameChildrenJsx(tabletFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ', dataSources) : '';
+    const mobileJsx = mobileFrame ? this.generateFrameChildrenJsx(mobileFrame, allNodes, nodesById, masterComponents, false, pages, pageRouteMap, stateVariables, '        ', dataSources) : '';
 
     const dW = Math.round(desktopFrame.width || 1440);
     const dH = Math.round(desktopFrame.height || 900);
@@ -2154,7 +2341,7 @@ ${stateDeclStr}
     window.addEventListener('resize', updateScale);
     return () => window.removeEventListener('resize', updateScale);
   }, []);
-
+${autoFetchStr}
   const safeScaleX = Math.max(0.01, (isNaN(scaleX) || !scaleX) ? 1 : scaleX);
   const safeScaleY = Math.max(0.01, (isNaN(scaleY) || !scaleY) ? 1 : scaleY);
 
@@ -2215,7 +2402,7 @@ ${stateDeclStr}
     window.addEventListener('resize', updateScale);
     return () => window.removeEventListener('resize', updateScale);
   }, []);
-
+${autoFetchStr}
   const safeScaleX = Math.max(0.01, (isNaN(scaleX) || !scaleX) ? 1 : scaleX);
   const safeScaleY = Math.max(0.01, (isNaN(scaleY) || !scaleY) ? 1 : scaleY);
 
