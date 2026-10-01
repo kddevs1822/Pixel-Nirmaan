@@ -1,4 +1,4 @@
-import { CanvasNode, StateVariable, DataSource } from '../models/types';
+import { CanvasNode, StateVariable, DataSource, NodeAction } from '../models/types';
 
 export class CodeGeneratorService {
   static generate(nodes: CanvasNode[], stateVariables: StateVariable[] = [], dataSources: DataSource[] = []): Record<string, string> {
@@ -766,6 +766,348 @@ ${routeElements.join('\n')}
     return base + '?.' + parts.join('?.');
   }
 
+  private static actionsHaveNavigate(actions: NodeAction[]): boolean {
+    if (!actions || actions.length === 0) return false;
+    return actions.some(act => {
+      if (act.enabled === false) return false;
+      if (act.type === 'navigate') return true;
+      if (act.type === 'condition') {
+        return this.actionsHaveNavigate(act.trueActions || []) || this.actionsHaveNavigate(act.falseActions || []);
+      }
+      return false;
+    });
+  }
+
+  private static collectActionStateVariables(
+    actions: NodeAction[],
+    stateVariables: StateVariable[],
+    declaredVarNames: Set<string>,
+    stateDeclarations: string[],
+    isComponent: boolean = false,
+    dataSources: DataSource[] = []
+  ): void {
+    if (!actions || actions.length === 0) return;
+
+    const addVar = (varIdOrName?: string) => {
+      if (!varIdOrName) return;
+      const sv = (stateVariables || []).find(v => v.id === varIdOrName || v.name === varIdOrName);
+      const rawName = sv ? sv.name : varIdOrName;
+      const cleanName = this.sanitizeVarName(rawName);
+      if (!cleanName || declaredVarNames.has(cleanName)) return;
+      declaredVarNames.add(cleanName);
+
+      const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
+      const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
+
+      if (isComponent) {
+        stateDeclarations.push(`const [internal_${cleanName}, setInternal_${cleanName}] = useState(${defaultVal});`);
+        stateDeclarations.push(`const ${cleanName} = props['${cleanName}'] !== undefined ? props['${cleanName}'] : internal_${cleanName};`);
+        stateDeclarations.push(`const ${setter} = props['${setter}'] || setInternal_${cleanName};`);
+      } else {
+        stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
+      }
+    };
+
+    actions.forEach(act => {
+      if (act.enabled === false) return;
+
+      if (act.type === 'setState' && act.stateVariableId) {
+        addVar(act.stateVariableId);
+      } else if (act.type === 'callApi') {
+        const targetVarId = act.apiTargetVariableId || (act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId)?.targetVariableId : undefined);
+        if (targetVarId) {
+          addVar(targetVarId);
+        }
+      } else if (act.type === 'condition') {
+        if (act.conditionVariableId) {
+          addVar(act.conditionVariableId);
+        }
+        if (act.conditionCompareType === 'variable' && act.conditionCompareVariableId) {
+          addVar(act.conditionCompareVariableId);
+        }
+        if (act.trueActions && act.trueActions.length > 0) {
+          this.collectActionStateVariables(act.trueActions, stateVariables, declaredVarNames, stateDeclarations, isComponent, dataSources);
+        }
+        if (act.falseActions && act.falseActions.length > 0) {
+          this.collectActionStateVariables(act.falseActions, stateVariables, declaredVarNames, stateDeclarations, isComponent, dataSources);
+        }
+      }
+    });
+  }
+
+  private static generateActionListStatements(
+    actions: NodeAction[],
+    node: CanvasNode,
+    allNodes: CanvasNode[],
+    pageRouteMap: { frameId: string; route: string; componentName: string }[],
+    stateVariables: StateVariable[],
+    dataSources: DataSource[]
+  ): string[] {
+    const statements: string[] = [];
+
+    (actions || []).forEach(act => {
+      if (act.enabled === false) return;
+
+      if (act.type === 'setState') {
+        if (act.delay && act.delay > 0) {
+          statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+        }
+        const sv = stateVariables.find(v => v.id === act.stateVariableId || v.name === act.stateVariableId);
+        const rawVarName = sv ? sv.name : (act.stateVariableId || 'stateVar');
+        const varName = this.sanitizeVarName(rawVarName);
+        if (varName) {
+          const setter = `set${varName.charAt(0).toUpperCase() + varName.slice(1)}`;
+          const op = act.stateOperation || 'set';
+          if (op === 'set') {
+            let val: string;
+            if (sv && sv.type === 'number') {
+              const num = Number(act.value);
+              val = isNaN(num) ? '0' : String(num);
+            } else if (sv && sv.type === 'boolean') {
+              val = (act.value === 'true' || act.value === true) ? 'true' : 'false';
+            } else if (sv && sv.type === 'string') {
+              let s = String(act.value ?? '').trim();
+              if (s === '""' || s === "''") s = '';
+              else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+              val = `'${s.replace(/'/g, "\\'")}'`;
+            } else {
+              if (act.value === 'true' || act.value === true) {
+                val = 'true';
+              } else if (act.value === 'false' || act.value === false) {
+                val = 'false';
+              } else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') {
+                val = String(Number(act.value));
+              } else if (act.value !== undefined && act.value !== '') {
+                val = `'${String(act.value).replace(/'/g, "\\'")}'`;
+              } else if (node.type === 'TextInput' || node.type === 'TextArea' || node.type === 'SelectDropdown') {
+                val = 'e.target.value';
+              } else {
+                val = 'true';
+              }
+            }
+            statements.push(`${setter}(${val});`);
+          } else if (op === 'toggle') {
+            statements.push(`${setter}(prev => !prev);`);
+          } else if (op === 'increment') {
+            const step = (act.value !== undefined && act.value !== '') ? (Number(act.value) || 1) : 1;
+            statements.push(`${setter}(prev => (Number(prev) || 0) + ${step});`);
+          } else if (op === 'decrement') {
+            const step = (act.value !== undefined && act.value !== '') ? (Number(act.value) || 1) : 1;
+            statements.push(`${setter}(prev => (Number(prev) || 0) - ${step});`);
+          } else if (op === 'setInputVal') {
+            if (node.type === 'Checkbox' || node.type === 'Switch') {
+              statements.push(`${setter}(e.target.checked);`);
+            } else {
+              statements.push(`${setter}(e.target.value);`);
+            }
+          }
+        }
+      } else if (act.type === 'navigate') {
+        if (act.delay && act.delay > 0) {
+          statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+        }
+        const route = act.targetPageId ? this.getRouteForTarget(act.targetPageId, pageRouteMap) : '';
+        if (route) {
+          statements.push(`navigate('${route}');`);
+        }
+      } else if (act.type === 'triggerAnimation') {
+        if (act.delay && act.delay > 0) {
+          statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+        }
+        const targetId = act.targetNodeId || node.id;
+        const targetNode = allNodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+        const primaryTargetId = targetNode?.sourceNodeId || targetNode?.id || targetId;
+        const animType = act.animationType || targetNode?.animation?.type || 'bounce';
+        const baseClass = this.getAnimBaseClass(animType);
+        const isHidden = !!targetNode?.animation?.initiallyHidden;
+        const reverseClass = this.getAnimReverseClass(animType, isHidden);
+        if (baseClass) {
+          const allAnimClasses = [
+            'animate-bounce-subtle', 'animate-pulse-subtle', 'animate-spin-smooth',
+            'animate-fade-in', 'animate-fade-out',
+            'animate-slide-up', 'animate-slide-up-reverse',
+            'animate-slide-down', 'animate-slide-down-reverse',
+            'animate-slide-left', 'animate-slide-left-reverse',
+            'animate-slide-right', 'animate-slide-right-reverse'
+          ].map(c => `'${c}'`).join(', ');
+
+          if (reverseClass) {
+            statements.push(`const animContainer = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (animContainer) { const animEl = animContainer.querySelector('[data-anim="true"]') || animContainer; animContainer.classList.remove('hidden', 'is-initially-hidden'); animContainer.style.pointerEvents = 'auto'; if (animEl.classList.contains('${baseClass}')) { animEl.classList.remove(${allAnimClasses}); void animEl.offsetWidth; animEl.classList.add('${reverseClass}'); ${isHidden ? "animEl.classList.add('is-initially-hidden');" : ""} } else { animEl.classList.remove(${allAnimClasses}, 'is-initially-hidden', 'hidden'); animEl.style.opacity = '1'; animEl.style.pointerEvents = 'auto'; void animEl.offsetWidth; animEl.classList.add('${baseClass}'); } }`);
+          } else {
+            statements.push(`const animContainer = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (animContainer) { const animEl = animContainer.querySelector('[data-anim="true"]') || animContainer; animContainer.classList.remove('hidden', 'is-initially-hidden'); animContainer.style.pointerEvents = 'auto'; animEl.classList.remove(${allAnimClasses}, 'is-initially-hidden', 'hidden'); animEl.style.opacity = '1'; animEl.style.pointerEvents = 'auto'; animEl.style.animationIterationCount = '1'; void animEl.offsetWidth; animEl.classList.add('${baseClass}'); setTimeout(() => { animEl.classList.remove('${baseClass}'); animEl.style.animationIterationCount = ''; }, 1000); }`);
+          }
+        }
+      } else if (act.type === 'toggleVisibility') {
+        if (act.delay && act.delay > 0) {
+          statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+        }
+        const targetId = act.targetNodeId || (node.type !== 'FormContainer' ? node.id : undefined);
+        if (targetId) {
+          const targetNode = allNodes.find(n => n.id === targetId);
+          const primaryTargetId = targetNode?.sourceNodeId || targetId;
+          const visAction = act.visibilityAction || 'toggle';
+          if (visAction === 'show') {
+            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; }`);
+          } else if (visAction === 'hide') {
+            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; }`);
+          } else {
+            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { if (visEl.classList.contains('hidden') || visEl.classList.contains('is-initially-hidden')) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; } else { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; } }`);
+          }
+        }
+      } else if (act.type === 'resetForm') {
+        if (act.delay && act.delay > 0) {
+          statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+        }
+        const targetFormQuery = act.targetNodeId ? `document.querySelector('[data-node-id="${act.targetNodeId}"]') || document.getElementById('node-${act.targetNodeId}') || ` : '';
+        statements.push(`const formEl = ${targetFormQuery}e.currentTarget.closest('form') || document.querySelector('form'); const targetForm = formEl ? (formEl.tagName === 'FORM' ? formEl : formEl.closest('form')) : null; if (targetForm) targetForm.reset();`);
+      } else if (act.type === 'submitForm') {
+        if (act.delay && act.delay > 0) {
+          statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+        }
+        const targetFormQuery = act.targetNodeId ? `document.querySelector('[data-node-id="${act.targetNodeId}"]') || document.getElementById('node-${act.targetNodeId}') || ` : '';
+        statements.push(`const formEl = ${targetFormQuery}e.currentTarget.closest('form') || document.querySelector('form'); const targetForm = formEl ? (formEl.tagName === 'FORM' ? formEl : formEl.closest('form')) : null; if (targetForm) { if (typeof targetForm.requestSubmit === 'function') targetForm.requestSubmit(); else targetForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); }`);
+      } else if (act.type === 'callApi') {
+        let url = act.apiUrl || '';
+        let method = act.apiMethod || 'GET';
+        let headersObj: Record<string, string> = {};
+        let body = act.apiBody;
+        let targetVarId = act.apiTargetVariableId;
+        let responsePath = act.apiResponsePath;
+
+        if (act.dataSourceId && act.dataSourceId !== 'custom') {
+          const ds = (dataSources || []).find(d => d.id === act.dataSourceId);
+          if (ds) {
+            url = ds.url;
+            method = ds.method;
+            (ds.headers || []).filter(h => h.enabled && h.key).forEach(h => {
+              headersObj[h.key] = h.value;
+            });
+            if (!body && ds.bodyTemplate) body = ds.bodyTemplate;
+            if (!targetVarId && ds.targetVariableId) targetVarId = ds.targetVariableId;
+            if (!responsePath && ds.responsePath) responsePath = ds.responsePath;
+          }
+        } else if (act.apiHeaders) {
+          act.apiHeaders.filter(h => h.enabled && h.key).forEach(h => {
+            headersObj[h.key] = h.value;
+          });
+        }
+
+        const finalUrl = this.normalizeUrl(url);
+        if (finalUrl) {
+          if (act.delay && act.delay > 0) {
+            statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+          }
+
+          const sv = targetVarId ? (stateVariables || []).find(v => v.id === targetVarId || v.name === targetVarId) : undefined;
+          const rawVarName = sv ? sv.name : targetVarId;
+          const cleanVarName = rawVarName ? this.sanitizeVarName(rawVarName) : '';
+          const setter = cleanVarName ? `set${cleanVarName.charAt(0).toUpperCase() + cleanVarName.slice(1)}` : '';
+
+          const headersStr = JSON.stringify(headersObj);
+          const bodyStr = (['POST', 'PUT', 'PATCH'].includes(method) && body)
+            ? `, body: ${JSON.stringify(body)}`
+            : '';
+
+          const pathAccess = responsePath ? `result = ${this.generatePathAccess('data', responsePath)};` : '';
+          const setterCall = setter ? `${setter}(result);` : '';
+          const logCall = cleanVarName ? `console.log('⚡ [PixelNirmaan] API response saved to "${cleanVarName}":', result);` : `console.log('⚡ [PixelNirmaan] API call success:', result);`;
+
+          statements.push(`try { const res = await fetch('${finalUrl}', { method: '${method}', headers: ${headersStr}${bodyStr} }); const data = await res.json(); let result = data; ${pathAccess} ${setterCall} ${logCall} } catch (err) { console.error('API call error:', err); }`);
+        }
+      } else if (act.type === 'condition') {
+        if (!act.conditionVariableId) return;
+
+        const leftSv = (stateVariables || []).find(v => v.id === act.conditionVariableId || v.name === act.conditionVariableId);
+        const rawLeftVarName = leftSv ? leftSv.name : (act.conditionVariableId || 'value');
+        const leftVarName = this.sanitizeVarName(rawLeftVarName);
+
+        let rightExpr = "''";
+        if (act.conditionCompareType === 'variable') {
+          const rightSv = (stateVariables || []).find(v => v.id === act.conditionCompareVariableId || v.name === act.conditionCompareVariableId);
+          const rawRightVarName = rightSv ? rightSv.name : (act.conditionCompareVariableId || 'compareVal');
+          rightExpr = this.sanitizeVarName(rawRightVarName);
+        } else {
+          if (leftSv?.type === 'number') {
+            const num = Number(act.conditionValue);
+            rightExpr = isNaN(num) ? '0' : String(num);
+          } else if (leftSv?.type === 'boolean') {
+            rightExpr = (act.conditionValue === 'true' || act.conditionValue === true) ? 'true' : 'false';
+          } else {
+            if (act.conditionValue === 'true' || act.conditionValue === true) {
+              rightExpr = 'true';
+            } else if (act.conditionValue === 'false' || act.conditionValue === false) {
+              rightExpr = 'false';
+            } else if (!isNaN(Number(act.conditionValue)) && String(act.conditionValue).trim() !== '') {
+              rightExpr = String(Number(act.conditionValue));
+            } else {
+              let s = String(act.conditionValue ?? '').trim();
+              if (s === '""' || s === "''") s = '';
+              else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
+              rightExpr = `'${s.replace(/'/g, "\\'")}'`;
+            }
+          }
+        }
+
+        const op = act.conditionOperator || '==';
+        let condExpr = `Boolean(${leftVarName})`;
+
+        switch (op) {
+          case '==':
+            condExpr = `${leftVarName} == ${rightExpr}`;
+            break;
+          case '!=':
+            condExpr = `${leftVarName} != ${rightExpr}`;
+            break;
+          case '>':
+            condExpr = `Number(${leftVarName}) > Number(${rightExpr})`;
+            break;
+          case '<':
+            condExpr = `Number(${leftVarName}) < Number(${rightExpr})`;
+            break;
+          case '>=':
+            condExpr = `Number(${leftVarName}) >= Number(${rightExpr})`;
+            break;
+          case '<=':
+            condExpr = `Number(${leftVarName}) <= Number(${rightExpr})`;
+            break;
+          case 'contains':
+            condExpr = `(Array.isArray(${leftVarName}) ? ${leftVarName}.includes(${rightExpr}) : String(${leftVarName} ?? '').toLowerCase().includes(String(${rightExpr} ?? '').toLowerCase()))`;
+            break;
+          case 'isEmpty':
+            condExpr = `(${leftVarName} === null || ${leftVarName} === undefined || ${leftVarName} === '' || (Array.isArray(${leftVarName}) && ${leftVarName}.length === 0) || (typeof ${leftVarName} === 'object' && Object.keys(${leftVarName}).length === 0))`;
+            break;
+          case 'isNotEmpty':
+            condExpr = `(${leftVarName} !== null && ${leftVarName} !== undefined && ${leftVarName} !== '' && (!Array.isArray(${leftVarName}) || ${leftVarName}.length > 0) && (typeof ${leftVarName} !== 'object' || Object.keys(${leftVarName}).length > 0))`;
+            break;
+          default:
+            condExpr = `Boolean(${leftVarName})`;
+        }
+
+        const trueStmts = (act.trueActions && act.trueActions.length > 0)
+          ? this.generateActionListStatements(act.trueActions, node, allNodes, pageRouteMap, stateVariables, dataSources)
+          : [];
+        const falseStmts = (act.falseActions && act.falseActions.length > 0)
+          ? this.generateActionListStatements(act.falseActions, node, allNodes, pageRouteMap, stateVariables, dataSources)
+          : [];
+
+        if (trueStmts.length > 0 || falseStmts.length > 0) {
+          if (act.delay && act.delay > 0) {
+            statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+          }
+          if (trueStmts.length > 0 && falseStmts.length > 0) {
+            statements.push(`if (${condExpr}) { ${trueStmts.join(' ')} } else { ${falseStmts.join(' ')} }`);
+          } else if (trueStmts.length > 0) {
+            statements.push(`if (${condExpr}) { ${trueStmts.join(' ')} }`);
+          } else if (falseStmts.length > 0) {
+            statements.push(`if (!(${condExpr})) { ${falseStmts.join(' ')} }`);
+          }
+        }
+      }
+    });
+
+    return statements;
+  }
+
   private static generateNodeEventHandlers(
     node: CanvasNode, 
     allNodes: CanvasNode[],
@@ -812,160 +1154,7 @@ ${routeElements.join('\n')}
 
     if (actionSequences.length > 0) {
       actionSequences.forEach(seq => {
-        const statements: string[] = [];
-        seq.actions.forEach(act => {
-          if (act.enabled === false) return;
-          if (act.type === 'setState') {
-            const sv = stateVariables.find(v => v.id === act.stateVariableId || v.name === act.stateVariableId);
-            const rawVarName = sv ? sv.name : (act.stateVariableId || 'stateVar');
-            const varName = this.sanitizeVarName(rawVarName);
-            if (varName) {
-              const setter = `set${varName.charAt(0).toUpperCase() + varName.slice(1)}`;
-              const op = act.stateOperation || 'set';
-              if (op === 'set') {
-                let val: string;
-                if (sv && sv.type === 'number') {
-                  const num = Number(act.value);
-                  val = isNaN(num) ? '0' : String(num);
-                } else if (sv && sv.type === 'boolean') {
-                  val = (act.value === 'true' || act.value === true) ? 'true' : 'false';
-                } else if (sv && sv.type === 'string') {
-                  let s = String(act.value ?? '').trim();
-                  if (s === '""' || s === "''") s = '';
-                  else if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) s = s.slice(1, -1);
-                  val = `'${s.replace(/'/g, "\\'")}'`;
-                } else {
-                  if (act.value === 'true' || act.value === true) {
-                    val = 'true';
-                  } else if (act.value === 'false' || act.value === false) {
-                    val = 'false';
-                  } else if (!isNaN(Number(act.value)) && String(act.value).trim() !== '') {
-                    val = String(Number(act.value));
-                  } else if (act.value !== undefined && act.value !== '') {
-                    val = `'${String(act.value).replace(/'/g, "\\'")}'`;
-                  } else if (node.type === 'TextInput' || node.type === 'TextArea' || node.type === 'SelectDropdown') {
-                    val = 'e.target.value';
-                  } else {
-                    val = 'true';
-                  }
-                }
-                statements.push(`${setter}(${val});`);
-              } else if (op === 'toggle') {
-                statements.push(`${setter}(prev => !prev);`);
-              } else if (op === 'increment') {
-                const step = (act.value !== undefined && act.value !== '') ? (Number(act.value) || 1) : 1;
-                statements.push(`${setter}(prev => (Number(prev) || 0) + ${step});`);
-              } else if (op === 'decrement') {
-                const step = (act.value !== undefined && act.value !== '') ? (Number(act.value) || 1) : 1;
-                statements.push(`${setter}(prev => (Number(prev) || 0) - ${step});`);
-              } else if (op === 'setInputVal') {
-                if (node.type === 'Checkbox' || node.type === 'Switch') {
-                  statements.push(`${setter}(e.target.checked);`);
-                } else {
-                  statements.push(`${setter}(e.target.value);`);
-                }
-              }
-            }
-          } else if (act.type === 'navigate') {
-            const route = act.targetPageId ? this.getRouteForTarget(act.targetPageId, pageRouteMap) : '';
-            if (route) {
-              statements.push(`navigate('${route}');`);
-            }
-          } else if (act.type === 'triggerAnimation') {
-            const targetId = act.targetNodeId || node.id;
-            const targetNode = allNodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
-            const primaryTargetId = targetNode?.sourceNodeId || targetNode?.id || targetId;
-            const animType = act.animationType || targetNode?.animation?.type || 'bounce';
-            const baseClass = this.getAnimBaseClass(animType);
-            const isHidden = !!targetNode?.animation?.initiallyHidden;
-            const reverseClass = this.getAnimReverseClass(animType, isHidden);
-            if (baseClass) {
-              const allAnimClasses = [
-                'animate-bounce-subtle', 'animate-pulse-subtle', 'animate-spin-smooth',
-                'animate-fade-in', 'animate-fade-out',
-                'animate-slide-up', 'animate-slide-up-reverse',
-                'animate-slide-down', 'animate-slide-down-reverse',
-                'animate-slide-left', 'animate-slide-left-reverse',
-                'animate-slide-right', 'animate-slide-right-reverse'
-              ].map(c => `'${c}'`).join(', ');
-
-              if (reverseClass) {
-                statements.push(`const animContainer = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (animContainer) { const animEl = animContainer.querySelector('[data-anim="true"]') || animContainer; animContainer.classList.remove('hidden', 'is-initially-hidden'); animContainer.style.pointerEvents = 'auto'; if (animEl.classList.contains('${baseClass}')) { animEl.classList.remove(${allAnimClasses}); void animEl.offsetWidth; animEl.classList.add('${reverseClass}'); ${isHidden ? "animEl.classList.add('is-initially-hidden');" : ""} } else { animEl.classList.remove(${allAnimClasses}, 'is-initially-hidden', 'hidden'); animEl.style.opacity = '1'; animEl.style.pointerEvents = 'auto'; void animEl.offsetWidth; animEl.classList.add('${baseClass}'); } }`);
-              } else {
-                statements.push(`const animContainer = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (animContainer) { const animEl = animContainer.querySelector('[data-anim="true"]') || animContainer; animContainer.classList.remove('hidden', 'is-initially-hidden'); animContainer.style.pointerEvents = 'auto'; animEl.classList.remove(${allAnimClasses}, 'is-initially-hidden', 'hidden'); animEl.style.opacity = '1'; animEl.style.pointerEvents = 'auto'; animEl.style.animationIterationCount = '1'; void animEl.offsetWidth; animEl.classList.add('${baseClass}'); setTimeout(() => { animEl.classList.remove('${baseClass}'); animEl.style.animationIterationCount = ''; }, 1000); }`);
-              }
-            }
-          } else if (act.type === 'toggleVisibility') {
-            const targetId = act.targetNodeId || (node.type !== 'FormContainer' ? node.id : undefined);
-            if (targetId) {
-              const targetNode = allNodes.find(n => n.id === targetId);
-              const primaryTargetId = targetNode?.sourceNodeId || targetId;
-              const visAction = act.visibilityAction || 'toggle';
-              if (visAction === 'show') {
-                statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; }`);
-              } else if (visAction === 'hide') {
-                statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; }`);
-              } else {
-                statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { if (visEl.classList.contains('hidden') || visEl.classList.contains('is-initially-hidden')) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; } else { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; } }`);
-              }
-            }
-          } else if (act.type === 'resetForm') {
-            const targetFormQuery = act.targetNodeId ? `document.querySelector('[data-node-id="${act.targetNodeId}"]') || document.getElementById('node-${act.targetNodeId}') || ` : '';
-            statements.push(`const formEl = ${targetFormQuery}e.currentTarget.closest('form') || document.querySelector('form'); const targetForm = formEl ? (formEl.tagName === 'FORM' ? formEl : formEl.closest('form')) : null; if (targetForm) targetForm.reset();`);
-          } else if (act.type === 'submitForm') {
-            const targetFormQuery = act.targetNodeId ? `document.querySelector('[data-node-id="${act.targetNodeId}"]') || document.getElementById('node-${act.targetNodeId}') || ` : '';
-            statements.push(`const formEl = ${targetFormQuery}e.currentTarget.closest('form') || document.querySelector('form'); const targetForm = formEl ? (formEl.tagName === 'FORM' ? formEl : formEl.closest('form')) : null; if (targetForm) { if (typeof targetForm.requestSubmit === 'function') targetForm.requestSubmit(); else targetForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); }`);
-          } else if (act.type === 'callApi') {
-            let url = act.apiUrl || '';
-            let method = act.apiMethod || 'GET';
-            let headersObj: Record<string, string> = {};
-            let body = act.apiBody;
-            let targetVarId = act.apiTargetVariableId;
-            let responsePath = act.apiResponsePath;
-
-            if (act.dataSourceId && act.dataSourceId !== 'custom') {
-              const ds = (dataSources || []).find(d => d.id === act.dataSourceId);
-              if (ds) {
-                url = ds.url;
-                method = ds.method;
-                (ds.headers || []).filter(h => h.enabled && h.key).forEach(h => {
-                  headersObj[h.key] = h.value;
-                });
-                if (!body && ds.bodyTemplate) body = ds.bodyTemplate;
-                if (!targetVarId && ds.targetVariableId) targetVarId = ds.targetVariableId;
-                if (!responsePath && ds.responsePath) responsePath = ds.responsePath;
-              }
-            } else if (act.apiHeaders) {
-              act.apiHeaders.filter(h => h.enabled && h.key).forEach(h => {
-                headersObj[h.key] = h.value;
-              });
-            }
-
-            const finalUrl = this.normalizeUrl(url);
-            if (finalUrl) {
-              if (act.delay && act.delay > 0) {
-                statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
-              }
-
-              const sv = targetVarId ? (stateVariables || []).find(v => v.id === targetVarId || v.name === targetVarId) : undefined;
-              const rawVarName = sv ? sv.name : targetVarId;
-              const cleanVarName = rawVarName ? this.sanitizeVarName(rawVarName) : '';
-              const setter = cleanVarName ? `set${cleanVarName.charAt(0).toUpperCase() + cleanVarName.slice(1)}` : '';
-
-              const headersStr = JSON.stringify(headersObj);
-              const bodyStr = (['POST', 'PUT', 'PATCH'].includes(method) && body)
-                ? `, body: ${JSON.stringify(body)}`
-                : '';
-
-              const pathAccess = responsePath ? `result = ${this.generatePathAccess('data', responsePath)};` : '';
-              const setterCall = setter ? `${setter}(result);` : '';
-              const logCall = cleanVarName ? `console.log('⚡ [PixelNirmaan] API response saved to "${cleanVarName}":', result);` : `console.log('⚡ [PixelNirmaan] API call success:', result);`;
-
-              statements.push(`try { const res = await fetch('${finalUrl}', { method: '${method}', headers: ${headersStr}${bodyStr} }); const data = await res.json(); let result = data; ${pathAccess} ${setterCall} ${logCall} } catch (err) { console.error('API call error:', err); }`);
-            }
-          }
-        });
-
+        const statements = this.generateActionListStatements(seq.actions, node, allNodes, pageRouteMap, stateVariables, dataSources);
         if (statements.length > 0) {
           if (seq.event === 'onClick') onClickStatements.push(...statements);
           else if (seq.event === 'onChange') onChangeStatements.push(...statements);
@@ -1974,7 +2163,7 @@ ${indent}</div>`;
     // Check if any descendant has navigate action sequence
     const hasNavigate = compDescendants.some(n => 
       n.actionSequences && n.actionSequences.some(seq => 
-        seq.actions.some(act => act.enabled !== false && act.type === 'navigate')
+        this.actionsHaveNavigate(seq.actions)
       )
     );
 
@@ -2007,36 +2196,7 @@ ${indent}</div>`;
       }
       if (node.actionSequences && node.actionSequences.length > 0) {
         node.actionSequences.forEach(seq => {
-          seq.actions.forEach(act => {
-            if (act.enabled !== false && act.type === 'setState' && act.stateVariableId) {
-              const sv = (stateVariables || []).find(v => v.id === act.stateVariableId || v.name === act.stateVariableId);
-              const rawName = sv ? sv.name : act.stateVariableId;
-              const cleanName = this.sanitizeVarName(rawName);
-              if (!declaredVarNames.has(cleanName)) {
-                declaredVarNames.add(cleanName);
-                const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
-                const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
-                stateDeclarations.push(`const [internal_${cleanName}, setInternal_${cleanName}] = useState(${defaultVal});`);
-                stateDeclarations.push(`const ${cleanName} = props['${cleanName}'] !== undefined ? props['${cleanName}'] : internal_${cleanName};`);
-                stateDeclarations.push(`const ${setter} = props['${setter}'] || setInternal_${cleanName};`);
-              }
-            } else if (act.enabled !== false && act.type === 'callApi') {
-              const targetVarId = act.apiTargetVariableId || (act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId)?.targetVariableId : undefined);
-              if (targetVarId) {
-                const sv = (stateVariables || []).find(v => v.id === targetVarId || v.name === targetVarId);
-                const rawName = sv ? sv.name : targetVarId;
-                const cleanName = this.sanitizeVarName(rawName);
-                if (!declaredVarNames.has(cleanName)) {
-                  declaredVarNames.add(cleanName);
-                  const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
-                  const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
-                  stateDeclarations.push(`const [internal_${cleanName}, setInternal_${cleanName}] = useState(${defaultVal});`);
-                  stateDeclarations.push(`const ${cleanName} = props['${cleanName}'] !== undefined ? props['${cleanName}'] : internal_${cleanName};`);
-                  stateDeclarations.push(`const ${setter} = props['${setter}'] || setInternal_${cleanName};`);
-                }
-              }
-            }
-          });
+          this.collectActionStateVariables(seq.actions, stateVariables, declaredVarNames, stateDeclarations, true, dataSources);
         });
       }
     });
@@ -2183,32 +2343,7 @@ ${bodyStr}  return (
       }
       if (node.actionSequences && node.actionSequences.length > 0) {
         node.actionSequences.forEach(seq => {
-          seq.actions.forEach(act => {
-            if (act.type === 'setState' && act.stateVariableId) {
-              const sv = (stateVariables || []).find(v => v.id === act.stateVariableId || v.name === act.stateVariableId);
-              const rawName = sv ? sv.name : act.stateVariableId;
-              const cleanName = this.sanitizeVarName(rawName);
-              if (!declaredVarNames.has(cleanName)) {
-                declaredVarNames.add(cleanName);
-                const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
-                const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
-                stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
-              }
-            } else if (act.type === 'callApi') {
-              const targetVarId = act.apiTargetVariableId || (act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId)?.targetVariableId : undefined);
-              if (targetVarId) {
-                const sv = (stateVariables || []).find(v => v.id === targetVarId || v.name === targetVarId);
-                const rawName = sv ? sv.name : targetVarId;
-                const cleanName = this.sanitizeVarName(rawName);
-                if (!declaredVarNames.has(cleanName)) {
-                  declaredVarNames.add(cleanName);
-                  const defaultVal = sv ? JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type)) : "''";
-                  const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
-                  stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${defaultVal});`);
-                }
-              }
-            }
-          });
+          this.collectActionStateVariables(seq.actions, stateVariables, declaredVarNames, stateDeclarations, false, dataSources);
         });
       }
     });

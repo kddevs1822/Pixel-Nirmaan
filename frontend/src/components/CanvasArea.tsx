@@ -2077,6 +2077,79 @@ export const CanvasArea: React.FC = () => {
       if (targetForm) {
         await executeFormSubmit(targetForm, activeStage);
       }
+    } else if (act.type === 'condition') {
+      const currentVars = useCanvasStore.getState().stateVariables;
+      const leftVar = currentVars.find((v: any) => v.id === act.conditionVariableId || v.name === act.conditionVariableId);
+      let leftVal: any = leftVar ? leftVar.defaultValue : undefined;
+      
+      let rightVal: any = undefined;
+      if (act.conditionCompareType === 'variable') {
+        const rightVar = currentVars.find((v: any) => v.id === act.conditionCompareVariableId || v.name === act.conditionCompareVariableId);
+        rightVal = rightVar ? rightVar.defaultValue : undefined;
+      } else {
+        rightVal = act.conditionValue;
+        if (leftVar?.type === 'number') {
+          const num = Number(rightVal);
+          rightVal = isNaN(num) ? 0 : num;
+        } else if (leftVar?.type === 'boolean') {
+          rightVal = rightVal === 'true' || rightVal === true;
+        }
+      }
+
+      const op = act.conditionOperator || '==';
+      let isMet = false;
+
+      switch (op) {
+        case '==':
+          isMet = leftVal == rightVal;
+          break;
+        case '!=':
+          isMet = leftVal != rightVal;
+          break;
+        case '>':
+          isMet = Number(leftVal) > Number(rightVal);
+          break;
+        case '<':
+          isMet = Number(leftVal) < Number(rightVal);
+          break;
+        case '>=':
+          isMet = Number(leftVal) >= Number(rightVal);
+          break;
+        case '<=':
+          isMet = Number(leftVal) <= Number(rightVal);
+          break;
+        case 'contains':
+          if (Array.isArray(leftVal)) {
+            isMet = leftVal.includes(rightVal) || leftVal.some(item => String(item).toLowerCase().includes(String(rightVal).toLowerCase()));
+          } else {
+            isMet = String(leftVal ?? '').toLowerCase().includes(String(rightVal ?? '').toLowerCase());
+          }
+          break;
+        case 'isEmpty':
+          if (leftVal === null || leftVal === undefined || leftVal === '') isMet = true;
+          else if (Array.isArray(leftVal)) isMet = leftVal.length === 0;
+          else if (typeof leftVal === 'object') isMet = Object.keys(leftVal).length === 0;
+          else isMet = false;
+          break;
+        case 'isNotEmpty':
+          if (leftVal === null || leftVal === undefined || leftVal === '') isMet = false;
+          else if (Array.isArray(leftVal)) isMet = leftVal.length > 0;
+          else if (typeof leftVal === 'object') isMet = Object.keys(leftVal).length > 0;
+          else isMet = true;
+          break;
+        default:
+          isMet = Boolean(leftVal);
+      }
+
+      if (isMet) {
+        if (act.trueActions && act.trueActions.length > 0) {
+          await executeSequenceActions(act.trueActions, originNode, activeStage);
+        }
+      } else {
+        if (act.falseActions && act.falseActions.length > 0) {
+          await executeSequenceActions(act.falseActions, originNode, activeStage);
+        }
+      }
     }
   };
 
