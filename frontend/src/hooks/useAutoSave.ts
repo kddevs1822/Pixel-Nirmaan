@@ -25,8 +25,6 @@ export const useAutoSave = () => {
 
   // Debounced auto-save on node, state variable, or data source changes
   useEffect(() => {
-    if (!user || !activeProject) return;
-
     // Skip saving on initial project load
     if (isInitialMount.current) {
       isInitialMount.current = false;
@@ -36,6 +34,8 @@ export const useAutoSave = () => {
     const payload = { nodes, stateVariables, dataSources };
     const currentJson = JSON.stringify(payload);
     if (currentJson === lastSavedJson.current) return;
+
+    useProjectStore.setState({ saveStatus: 'unsaved' });
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -53,7 +53,7 @@ export const useAutoSave = () => {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [nodes, stateVariables, dataSources, activeProject?.id, user, saveCurrentProjectNodes]);
+  }, [nodes, stateVariables, dataSources, activeProject?.id, saveCurrentProjectNodes]);
 
   // Manual save with Ctrl+S / Cmd+S
   useEffect(() => {
@@ -61,17 +61,15 @@ export const useAutoSave = () => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
 
-      if (cmdOrCtrl && e.key === 's') {
+      if (cmdOrCtrl && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
-        if (user && activeProject) {
-          const payload = { nodes, stateVariables, dataSources };
-          saveCurrentProjectNodes(payload as any);
-          lastSavedJson.current = JSON.stringify(payload);
-        }
+        const payload = { nodes, stateVariables, dataSources };
+        saveCurrentProjectNodes(payload as any);
+        lastSavedJson.current = JSON.stringify(payload);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [nodes, stateVariables, dataSources, activeProject, user, saveCurrentProjectNodes]);
+  }, [nodes, stateVariables, dataSources, activeProject, saveCurrentProjectNodes]);
 };

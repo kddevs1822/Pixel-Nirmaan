@@ -264,7 +264,7 @@ export const TopBar: React.FC = () => {
         <img src="/logo.jpg" alt="PixelNirmaan Logo" className="w-8 h-8 object-contain mr-1 rounded" />
         <h1 className="font-heading font-bold text-lg text-slate-800 tracking-tight">PixelNirmaan</h1>
 
-        {user && (
+        {user ? (
           <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-slate-200">
             {/* Project Switcher Dropdown Container */}
             <div className="relative" ref={projectDropdownRef}>
@@ -423,24 +423,57 @@ export const TopBar: React.FC = () => {
               )}
             </div>
 
-            {/* Cloud Save status badge */}
-            <div className="flex items-center gap-1 text-[11px] font-medium ml-1">
+            {/* Save status badge */}
+            <div className="flex items-center gap-1.5 text-[11px] font-medium ml-1">
               {saveStatus === 'saving' && (
-                <span className="flex items-center gap-1 text-indigo-500 animate-pulse" title="Saving to database...">
-                  <div className="w-2.5 h-2.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                <span className="flex items-center gap-1.5 text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 animate-pulse" title="Saving changes...">
+                  <div className="w-2.5 h-2.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
                   <span>Saving...</span>
                 </span>
               )}
+              {saveStatus === 'unsaved' && (
+                <span className="flex items-center gap-1 text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100" title="Unsaved changes">
+                  <div className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span>Unsaved</span>
+                </span>
+              )}
               {saveStatus === 'saved' && (
-                <span className="flex items-center gap-1 text-emerald-600" title="All changes saved to database">
+                <span className="flex items-center gap-1 text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100" title="All changes saved">
                   <Cloud size={13} className="text-emerald-500" />
-                  <span className="text-[10px] text-slate-400">Saved</span>
+                  <span>Saved</span>
                 </span>
               )}
               {saveStatus === 'error' && (
-                <span className="flex items-center gap-1 text-red-500" title="Error saving changes">
+                <span className="flex items-center gap-1 text-red-500 bg-red-50 px-2 py-0.5 rounded-md border border-red-100" title="Error saving changes">
                   <CloudOff size={13} />
                   <span>Offline</span>
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 ml-2 pl-3 border-l border-slate-200">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 bg-slate-100 rounded-lg border border-slate-200">
+              <Cloud size={13} className="text-indigo-500" />
+              <span>Guest Project</span>
+            </span>
+            <div className="flex items-center gap-1.5 text-[11px] font-medium">
+              {saveStatus === 'saving' && (
+                <span className="flex items-center gap-1.5 text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 animate-pulse">
+                  <div className="w-2.5 h-2.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                  <span>Saving...</span>
+                </span>
+              )}
+              {saveStatus === 'unsaved' && (
+                <span className="flex items-center gap-1 text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100">
+                  <div className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span>Unsaved</span>
+                </span>
+              )}
+              {saveStatus === 'saved' && (
+                <span className="flex items-center gap-1 text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                  <Cloud size={13} className="text-emerald-500" />
+                  <span>Saved (Local)</span>
                 </span>
               )}
             </div>

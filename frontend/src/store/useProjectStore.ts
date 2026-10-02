@@ -157,6 +157,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   createProject: async (name: string, folder = 'General', description = '') => {
     try {
+      const currentCanvasState = useCanvasStore.getState();
+      const payload = {
+        nodes: currentCanvasState.nodes || [],
+        stateVariables: currentCanvasState.stateVariables || [],
+        dataSources: currentCanvasState.dataSources || [],
+      };
+
       const response = await fetch(`${API_URL}/projects`, {
         method: 'POST',
         headers: getAuthHeaders(),
@@ -164,7 +171,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           name: name.trim(),
           folder: folder.trim() || 'General',
           description: description.trim() || null,
-          nodes: [],
+          nodes: payload,
         }),
       });
 
@@ -229,17 +236,44 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  saveCurrentProjectNodes: async (nodes: any[]) => {
+  saveCurrentProjectNodes: async (payloadInput: any) => {
     const activeProject = get().activeProject;
-    if (!activeProject) return false;
-
     set({ saveStatus: 'saving' });
+
+    let finalPayload = payloadInput;
+    if (Array.isArray(payloadInput)) {
+      finalPayload = {
+        nodes: payloadInput,
+        stateVariables: useCanvasStore.getState().stateVariables || [],
+        dataSources: useCanvasStore.getState().dataSources || [],
+      };
+    } else if (!payloadInput || typeof payloadInput !== 'object') {
+      finalPayload = {
+        nodes: useCanvasStore.getState().nodes || [],
+        stateVariables: useCanvasStore.getState().stateVariables || [],
+        dataSources: useCanvasStore.getState().dataSources || [],
+      };
+    }
+
+    if (!activeProject) {
+      // Offline / Guest Mode -> save to localStorage
+      try {
+        localStorage.setItem('pixelnirmaan_guest_project', JSON.stringify(finalPayload));
+        const now = new Date();
+        set({ saveStatus: 'saved', lastSavedAt: now });
+        return true;
+      } catch (err) {
+        console.error('Guest save error:', err);
+        set({ saveStatus: 'error' });
+        return false;
+      }
+    }
 
     try {
       const response = await fetch(`${API_URL}/projects/${activeProject.id}`, {
         method: 'PUT',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ nodes }),
+        body: JSON.stringify({ nodes: finalPayload }),
       });
 
       if (!response.ok) {
@@ -251,13 +285,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         saveStatus: 'saved',
         lastSavedAt: now,
         activeProject: state.activeProject
-          ? { ...state.activeProject, nodes, updatedAt: now.toISOString() }
+          ? { ...state.activeProject, nodes: finalPayload, updatedAt: now.toISOString() }
           : null,
       }));
 
       return true;
     } catch (error) {
-      console.error('Error saving project nodes:', error);
+      console.error('Error saving project state:', error);
       set({ saveStatus: 'error' });
       return false;
     }
