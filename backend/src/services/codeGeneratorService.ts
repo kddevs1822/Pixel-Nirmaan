@@ -676,6 +676,38 @@ ${routeElements.join('\n')}
       if (type === 'object') return {};
       return '';
     }
+    if (type === 'number') {
+      const num = Number(val);
+      return isNaN(num) ? 0 : num;
+    }
+    if (type === 'boolean') {
+      if (typeof val === 'boolean') return val;
+      return val === 'true' || val === true;
+    }
+    if (type === 'array') {
+      if (Array.isArray(val)) return val;
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+          return [];
+        }
+      }
+      return [];
+    }
+    if (type === 'object') {
+      if (typeof val === 'object' && val !== null) return val;
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val);
+          if (typeof parsed === 'object' && parsed !== null) return parsed;
+        } catch (e) {
+          return {};
+        }
+      }
+      return {};
+    }
     if (type === 'string' || typeof val === 'string') {
       const s = String(val).trim();
       if (s === '""' || s === "''") return '';
@@ -2084,11 +2116,12 @@ ${indent}</div>`;
     } else if (node.type === 'Image') {
       const boundSrc = node.bindings?.src || (nodeRelated.find(n => n.bindings?.src)?.bindings?.src);
       const resolvedSrc = boundSrc ? this.resolveBindingExpr(boundSrc, stateVariables) : null;
+      const fallbackUrl = node.src || 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=300';
       const imgSrc = resolvedSrc
-        ? `{${resolvedSrc} || "${node.src || ''}"}`
+        ? `{${resolvedSrc} || "${fallbackUrl}"}`
         : (dynamicProps.src 
-            ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue}"}`
-            : `"${node.src || ''}"`);
+            ? `{${dynamicProps.src.expression} || "${dynamicProps.src.defaultValue || fallbackUrl}"}`
+            : `"${fallbackUrl}"`);
       innerContent = `<img src=${imgSrc} className="w-full h-full object-cover" alt="image" />`;
     }
 
