@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X, LogOut, Folder, Cloud, CloudOff, Plus, Search, Upload } from 'lucide-react';
+import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X, LogOut, Folder, Cloud, CloudOff, Plus, Search, Upload, History } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useCanvasStore } from '../store/useCanvasStore';
@@ -17,6 +17,8 @@ export const TopBar: React.FC = () => {
     updateProjectMeta,
     selectProject,
     createProject,
+    checkpoints,
+    openVersionHistory,
   } = useProjectStore();
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -450,6 +452,22 @@ export const TopBar: React.FC = () => {
                 </span>
               )}
             </div>
+
+            {/* Version History Button */}
+            <button
+              type="button"
+              onClick={openVersionHistory}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/70 border border-slate-200/80 hover:border-indigo-200 text-xs font-medium transition-all cursor-pointer ml-1.5"
+              title="Version History & Checkpoints"
+            >
+              <History size={13} className="text-indigo-500" />
+              <span>History</span>
+              {checkpoints.length > 0 && (
+                <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded-full font-bold">
+                  {checkpoints.length}
+                </span>
+              )}
+            </button>
           </div>
         ) : (
           <div className="flex items-center gap-2 ml-2 pl-3 border-l border-slate-200">
@@ -477,6 +495,22 @@ export const TopBar: React.FC = () => {
                 </span>
               )}
             </div>
+
+            {/* Version History Button (Guest) */}
+            <button
+              type="button"
+              onClick={openVersionHistory}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/70 border border-slate-200/80 hover:border-indigo-200 text-xs font-medium transition-all cursor-pointer ml-1.5"
+              title="Version History & Checkpoints"
+            >
+              <History size={13} className="text-indigo-500" />
+              <span>History</span>
+              {checkpoints.length > 0 && (
+                <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded-full font-bold">
+                  {checkpoints.length}
+                </span>
+              )}
+            </button>
           </div>
         )}
       </div>

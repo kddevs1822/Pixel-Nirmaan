@@ -7,6 +7,7 @@ import { AuthLockOverlay } from './components/AuthLockOverlay';
 import { AuthModal } from './components/AuthModal';
 import { ProjectModal } from './components/ProjectModal';
 import { ImportConflictModal } from './components/ImportConflictModal';
+import { VersionHistoryModal } from './components/VersionHistoryModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useAutoSave } from './hooks/useAutoSave';
 import { useCanvasStore } from './store/useCanvasStore';
@@ -71,6 +72,7 @@ function App() {
       <AuthModal />
       <ProjectModal />
       <ImportConflictModal />
+      <VersionHistoryModal />
       
       {/* Toast Notification */}
       {toastMessage && (

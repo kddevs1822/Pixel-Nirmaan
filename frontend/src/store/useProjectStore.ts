@@ -27,6 +27,23 @@ export interface PendingImportPayload {
   options?: { importIntoCurrent?: boolean; folder?: string };
 }
 
+export interface ProjectCheckpoint {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  stats: {
+    totalElements: number;
+    framesCount: number;
+    componentsCount: number;
+  };
+  payload: {
+    nodes: any[];
+    stateVariables: any[];
+    dataSources: any[];
+  };
+}
+
 interface ProjectState {
   projects: ProjectMetadata[];
   activeProject: Project | null;
@@ -37,10 +54,14 @@ interface ProjectState {
   isProjectModalOpen: boolean;
   pendingImport: PendingImportPayload | null;
   isImportConflictModalOpen: boolean;
+  checkpoints: ProjectCheckpoint[];
+  isVersionHistoryOpen: boolean;
 
   openProjectModal: () => void;
   closeProjectModal: () => void;
   setSelectedFolder: (folder: string) => void;
+  openVersionHistory: () => void;
+  closeVersionHistory: () => void;
 
   fetchProjects: () => Promise<void>;
   selectProject: (id: string) => Promise<boolean>;
@@ -59,6 +80,10 @@ interface ProjectState {
   triggerJsonImport: (options?: { importIntoCurrent?: boolean; folder?: string }) => void;
   resolvePendingImport: (action: 'replace' | 'append') => Promise<void>;
   cancelPendingImport: () => void;
+  createCheckpoint: (name: string, description?: string) => Promise<ProjectCheckpoint | null>;
+  restoreCheckpoint: (checkpointId: string) => Promise<boolean>;
+  deleteCheckpoint: (checkpointId: string) => Promise<boolean>;
+  renameCheckpoint: (checkpointId: string, newName: string) => Promise<boolean>;
   updateProjectMeta: (
     id: string,
     updates: { name?: string; folder?: string; description?: string; outputPath?: string }
@@ -88,10 +113,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   isProjectModalOpen: false,
   pendingImport: null,
   isImportConflictModalOpen: false,
+  checkpoints: [],
+  isVersionHistoryOpen: false,
 
   openProjectModal: () => set({ isProjectModalOpen: true }),
   closeProjectModal: () => set({ isProjectModalOpen: false }),
   setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
+  openVersionHistory: () => set({ isVersionHistoryOpen: true }),
+  closeVersionHistory: () => set({ isVersionHistoryOpen: false }),
 
   fetchProjects: async () => {
     const user = useAuthStore.getState().user;
@@ -174,14 +203,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         useCanvasStore.getState().setNodes(projectPayload);
         useCanvasStore.getState().setStateVariables([]);
         useCanvasStore.getState().setDataSources([]);
+        set({ checkpoints: [] });
       } else if (projectPayload && typeof projectPayload === 'object') {
         useCanvasStore.getState().setNodes((projectPayload as any).nodes || []);
         useCanvasStore.getState().setStateVariables((projectPayload as any).stateVariables || []);
         useCanvasStore.getState().setDataSources((projectPayload as any).dataSources || []);
+        set({ checkpoints: Array.isArray((projectPayload as any).checkpoints) ? (projectPayload as any).checkpoints : [] });
       } else {
         useCanvasStore.getState().setNodes([]);
         useCanvasStore.getState().setStateVariables([]);
         useCanvasStore.getState().setDataSources([]);
+        set({ checkpoints: [] });
       }
 
       // Reset selection and undo/redo stacks for fresh project canvas and close modal
@@ -286,17 +318,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ saveStatus: 'saving' });
 
     let finalPayload = payloadInput;
+    const currentCheckpoints = get().checkpoints || [];
     if (Array.isArray(payloadInput)) {
       finalPayload = {
         nodes: payloadInput,
         stateVariables: useCanvasStore.getState().stateVariables || [],
         dataSources: useCanvasStore.getState().dataSources || [],
+        checkpoints: currentCheckpoints,
       };
     } else if (!payloadInput || typeof payloadInput !== 'object') {
       finalPayload = {
         nodes: useCanvasStore.getState().nodes || [],
         stateVariables: useCanvasStore.getState().stateVariables || [],
         dataSources: useCanvasStore.getState().dataSources || [],
+        checkpoints: currentCheckpoints,
+      };
+    } else {
+      finalPayload = {
+        nodes: payloadInput.nodes !== undefined ? payloadInput.nodes : (useCanvasStore.getState().nodes || []),
+        stateVariables:
+          payloadInput.stateVariables !== undefined
+            ? payloadInput.stateVariables
+            : (useCanvasStore.getState().stateVariables || []),
+        dataSources:
+          payloadInput.dataSources !== undefined
+            ? payloadInput.dataSources
+            : (useCanvasStore.getState().dataSources || []),
+        checkpoints: payloadInput.checkpoints !== undefined ? payloadInput.checkpoints : currentCheckpoints,
       };
     }
 
@@ -838,6 +886,113 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       isImportConflictModalOpen: false,
     });
     useCanvasStore.getState().setToastMessage('Import cancelled.');
+  },
+
+  createCheckpoint: async (name: string, description?: string) => {
+    const currentNodes = useCanvasStore.getState().nodes || [];
+    const currentVars = useCanvasStore.getState().stateVariables || [];
+    const currentSources = useCanvasStore.getState().dataSources || [];
+
+    const stats = getProjectNodeStats(currentNodes);
+    const newCheckpoint: ProjectCheckpoint = {
+      id: `cp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      name: name.trim() || `Milestone ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      description: description?.trim() || undefined,
+      createdAt: new Date().toISOString(),
+      stats,
+      payload: {
+        nodes: JSON.parse(JSON.stringify(currentNodes)),
+        stateVariables: JSON.parse(JSON.stringify(currentVars)),
+        dataSources: JSON.parse(JSON.stringify(currentSources)),
+      },
+    };
+
+    const updatedCheckpoints = [newCheckpoint, ...(get().checkpoints || [])].slice(0, 50);
+    set({ checkpoints: updatedCheckpoints });
+
+    await get().saveCurrentProjectNodes({
+      nodes: currentNodes,
+      stateVariables: currentVars,
+      dataSources: currentSources,
+      checkpoints: updatedCheckpoints,
+    });
+
+    useCanvasStore.getState().setToastMessage(`Saved milestone "${newCheckpoint.name}"!`);
+    return newCheckpoint;
+  },
+
+  restoreCheckpoint: async (checkpointId: string) => {
+    const checkpoint = (get().checkpoints || []).find((cp) => cp.id === checkpointId);
+    if (!checkpoint) return false;
+
+    const currentNodes = useCanvasStore.getState().nodes || [];
+    const currentVars = useCanvasStore.getState().stateVariables || [];
+    const currentSources = useCanvasStore.getState().dataSources || [];
+
+    // Safety backup of current working state before rollback
+    const backupStats = getProjectNodeStats(currentNodes);
+    const backupCheckpoint: ProjectCheckpoint = {
+      id: `cp_${Date.now()}_backup`,
+      name: `Backup before restoring "${checkpoint.name}"`,
+      createdAt: new Date().toISOString(),
+      stats: backupStats,
+      payload: {
+        nodes: JSON.parse(JSON.stringify(currentNodes)),
+        stateVariables: JSON.parse(JSON.stringify(currentVars)),
+        dataSources: JSON.parse(JSON.stringify(currentSources)),
+      },
+    };
+
+    const updatedCheckpoints = [backupCheckpoint, ...(get().checkpoints || [])].slice(0, 50);
+
+    // Apply checkpoint payload to canvas store
+    useCanvasStore.getState().setNodes(checkpoint.payload.nodes || []);
+    useCanvasStore.getState().setStateVariables(checkpoint.payload.stateVariables || []);
+    useCanvasStore.getState().setDataSources(checkpoint.payload.dataSources || []);
+    useCanvasStore.setState({ selectedIds: [], past: [], future: [] });
+
+    set({ checkpoints: updatedCheckpoints, isVersionHistoryOpen: false });
+
+    await get().saveCurrentProjectNodes({
+      nodes: checkpoint.payload.nodes || [],
+      stateVariables: checkpoint.payload.stateVariables || [],
+      dataSources: checkpoint.payload.dataSources || [],
+      checkpoints: updatedCheckpoints,
+    });
+
+    useCanvasStore
+      .getState()
+      .setToastMessage(`Restored canvas to version "${checkpoint.name}"!`);
+    return true;
+  },
+
+  deleteCheckpoint: async (checkpointId: string) => {
+    const updatedCheckpoints = (get().checkpoints || []).filter((cp) => cp.id !== checkpointId);
+    set({ checkpoints: updatedCheckpoints });
+
+    await get().saveCurrentProjectNodes({
+      checkpoints: updatedCheckpoints,
+    });
+
+    useCanvasStore.getState().setToastMessage('Checkpoint deleted.');
+    return true;
+  },
+
+  renameCheckpoint: async (checkpointId: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return false;
+
+    const updatedCheckpoints = (get().checkpoints || []).map((cp) =>
+      cp.id === checkpointId ? { ...cp, name: trimmed } : cp
+    );
+    set({ checkpoints: updatedCheckpoints });
+
+    await get().saveCurrentProjectNodes({
+      checkpoints: updatedCheckpoints,
+    });
+
+    useCanvasStore.getState().setToastMessage(`Checkpoint renamed to "${trimmed}".`);
+    return true;
   },
 
   triggerJsonImport: (options?: { importIntoCurrent?: boolean; folder?: string }) => {
