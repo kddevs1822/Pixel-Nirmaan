@@ -10,10 +10,21 @@ export interface ProjectMetadata {
   outputPath?: string | null;
   createdAt: string;
   updatedAt: string;
+  nodes?: any;
 }
 
 export interface Project extends ProjectMetadata {
-  nodes: any[];
+  nodes: any;
+}
+
+export interface PendingImportPayload {
+  fileName: string;
+  projectName: string;
+  targetFolder: string;
+  parsedNodes: any[];
+  parsedVars: any[];
+  parsedSources: any[];
+  options?: { importIntoCurrent?: boolean; folder?: string };
 }
 
 interface ProjectState {
@@ -24,6 +35,8 @@ interface ProjectState {
   saveStatus: 'saved' | 'saving' | 'unsaved' | 'error';
   lastSavedAt: Date | null;
   isProjectModalOpen: boolean;
+  pendingImport: PendingImportPayload | null;
+  isImportConflictModalOpen: boolean;
 
   openProjectModal: () => void;
   closeProjectModal: () => void;
@@ -31,12 +44,26 @@ interface ProjectState {
 
   fetchProjects: () => Promise<void>;
   selectProject: (id: string) => Promise<boolean>;
-  createProject: (name: string, folder?: string, description?: string) => Promise<Project | null>;
+  createProject: (
+    name: string,
+    folder?: string,
+    description?: string,
+    initialPayload?: any
+  ) => Promise<Project | null>;
+  duplicateProject: (id: string) => Promise<Project | null>;
+  exportProjectAsJson: (id: string) => Promise<boolean>;
+  importProjectFromJson: (
+    file: File,
+    options?: { importIntoCurrent?: boolean; folder?: string }
+  ) => Promise<Project | null>;
+  triggerJsonImport: (options?: { importIntoCurrent?: boolean; folder?: string }) => void;
+  resolvePendingImport: (action: 'replace' | 'append') => Promise<void>;
+  cancelPendingImport: () => void;
   updateProjectMeta: (
     id: string,
     updates: { name?: string; folder?: string; description?: string; outputPath?: string }
   ) => Promise<boolean>;
-  saveCurrentProjectNodes: (nodes: any[]) => Promise<boolean>;
+  saveCurrentProjectNodes: (payload: any) => Promise<boolean>;
   deleteProject: (id: string) => Promise<boolean>;
 }
 
@@ -59,6 +86,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   saveStatus: 'saved',
   lastSavedAt: null,
   isProjectModalOpen: false,
+  pendingImport: null,
+  isImportConflictModalOpen: false,
 
   openProjectModal: () => set({ isProjectModalOpen: true }),
   closeProjectModal: () => set({ isProjectModalOpen: false }),
@@ -132,7 +161,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
 
       // Load nodes, stateVariables & dataSources into canvas store
-      const projectPayload = project.nodes;
+      let projectPayload = project.nodes;
+      if (typeof projectPayload === 'string') {
+        try {
+          projectPayload = JSON.parse(projectPayload);
+        } catch (e) {
+          console.error('Error parsing stringified project payload:', e);
+        }
+      }
+
       if (Array.isArray(projectPayload)) {
         useCanvasStore.getState().setNodes(projectPayload);
         useCanvasStore.getState().setStateVariables([]);
@@ -147,6 +184,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         useCanvasStore.getState().setDataSources([]);
       }
 
+      // Reset selection and undo/redo stacks for fresh project canvas and close modal
+      useCanvasStore.setState({ selectedIds: [], past: [], future: [] });
+      set({ isProjectModalOpen: false });
+
       return true;
     } catch (error) {
       console.error('Error selecting project:', error);
@@ -155,13 +196,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  createProject: async (name: string, folder = 'General', description = '') => {
+  createProject: async (
+    name: string,
+    folder = 'General',
+    description = '',
+    initialPayload?: any
+  ) => {
     try {
-      const currentCanvasState = useCanvasStore.getState();
-      const payload = {
-        nodes: currentCanvasState.nodes || [],
-        stateVariables: currentCanvasState.stateVariables || [],
-        dataSources: currentCanvasState.dataSources || [],
+      const payload = initialPayload !== undefined ? initialPayload : {
+        nodes: [],
+        stateVariables: [],
+        dataSources: [],
       };
 
       const response = await fetch(`${API_URL}/projects`, {
@@ -297,6 +342,514 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  duplicateProject: async (id: string) => {
+    set({ isLoading: true });
+    try {
+      const state = get();
+      let targetProject = state.projects.find((p) => p.id === id);
+      let nodesPayload = targetProject?.nodes;
+
+      if (!nodesPayload) {
+        const response = await fetch(`${API_URL}/projects/${id}`, {
+          headers: getAuthHeaders(),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          targetProject = data.project;
+          nodesPayload = data.project?.nodes;
+        }
+      }
+
+      const baseName = targetProject?.name || 'Cloned Project';
+      const newName = `${baseName} (Copy)`;
+      const folder = targetProject?.folder || 'General';
+      const description = targetProject?.description || null;
+
+      const response = await fetch(`${API_URL}/projects`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          name: newName,
+          folder,
+          description,
+          nodes: nodesPayload || [],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to duplicate project');
+      }
+
+      const data = await response.json();
+      const newProject: Project = data.project;
+
+      set((s) => ({
+        projects: [newProject, ...s.projects],
+        isLoading: false,
+      }));
+
+      useCanvasStore.getState().setToastMessage(`Project "${newProject.name}" duplicated!`);
+      return newProject;
+    } catch (error) {
+      console.error('Error duplicating project:', error);
+      set({ isLoading: false });
+      return null;
+    }
+  },
+
+  exportProjectAsJson: async (id: string) => {
+    try {
+      const state = get();
+      let project = state.projects.find((p) => p.id === id);
+      let nodesPayload = project?.nodes;
+
+      if (state.activeProject?.id === id) {
+        nodesPayload = {
+          nodes: useCanvasStore.getState().nodes || [],
+          stateVariables: useCanvasStore.getState().stateVariables || [],
+          dataSources: useCanvasStore.getState().dataSources || [],
+        };
+      } else if (!nodesPayload) {
+        const response = await fetch(`${API_URL}/projects/${id}`, {
+          headers: getAuthHeaders(),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          project = data.project;
+          nodesPayload = data.project?.nodes;
+        }
+      }
+
+      const exportData = {
+        version: '1.0.0',
+        generator: 'PixelNirmaan',
+        exportedAt: new Date().toISOString(),
+        project: {
+          id: project?.id,
+          name: project?.name || 'Untitled Project',
+          folder: project?.folder || 'General',
+          description: project?.description || '',
+        },
+        payload: nodesPayload || { nodes: [], stateVariables: [], dataSources: [] },
+      };
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: 'application/json',
+      });
+      const filename = `${(project?.name || 'project')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/gi, '_')}.pixelnirmaan.json`;
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      useCanvasStore.getState().setToastMessage(`Exported "${project?.name}" as JSON!`);
+      return true;
+    } catch (error) {
+      console.error('Error exporting project:', error);
+      return false;
+    }
+  },
+
+  importProjectFromJson: async (
+    file: File,
+    options?: { importIntoCurrent?: boolean; folder?: string }
+  ) => {
+    set({ isLoading: true });
+    try {
+      const text = await file.text();
+      let json = JSON.parse(text);
+
+      if (typeof json === 'string') {
+        try {
+          json = JSON.parse(json);
+        } catch (_) {}
+      }
+
+      let name = file.name.replace(/\.(pixelnirmaan\.json|json)$/i, '');
+      let description = 'Imported from JSON file';
+      let nodesPayload: any = { nodes: [], stateVariables: [], dataSources: [] };
+
+      // Determine folder priority:
+      // 1. Explicit options.folder (if !== 'All')
+      // 2. Selected folder in store (if !== 'All')
+      // 3. Folder specified inside json
+      // 4. Current active project folder
+      // 5. Default 'Websites'
+      const storeSelectedFolder = get().selectedFolder;
+      let targetFolder = 'Websites';
+
+      if (options?.folder && options.folder !== 'All') {
+        targetFolder = options.folder;
+      } else if (storeSelectedFolder && storeSelectedFolder !== 'All') {
+        targetFolder = storeSelectedFolder;
+      } else if (json.project?.folder) {
+        targetFolder = json.project.folder;
+      } else if (json.folder) {
+        targetFolder = json.folder;
+      } else if (get().activeProject?.folder) {
+        targetFolder = get().activeProject!.folder;
+      }
+
+      if (json && typeof json === 'object') {
+        if (json.project?.name) name = json.project.name + ' (Imported)';
+        else if (json.name) name = json.name + ' (Imported)';
+
+        if (json.project?.description) description = json.project.description;
+        else if (json.description) description = json.description;
+
+        if (json.payload) {
+          nodesPayload = json.payload;
+        } else if (json.nodes) {
+          nodesPayload = {
+            nodes: Array.isArray(json.nodes) ? json.nodes : json.nodes.nodes || [],
+            stateVariables: json.stateVariables || json.nodes?.stateVariables || [],
+            dataSources: json.dataSources || json.nodes?.dataSources || [],
+          };
+        } else if (Array.isArray(json.elements)) {
+          nodesPayload = {
+            nodes: json.elements,
+            stateVariables: json.stateVariables || [],
+            dataSources: json.dataSources || [],
+          };
+        } else if (Array.isArray(json.canvas)) {
+          nodesPayload = {
+            nodes: json.canvas,
+            stateVariables: json.stateVariables || [],
+            dataSources: json.dataSources || [],
+          };
+        } else if (Array.isArray(json)) {
+          nodesPayload = {
+            nodes: json,
+            stateVariables: [],
+            dataSources: [],
+          };
+        }
+      }
+
+      // 1. Extract nodes, vars, sources
+      const parsedNodes = Array.isArray(nodesPayload)
+        ? nodesPayload
+        : Array.isArray(nodesPayload?.nodes)
+        ? nodesPayload.nodes
+        : Array.isArray(json?.nodes)
+        ? json.nodes
+        : [];
+
+      const parsedVars = Array.isArray(nodesPayload?.stateVariables)
+        ? nodesPayload.stateVariables
+        : Array.isArray(json?.stateVariables)
+        ? json.stateVariables
+        : Array.isArray(json?.payload?.stateVariables)
+        ? json.payload.stateVariables
+        : [];
+
+      const parsedSources = Array.isArray(nodesPayload?.dataSources)
+        ? nodesPayload.dataSources
+        : Array.isArray(json?.dataSources)
+        ? json.dataSources
+        : Array.isArray(json?.payload?.dataSources)
+        ? json.payload.dataSources
+        : [];
+
+      const isCurrentCanvas = !!options?.importIntoCurrent || (!options?.folder && !get().isProjectModalOpen);
+      const currentNodes = useCanvasStore.getState().nodes || [];
+
+      // If user requested to import into current canvas and canvas already has elements:
+      if (isCurrentCanvas && currentNodes.length > 0) {
+        set({
+          pendingImport: {
+            fileName: file.name,
+            projectName: name,
+            targetFolder,
+            parsedNodes,
+            parsedVars,
+            parsedSources,
+            options,
+          },
+          isImportConflictModalOpen: true,
+          isProjectModalOpen: false,
+          isLoading: false,
+        });
+        return get().activeProject;
+      }
+
+      // If importing into current empty canvas:
+      if (isCurrentCanvas) {
+        useCanvasStore.getState().setNodes(parsedNodes);
+        useCanvasStore.getState().setStateVariables(parsedVars);
+        useCanvasStore.getState().setDataSources(parsedSources);
+        useCanvasStore.setState({ selectedIds: [], past: [], future: [] });
+
+        set({ isProjectModalOpen: false, isLoading: false });
+
+        const activeProject = get().activeProject;
+        if (activeProject) {
+          await get().saveCurrentProjectNodes({
+            nodes: parsedNodes,
+            stateVariables: parsedVars,
+            dataSources: parsedSources,
+          });
+          useCanvasStore
+            .getState()
+            .setToastMessage(`Imported design into "${activeProject.name}" (${parsedNodes.length} elements)!`);
+          return activeProject;
+        } else {
+          localStorage.setItem(
+            'pixelnirmaan_guest_project',
+            JSON.stringify({
+              nodes: parsedNodes,
+              stateVariables: parsedVars,
+              dataSources: parsedSources,
+            })
+          );
+          useCanvasStore
+            .getState()
+            .setToastMessage(`Imported design (${parsedNodes.length} elements)!`);
+          return null;
+        }
+      }
+
+      // Otherwise, create a new project inside targetFolder (e.g. from Projects Modal)
+      useCanvasStore.getState().setNodes(parsedNodes);
+      useCanvasStore.getState().setStateVariables(parsedVars);
+      useCanvasStore.getState().setDataSources(parsedSources);
+      useCanvasStore.setState({ selectedIds: [], past: [], future: [] });
+
+      set({ isProjectModalOpen: false, isLoading: false });
+
+      const user = useAuthStore.getState().user;
+      const guestId = `import_${Date.now()}`;
+      let createdProject: Project = {
+        id: guestId,
+        name,
+        description,
+        folder: targetFolder,
+        outputPath: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        nodes: nodesPayload,
+      };
+
+      if (user) {
+        try {
+          const response = await fetch(`${API_URL}/projects`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              name,
+              folder: targetFolder,
+              description,
+              nodes: nodesPayload,
+            }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.project) {
+              createdProject = data.project;
+              localStorage.setItem(ACTIVE_PROJECT_KEY, createdProject.id);
+            }
+          }
+        } catch (serverErr) {
+          console.warn('Backend import sync failed, saving locally:', serverErr);
+        }
+      } else {
+        localStorage.setItem('pixelnirmaan_guest_project', JSON.stringify(nodesPayload));
+      }
+
+      set((s) => ({
+        projects: [createdProject, ...s.projects.filter((p) => p.id !== createdProject.id)],
+        activeProject: createdProject,
+        selectedFolder: targetFolder,
+        isLoading: false,
+        saveStatus: 'saved',
+        lastSavedAt: new Date(),
+      }));
+
+      useCanvasStore
+        .getState()
+        .setToastMessage(`Project "${name}" imported into "${targetFolder}" (${parsedNodes.length} elements)!`);
+      return createdProject;
+    } catch (error) {
+      console.error('Error importing project:', error);
+      set({ isLoading: false });
+      useCanvasStore.getState().setToastMessage('Failed to import JSON file. Please check file format.');
+      return null;
+    }
+  },
+
+  resolvePendingImport: async (action: 'replace' | 'append') => {
+    const pending = get().pendingImport;
+    if (!pending) return;
+
+    const currentNodes = useCanvasStore.getState().nodes || [];
+    const currentVars = useCanvasStore.getState().stateVariables || [];
+    const currentSources = useCanvasStore.getState().dataSources || [];
+
+    if (action === 'replace') {
+      useCanvasStore.getState().setNodes(pending.parsedNodes);
+      useCanvasStore.getState().setStateVariables(pending.parsedVars);
+      useCanvasStore.getState().setDataSources(pending.parsedSources);
+      useCanvasStore.setState({ selectedIds: [], past: [], future: [] });
+
+      await get().saveCurrentProjectNodes({
+        nodes: pending.parsedNodes,
+        stateVariables: pending.parsedVars,
+        dataSources: pending.parsedSources,
+      });
+
+      useCanvasStore
+        .getState()
+        .setToastMessage(`Replaced canvas with ${pending.parsedNodes.length} imported elements!`);
+    } else {
+      // action === 'append': keep existing and add new alongside them
+      const existingIdSet = new Set(currentNodes.map((n) => n.id));
+      const idMap = new Map<string, string>();
+
+      // Remap any colliding IDs
+      pending.parsedNodes.forEach((n) => {
+        if (existingIdSet.has(n.id)) {
+          idMap.set(n.id, `node_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`);
+        }
+      });
+
+      // Calculate layout positioning offset so imported elements are placed next to existing ones without overlapping
+      const existingRootNodes = currentNodes.filter((n) => !n.parentId);
+      const importedRootNodes = pending.parsedNodes.filter((n) => !n.parentId);
+
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (existingRootNodes.length > 0 && importedRootNodes.length > 0) {
+        const getNodeRight = (n: any) => {
+          const w =
+            typeof n.width === 'number' && n.width > 0
+              ? n.width * (n.scaleX || 1)
+              : typeof n.radius === 'number' && n.radius > 0
+              ? n.radius * 2 * (n.scaleX || 1)
+              : 120;
+          return (n.x || 0) + w;
+        };
+
+        const maxExistingRight = Math.max(...existingRootNodes.map(getNodeRight));
+        const minExistingTop = Math.min(...existingRootNodes.map((n) => n.y || 0));
+
+        const minImportedLeft = Math.min(...importedRootNodes.map((n) => n.x || 0));
+        const minImportedTop = Math.min(...importedRootNodes.map((n) => n.y || 0));
+
+        // Place imported elements to the right of the rightmost existing element with a clean 100px gap
+        const GAP = 100;
+        offsetX = maxExistingRight + GAP - minImportedLeft;
+        // Align top of imported elements with top of existing canvas
+        offsetY = minExistingTop - minImportedTop;
+      }
+
+      const mappedImportedNodes = pending.parsedNodes.map((node) => {
+        const newId = idMap.get(node.id) || node.id;
+        const newParentId = node.parentId ? idMap.get(node.parentId) || node.parentId : undefined;
+        const newVariantOf = node.variantOf ? idMap.get(node.variantOf) || node.variantOf : undefined;
+        const newLinkTo = node.linkTo ? idMap.get(node.linkTo) || node.linkTo : undefined;
+        const newAnimation = node.animation
+          ? {
+              ...node.animation,
+              triggerNodeId: node.animation.triggerNodeId
+                ? idMap.get(node.animation.triggerNodeId) || node.animation.triggerNodeId
+                : undefined,
+            }
+          : undefined;
+
+        // Shift root elements by offsetX and offsetY so they don't overlap with existing elements
+        // (Children with parentId are positioned relative to their parent frame, so they automatically follow the frame)
+        const isRoot = !node.parentId;
+        const newX = isRoot ? (node.x || 0) + offsetX : node.x;
+        const newY = isRoot ? (node.y || 0) + offsetY : node.y;
+
+        return {
+          ...node,
+          id: newId,
+          x: newX,
+          y: newY,
+          parentId: newParentId,
+          variantOf: newVariantOf,
+          linkTo: newLinkTo,
+          animation: newAnimation,
+        };
+      });
+
+      const mergedNodes = [...currentNodes, ...mappedImportedNodes];
+
+      // Merge state variables
+      const existingVarNames = new Set(currentVars.map((v) => v.name));
+      const mergedVars = [...currentVars];
+      pending.parsedVars.forEach((v) => {
+        if (!existingVarNames.has(v.name)) {
+          mergedVars.push(v);
+          existingVarNames.add(v.name);
+        }
+      });
+
+      // Merge data sources
+      const existingSourceIds = new Set(currentSources.map((s) => s.id));
+      const mergedSources = [...currentSources];
+      pending.parsedSources.forEach((s) => {
+        if (!existingSourceIds.has(s.id)) {
+          mergedSources.push(s);
+          existingSourceIds.add(s.id);
+        }
+      });
+
+      useCanvasStore.getState().setNodes(mergedNodes);
+      useCanvasStore.getState().setStateVariables(mergedVars);
+      useCanvasStore.getState().setDataSources(mergedSources);
+
+      // Select newly imported root nodes
+      const importedRootIds = mappedImportedNodes.filter((n) => !n.parentId).map((n) => n.id);
+      if (importedRootIds.length > 0) {
+        useCanvasStore.setState({ selectedIds: importedRootIds });
+      }
+
+      await get().saveCurrentProjectNodes({
+        nodes: mergedNodes,
+        stateVariables: mergedVars,
+        dataSources: mergedSources,
+      });
+
+      useCanvasStore
+        .getState()
+        .setToastMessage(`Added ${mappedImportedNodes.length} imported elements to canvas (${mergedNodes.length} total)!`);
+    }
+
+    set({
+      pendingImport: null,
+      isImportConflictModalOpen: false,
+    });
+  },
+
+  cancelPendingImport: () => {
+    set({
+      pendingImport: null,
+      isImportConflictModalOpen: false,
+    });
+    useCanvasStore.getState().setToastMessage('Import cancelled.');
+  },
+
+  triggerJsonImport: (options?: { importIntoCurrent?: boolean; folder?: string }) => {
+    const input = document.getElementById('pixelnirmaan-global-json-import-input') as HTMLInputElement;
+    if (input) {
+      input.dataset.importIntoCurrent = options?.importIntoCurrent ? 'true' : 'false';
+      input.dataset.folder = options?.folder || '';
+      input.value = '';
+      input.click();
+    }
+  },
+
   deleteProject: async (id: string) => {
     try {
       const response = await fetch(`${API_URL}/projects/${id}`, {
@@ -328,3 +881,32 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 }));
+
+export const getProjectNodeStats = (nodesPayload: any) => {
+  let nodes: any[] = [];
+  if (Array.isArray(nodesPayload)) {
+    nodes = nodesPayload;
+  } else if (nodesPayload && typeof nodesPayload === 'object' && Array.isArray(nodesPayload.nodes)) {
+    nodes = nodesPayload.nodes;
+  }
+
+  let totalElements = 0;
+  let framesCount = 0;
+  let componentsCount = 0;
+
+  const traverse = (items: any[]) => {
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      totalElements++;
+      if (item.type === 'frame' || item.type === 'artboard') framesCount++;
+      if (item.type === 'component' || item.isComponent || item.componentId) componentsCount++;
+      if (Array.isArray(item.children)) {
+        traverse(item.children);
+      }
+    }
+  };
+
+  traverse(nodes);
+
+  return { totalElements, framesCount, componentsCount };
+};

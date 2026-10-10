@@ -68,10 +68,16 @@ export const googleAuth = async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    console.error('Error during Google authentication:', error);
+    console.error('[AUTH_ERROR] Error during Google authentication:', error);
+    let userMessage = 'Authentication failed. Unable to verify credentials at this time.';
+    
+    if (error.code === 'P1001' || (error.message && error.message.includes("Can't reach database server"))) {
+      userMessage = 'Database connection error. Please verify database availability or try again.';
+    }
+
     return res.status(500).json({
       error: 'Authentication failed',
-      details: error.message || 'Unknown error',
+      details: userMessage,
     });
   }
 };

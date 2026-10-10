@@ -1304,7 +1304,7 @@ export const RightSidebar: React.FC = () => {
               {primaryNode.src && primaryNode.src !== DEFAULT_IMAGE_PLACEHOLDER && (
                 <button
                   type="button"
-                  onClick={() => updateNode(primaryNode.id, { src: DEFAULT_IMAGE_PLACEHOLDER }, true)}
+                  onClick={() => updateNodes([primaryNode.id], { src: DEFAULT_IMAGE_PLACEHOLDER }, true)}
                   className="text-[10px] text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
                   title="Reset to default placeholder thumbnail"
                 >

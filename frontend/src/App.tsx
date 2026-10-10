@@ -6,6 +6,7 @@ import { CanvasArea } from './components/CanvasArea';
 import { AuthLockOverlay } from './components/AuthLockOverlay';
 import { AuthModal } from './components/AuthModal';
 import { ProjectModal } from './components/ProjectModal';
+import { ImportConflictModal } from './components/ImportConflictModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useAutoSave } from './hooks/useAutoSave';
 import { useCanvasStore } from './store/useCanvasStore';
@@ -33,8 +34,30 @@ function App() {
     }
   }, [user, fetchProjects]);
 
+  const importProjectFromJson = useProjectStore(state => state.importProjectFromJson);
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden text-slate-900 bg-[#FAF6F0]">
+      {/* Global JSON file input trigger */}
+      <input
+        id="pixelnirmaan-global-json-import-input"
+        type="file"
+        accept=".json,.pixelnirmaan.json,application/json"
+        className="hidden"
+        onChange={async (e) => {
+          const files = e.target.files;
+          if (files && files.length > 0) {
+            const target = e.target as HTMLInputElement;
+            const importIntoCurrent = target.dataset.importIntoCurrent === 'true';
+            const folder = target.dataset.folder || undefined;
+            await importProjectFromJson(files[0], { importIntoCurrent, folder });
+            target.dataset.importIntoCurrent = '';
+            target.dataset.folder = '';
+            e.target.value = '';
+          }
+        }}
+      />
+
       <TopBar />
       <div className="flex-1 flex flex-row overflow-hidden relative">
         <LeftSidebar />
@@ -47,6 +70,7 @@ function App() {
       {/* Global Modals */}
       <AuthModal />
       <ProjectModal />
+      <ImportConflictModal />
       
       {/* Toast Notification */}
       {toastMessage && (

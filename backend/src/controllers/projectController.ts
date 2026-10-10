@@ -19,6 +19,7 @@ export const getProjects = async (req: AuthRequest, res: Response) => {
         outputPath: true,
         createdAt: true,
         updatedAt: true,
+        nodes: true,
       },
       orderBy: { updatedAt: 'desc' },
     });

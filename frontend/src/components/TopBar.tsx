@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X, LogOut, Folder, Cloud, CloudOff, Plus, Search } from 'lucide-react';
+import { Undo, Redo, Play, Download, ZoomOut, ZoomIn, HelpCircle, FolderOutput, ChevronDown, FolderOpen, Check, X, LogOut, Folder, Cloud, CloudOff, Plus, Search, Upload } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useCanvasStore } from '../store/useCanvasStore';
@@ -513,6 +513,15 @@ export const TopBar: React.FC = () => {
       <div className="flex items-center gap-3">
         <button onClick={() => setShowShortcuts(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition-colors" title="Help & Shortcuts">
           <HelpCircle size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={() => useProjectStore.getState().triggerJsonImport({ importIntoCurrent: true })}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium transition-colors cursor-pointer"
+          title="Import JSON Design File into Active Canvas"
+        >
+          <Upload size={15} className="text-slate-500" />
+          <span>Import JSON</span>
         </button>
         <button onClick={handlePreview} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition-colors">
           <Play size={16} />

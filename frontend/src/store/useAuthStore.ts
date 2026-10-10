@@ -98,7 +98,17 @@ export const useAuthStore = create<AuthState>((set, _get) => ({
       return true;
     } catch (error: any) {
       console.error('Login error:', error);
-      const msg = error.message || 'Authentication failed. Please verify the backend server is running.';
+      let msg = error.message || 'Authentication failed. Please try again.';
+      if (
+        msg.includes('http') ||
+        msg.includes('prisma') ||
+        msg.includes('supabase') ||
+        msg.includes(':\\') ||
+        msg.includes('Invocation') ||
+        msg.includes('code')
+      ) {
+        msg = 'Unable to complete sign-in. Please check your network connection and try again.';
+      }
       set({ isLoading: false, authError: msg });
       return false;
     }

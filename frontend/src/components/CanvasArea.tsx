@@ -5,7 +5,8 @@ import type { CanvasNode, NodeAction } from '../store/useCanvasStore';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import useImage from 'use-image';
-import { X, AlertCircle, Monitor, Tablet, Smartphone, Target } from 'lucide-react';
+import { X, AlertCircle, Monitor, Tablet, Smartphone, Target, Upload, Plus, Layout } from 'lucide-react';
+import { useProjectStore } from '../store/useProjectStore';
 import { getNodeDescriptiveLabel } from '../utils/nodeUtils';
 import { normalizeApiUrl, executeApiFetch } from '../utils/urlUtils';
 
@@ -4513,6 +4514,56 @@ export const CanvasArea: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Empty Canvas Overlay */}
+      {nodes.length === 0 && mode !== 'preview' && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none p-4">
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 p-8 max-w-sm w-full text-center pointer-events-auto animate-in zoom-in-95 duration-150 flex flex-col items-center">
+            <div className="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mb-4 border border-indigo-100 shadow-inner">
+              <Layout size={28} />
+            </div>
+
+            <h3 className="text-lg font-bold font-heading text-slate-800 tracking-tight mb-1.5">
+              Empty Canvas
+            </h3>
+            <p className="text-xs text-slate-500 mb-6 leading-relaxed">
+              Start building your website by adding elements, or import an existing JSON design file.
+            </p>
+
+            <div className="flex flex-col gap-2.5 w-full">
+              <button
+                type="button"
+                onClick={() => useProjectStore.getState().triggerJsonImport({ importIntoCurrent: true })}
+                className="w-full py-2.5 px-4 rounded-xl text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer hover:opacity-95"
+                style={{ backgroundColor: '#4A3AFF' }}
+              >
+                <Upload size={15} />
+                <span>Import JSON Design File</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  useCanvasStore.getState().addNode({
+                    type: 'Frame',
+                    name: 'Desktop 1',
+                    x: 100,
+                    y: 100,
+                    width: 1440,
+                    height: 900,
+                    frameType: 'desktop',
+                    fill: '#ffffff',
+                  });
+                }}
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <Plus size={15} className="text-slate-500" />
+                <span>Add Desktop Frame</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {renderInputOverlay()}
     </div>
   );

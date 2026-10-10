@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   X,
   Plus,
@@ -10,8 +10,18 @@ import {
   Layout,
   Clock,
   AlertTriangle,
+  Copy,
+  Download,
+  Upload,
+  Box,
+  Layers,
+  Component as ComponentIcon,
 } from 'lucide-react';
-import { useProjectStore, type ProjectMetadata } from '../store/useProjectStore';
+import {
+  useProjectStore,
+  getProjectNodeStats,
+  type ProjectMetadata,
+} from '../store/useProjectStore';
 
 export const ProjectModal: React.FC = () => {
   const isProjectModalOpen = useProjectStore((state) => state.isProjectModalOpen);
@@ -20,8 +30,13 @@ export const ProjectModal: React.FC = () => {
   const activeProject = useProjectStore((state) => state.activeProject);
   const selectProject = useProjectStore((state) => state.selectProject);
   const createProject = useProjectStore((state) => state.createProject);
+  const duplicateProject = useProjectStore((state) => state.duplicateProject);
+  const exportProjectAsJson = useProjectStore((state) => state.exportProjectAsJson);
+  const importProjectFromJson = useProjectStore((state) => state.importProjectFromJson);
   const updateProjectMeta = useProjectStore((state) => state.updateProjectMeta);
   const deleteProject = useProjectStore((state) => state.deleteProject);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedFolder, setSelectedFolder] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -74,6 +89,24 @@ export const ProjectModal: React.FC = () => {
     setEditingProjectId(null);
   };
 
+  const handleDuplicate = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await duplicateProject(id);
+  };
+
+  const handleExport = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await exportProjectAsJson(id);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      await importProjectFromJson(files[0]);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const handleDeleteClick = (id: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setProjectToDelete({ id, name });
@@ -90,6 +123,14 @@ export const ProjectModal: React.FC = () => {
       className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200"
       onClick={closeProjectModal}
     >
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".json,.pixelnirmaan.json,application/json"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       <div
         className="relative w-full max-w-3xl max-h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
@@ -98,13 +139,26 @@ export const ProjectModal: React.FC = () => {
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100 bg-slate-50/50">
           <div>
             <h2 className="text-xl font-bold font-heading text-slate-800 tracking-tight">
-              Projects & Website Folders
+              Projects & Dashboard
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Switch between different website UI designs or create new project folders.
+              Manage website designs, clone existing projects, and import/export design JSON files.
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() =>
+                useProjectStore
+                  .getState()
+                  .triggerJsonImport({ folder: selectedFolder !== 'All' ? selectedFolder : undefined })
+              }
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-all cursor-pointer"
+              title={selectedFolder !== 'All' ? `Import JSON into "${selectedFolder}"` : "Import Project JSON"}
+            >
+              <Upload size={14} className="text-slate-500" />
+              <span>Import JSON</span>
+            </button>
+
             <button
               onClick={() => setIsCreating(!isCreating)}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-white text-xs font-semibold shadow-sm transition-all cursor-pointer hover:opacity-95"
@@ -113,9 +167,10 @@ export const ProjectModal: React.FC = () => {
               <Plus size={15} />
               <span>New Project</span>
             </button>
+
             <button
               onClick={closeProjectModal}
-              className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer ml-1"
             >
               <X size={18} />
             </button>
@@ -217,13 +272,14 @@ export const ProjectModal: React.FC = () => {
               <Layout size={36} className="mb-2 text-slate-300 stroke-1" />
               <p className="text-sm font-medium">No projects found</p>
               <p className="text-xs text-slate-400 mt-1">
-                Click "+ New Project" to create your first design.
+                Click "+ New Project" or "Import JSON" to add a design.
               </p>
             </div>
           ) : (
             filteredProjects.map((p) => {
               const isActive = activeProject?.id === p.id;
               const isEditing = editingProjectId === p.id;
+              const stats = getProjectNodeStats(p.nodes);
 
               return (
                 <div
@@ -276,7 +332,7 @@ export const ProjectModal: React.FC = () => {
                       )}
 
                       {/* Action buttons */}
-                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                      <div className="flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
                         {isEditing ? (
                           <button
                             onClick={(e) => handleSaveEdit(p.id, e)}
@@ -287,6 +343,20 @@ export const ProjectModal: React.FC = () => {
                           </button>
                         ) : (
                           <>
+                            <button
+                              onClick={(e) => handleDuplicate(p.id, e)}
+                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                              title="Duplicate Project"
+                            >
+                              <Copy size={14} />
+                            </button>
+                            <button
+                              onClick={(e) => handleExport(p.id, e)}
+                              className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                              title="Export Project JSON"
+                            >
+                              <Download size={14} />
+                            </button>
                             <button
                               onClick={(e) => handleStartEdit(p, e)}
                               className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
@@ -304,6 +374,26 @@ export const ProjectModal: React.FC = () => {
                           </>
                         )}
                       </div>
+                    </div>
+
+                    {/* Metadata Badges */}
+                    <div className="flex items-center flex-wrap gap-1.5 mt-3">
+                      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium">
+                        <Box size={10} className="text-slate-400" />
+                        <span>{stats.totalElements} element{stats.totalElements !== 1 ? 's' : ''}</span>
+                      </span>
+
+                      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600 font-medium">
+                        <Layers size={10} className="text-indigo-500" />
+                        <span>{stats.framesCount} frame{stats.framesCount !== 1 ? 's' : ''}</span>
+                      </span>
+
+                      {stats.componentsCount > 0 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 font-medium">
+                          <ComponentIcon size={10} className="text-amber-600" />
+                          <span>{stats.componentsCount} component{stats.componentsCount !== 1 ? 's' : ''}</span>
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -342,11 +432,11 @@ export const ProjectModal: React.FC = () => {
 
       {/* Custom PixelNirmaan Delete Confirmation Modal */}
       {projectToDelete && (
-        <div 
+        <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-150"
           onClick={() => setProjectToDelete(null)}
         >
-          <div 
+          <div
             className="bg-white rounded-2xl shadow-2xl border border-slate-100 p-6 max-w-sm w-full text-center animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
@@ -383,3 +473,4 @@ export const ProjectModal: React.FC = () => {
     </div>
   );
 };
+
