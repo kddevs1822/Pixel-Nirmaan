@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Repeat, Image as ImageIcon } from 'lucide-react';
+import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Repeat, Image as ImageIcon, Globe, Home, Maximize2, Sparkles } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
 import { ActionSequenceBuilder } from './ActionSequenceBuilder';
@@ -559,6 +559,7 @@ export const RightSidebar: React.FC = () => {
   const generateResponsiveVariants = useCanvasStore((state) => state.generateResponsiveVariants);
   const pickingTriggerForNodeId = useCanvasStore((state) => state.pickingTriggerForNodeId);
   const setPickingTriggerForNodeId = useCanvasStore((state) => state.setPickingTriggerForNodeId);
+  const setHomePage = useCanvasStore((state) => state.setHomePage);
 
   const [activeVariantTab, setActiveVariantTab] = useState<'default' | 'hover' | 'active' | 'disabled'>('default');
   const [showCodePreview, setShowCodePreview] = useState(false);
@@ -861,6 +862,145 @@ export const RightSidebar: React.FC = () => {
                   Creates or syncs side-by-side adapted frames so you can visually inspect & customize your design across all screen sizes.
                 </p>
               </div>
+
+              {/* Multi-Page Website & SEO Settings */}
+              {!primaryNode.parentId && !primaryNode.isMasterComponent && !primaryNode.variantOf && (() => {
+                const isHome = !!primaryNode.isHomePage;
+                const currentRoute = primaryNode.routePath ?? (isHome ? '/' : `/${(primaryNode.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
+
+                const otherRootPages = nodes.filter(n => n.type === 'Frame' && !n.parentId && !n.isMasterComponent && !n.variantOf && n.id !== primaryNode.id);
+                const refPage = otherRootPages.find(p => p.isHomePage) || otherRootPages[0];
+                const widthDiff = refPage && Math.abs((primaryNode.width || 0) - (refPage.width || 0)) > 1;
+                const heightDiff = refPage && Math.abs((primaryNode.height || 0) - (refPage.height || 0)) > 1;
+                const yDiff = refPage && Math.abs((primaryNode.y || 0) - (refPage.y || 0)) > 1;
+                const needsAlignmentOrResize = refPage && (widthDiff || heightDiff || yDiff);
+
+                return (
+                  <div className="flex flex-col gap-2.5 pt-3 border-t border-slate-100">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Globe size={13} className="text-indigo-600" /> Page Route & SEO
+                      </span>
+                      {isHome && (
+                        <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded-full border border-emerald-200">
+                          Home (/)
+                        </span>
+                      )}
+                    </label>
+
+                    {/* Size & Alignment Fixer */}
+                    {needsAlignmentOrResize && refPage && (
+                      <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-lg flex flex-col gap-2">
+                        <div className="flex items-center justify-between text-amber-800 text-[11px] font-semibold">
+                          <span className="flex items-center gap-1.5">
+                            <Sparkles size={13} className="text-amber-600" /> Page Size & Top Alignment
+                          </span>
+                          <span className="text-[10px] text-amber-600 truncate max-w-[120px]">vs {refPage.name || 'Page'}</span>
+                        </div>
+                        <div className="text-[10.5px] text-amber-800/90 leading-tight flex flex-col gap-0.5">
+                          <div className="flex items-center justify-between font-mono text-[10px]">
+                            <span className="text-slate-500 font-sans">Current:</span>
+                            <span className="font-semibold text-amber-900">{Math.round(primaryNode.width || 0)} × {Math.round(primaryNode.height || 0)} (y: {Math.round(primaryNode.y || 0)})</span>
+                          </div>
+                          <div className="flex items-center justify-between font-mono text-[10px]">
+                            <span className="text-slate-500 font-sans">Target ({refPage.name || 'Ref'}):</span>
+                            <span className="font-semibold text-emerald-800">{Math.round(refPage.width || 0)} × {Math.round(refPage.height || 0)} (y: {Math.round(refPage.y || 0)})</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateNodes([primaryNode.id], {
+                              width: refPage.width,
+                              height: refPage.height,
+                              y: refPage.y,
+                            }, true);
+                            setToastMessage(`📐 Matched page size & aligned to ${refPage.name || 'page'} (${Math.round(refPage.width || 0)}×${Math.round(refPage.height || 0)})`);
+                          }}
+                          className="w-full py-1.5 px-2 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-xs font-medium flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                        >
+                          <Maximize2 size={12} /> Align & Match Page Dimensions
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Set as Home Page checkbox */}
+                    <label className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-700 cursor-pointer hover:bg-slate-100/80 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={isHome}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          if (checked) {
+                            setHomePage(primaryNode.id);
+                          } else {
+                            updateNodes([primaryNode.id], {
+                              isHomePage: false,
+                              routePath: `/${(primaryNode.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`,
+                            }, true);
+                          }
+                        }}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="font-medium">Set as Home Page (Root URL <code className="text-indigo-600 font-mono text-[11px]">/</code>)</span>
+                    </label>
+
+                    {/* Route Slug */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-slate-500 font-medium flex items-center justify-between">
+                        <span>Route URL Path</span>
+                        <span className="text-[9.5px] text-slate-400">e.g. /about or /pricing</span>
+                      </label>
+                      <input
+                        type="text"
+                        disabled={isHome}
+                        value={isHome ? '/' : (primaryNode.routePath ?? currentRoute)}
+                        onChange={(e) => {
+                          let val = e.target.value.trim();
+                          if (val && !val.startsWith('/')) val = `/${val}`;
+                          updateNodes([primaryNode.id], { routePath: val }, true);
+                        }}
+                        className={`border rounded px-2.5 py-1.5 text-xs font-mono transition-colors ${
+                          isHome
+                            ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                            : 'bg-white border-slate-300 text-slate-800 focus:outline-none focus:border-[#4A3AFF]'
+                        }`}
+                        placeholder="/about"
+                      />
+                    </div>
+
+                    {/* Page SEO Title */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-slate-500 font-medium flex items-center justify-between">
+                        <span>Page Title (SEO &lt;title&gt;)</span>
+                        <span className="text-[9.5px] text-slate-400">Browser tab title</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={primaryNode.seoTitle || ''}
+                        onChange={(e) => updateNodes([primaryNode.id], { seoTitle: e.target.value }, true)}
+                        className="border border-slate-300 rounded px-2.5 py-1.5 text-xs bg-white text-slate-800 focus:outline-none focus:border-[#4A3AFF]"
+                        placeholder="e.g. Acme Corp — Fast & Reliable"
+                      />
+                    </div>
+
+                    {/* Meta Description */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] text-slate-500 font-medium flex items-center justify-between">
+                        <span>Meta Description</span>
+                        <span className="text-[9.5px] text-slate-400">Search engine summary</span>
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={primaryNode.seoDescription || ''}
+                        onChange={(e) => updateNodes([primaryNode.id], { seoDescription: e.target.value }, true)}
+                        className="border border-slate-300 rounded px-2.5 py-1.5 text-xs bg-white text-slate-800 focus:outline-none focus:border-[#4A3AFF] resize-none"
+                        placeholder="e.g. Build modern web applications with our intuitive visual tool suite."
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -2413,11 +2553,15 @@ export const RightSidebar: React.FC = () => {
               className="border border-slate-200 rounded px-2 py-1.5 text-sm bg-slate-50 w-full"
             >
               <option value="">None</option>
-              {compatibleFrames.map((frame) => (
-                <option key={frame.id} value={frame.id}>
-                  {`Frame - ${Math.round(frame.width || 0)}x${Math.round(frame.height || 0)} (ID: ${frame.id.slice(0,4)})`}
-                </option>
-              ))}
+              {compatibleFrames.map((frame) => {
+                const isHome = !!frame.isHomePage;
+                const route = frame.routePath || (isHome ? '/' : `/${(frame.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
+                return (
+                  <option key={frame.id} value={frame.id}>
+                    {`${frame.name || 'Page'} (${route})${isHome ? ' ★ Home' : ''}`}
+                  </option>
+                );
+              })}
             </select>
           </div>
         </div>
@@ -2440,11 +2584,15 @@ export const RightSidebar: React.FC = () => {
                   className="border border-slate-200 rounded px-2 py-1.5 text-sm bg-slate-50 w-full"
                 >
                   <option value="">None</option>
-                  {compatibleFrames.map((frame) => (
-                    <option key={frame.id} value={frame.id}>
-                      {`Frame - ${Math.round(frame.width || 0)}x${Math.round(frame.height || 0)} (ID: ${frame.id.slice(0,4)})`}
-                    </option>
-                  ))}
+                  {compatibleFrames.map((frame) => {
+                    const isHome = !!frame.isHomePage;
+                    const route = frame.routePath || (isHome ? '/' : `/${(frame.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
+                    return (
+                      <option key={frame.id} value={frame.id}>
+                        {`${frame.name || 'Page'} (${route})${isHome ? ' ★ Home' : ''}`}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             </div>

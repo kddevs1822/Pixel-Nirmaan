@@ -40,7 +40,7 @@ const TargetElementPicker: React.FC<TargetElementPickerProps> = ({
 
   const candidates = nodes.filter(n => {
     if (isPagePicker) {
-      return n.type === 'Frame' && !n.parentId;
+      return n.type === 'Frame' && !n.parentId && !n.isMasterComponent && !n.variantOf;
     }
     if (allowedTypes && allowedTypes.length > 0) {
       return allowedTypes.includes(n.type);
@@ -121,11 +121,18 @@ const TargetElementPicker: React.FC<TargetElementPickerProps> = ({
               className="flex-1 min-w-0 border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-slate-50 text-slate-800 truncate focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
               <option value="">{defaultLabel || `Current Element (${originNode.name || originNode.type})`}</option>
-              {candidates.map(candidate => (
-                <option key={candidate.id} value={candidate.id}>
-                  {getNodeDescriptiveLabel(candidate, nodes)}
-                </option>
-              ))}
+              {candidates.map(candidate => {
+                const isHome = !!candidate.isHomePage;
+                const route = candidate.routePath || (isHome ? '/' : `/${(candidate.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
+                const labelText = isPagePicker
+                  ? `${candidate.name || 'Page'} (${route})${isHome ? ' ★ Home' : ''}`
+                  : getNodeDescriptiveLabel(candidate, nodes);
+                return (
+                  <option key={candidate.id} value={candidate.id}>
+                    {labelText}
+                  </option>
+                );
+              })}
             </select>
           </div>
 

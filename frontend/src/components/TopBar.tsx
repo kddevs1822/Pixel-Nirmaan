@@ -92,14 +92,20 @@ export const TopBar: React.FC = () => {
     }
     
     if (!targetFrameId) {
-      // Prefer root non-variant frames
-      const rootFrame = nodes.find(n => n.type === 'Frame' && !n.parentId && !n.variantOf);
-      if (rootFrame) {
-        targetFrameId = rootFrame.id;
+      // Prioritize designated home page frame
+      const homeFrame = nodes.find(n => n.type === 'Frame' && !n.parentId && !n.variantOf && !n.isMasterComponent && n.isHomePage);
+      if (homeFrame) {
+        targetFrameId = homeFrame.id;
       } else {
-        // Fallback: any frame, resolved to primary
-        const anyFrame = nodes.find(n => n.type === 'Frame' && !n.parentId);
-        if (anyFrame) targetFrameId = anyFrame.variantOf || anyFrame.id;
+        // Prefer root non-variant frames
+        const rootFrame = nodes.find(n => n.type === 'Frame' && !n.parentId && !n.variantOf && !n.isMasterComponent);
+        if (rootFrame) {
+          targetFrameId = rootFrame.id;
+        } else {
+          // Fallback: any frame, resolved to primary
+          const anyFrame = nodes.find(n => n.type === 'Frame' && !n.parentId);
+          if (anyFrame) targetFrameId = anyFrame.variantOf || anyFrame.id;
+        }
       }
     }
     

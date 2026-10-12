@@ -2,7 +2,8 @@ import React, { useRef, useState } from 'react';
 import { 
   Square, Circle, Type, Image as ImageIcon, Monitor, Tablet, Smartphone, Triangle, Minus, Spline, 
   MousePointer2, Link, Layers, Box, Edit2, Trash2, Edit3, CheckSquare, ToggleRight, ListFilter, 
-  FormInput, Plus, X, Variable, FileText, Database, Play, Check, AlertCircle, RefreshCw, Upload, Globe
+  FormInput, Plus, X, Variable, FileText, Database, Play, Check, AlertCircle, RefreshCw, Upload, Globe,
+  Home, Copy, Crosshair
 } from 'lucide-react';
 import { useCanvasStore } from '../store/useCanvasStore';
 import type { NodeType, DataSource, DataSourceHeader } from '../store/useCanvasStore';
@@ -14,11 +15,23 @@ export const LeftSidebar: React.FC = () => {
   const { 
     addNode, nodes, pan, zoom, mode, setMode, spawnInstance, selectNodes, deleteComponent, setPan,
     stateVariables, addStateVariable, deleteStateVariable, updateStateVariable,
-    dataSources, addDataSource, updateDataSource, deleteDataSource, setToastMessage
+    dataSources, addDataSource, updateDataSource, deleteDataSource, setToastMessage,
+    addPage, duplicatePage, deletePage, setHomePage, panToNode, updateNode, selectedIds
   } = useCanvasStore();
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeTab, setActiveTab] = useState<'tools' | 'components' | 'variables' | 'data'>('tools');
+  const [activeTab, setActiveTab] = useState<'tools' | 'components' | 'variables' | 'data' | 'pages'>('tools');
+
+  // Pages State
+  const [showAddPageModal, setShowAddPageModal] = useState(false);
+  const [newPageName, setNewPageName] = useState('');
+  const [newPagePath, setNewPagePath] = useState('');
+  const [newPageSizePreset, setNewPageSizePreset] = useState<'match' | '1440x900' | 'window' | '1280x800' | 'custom'>('match');
+  const [newPageCustomW, setNewPageCustomW] = useState(1440);
+  const [newPageCustomH, setNewPageCustomH] = useState(900);
+  const [editingPageId, setEditingPageId] = useState<string | null>(null);
+  const [editingPageName, setEditingPageName] = useState('');
+  const [editingPageRoute, setEditingPageRoute] = useState('');
 
   // Variable Creation & Edit State
   const [showAddVarModal, setShowAddVarModal] = useState(false);
@@ -420,6 +433,13 @@ export const LeftSidebar: React.FC = () => {
             title="Data Sources (REST APIs)"
           >
             <Database size={20} />
+          </button>
+          <button 
+            onClick={() => setActiveTab(activeTab === 'pages' ? 'tools' : 'pages')} 
+            className={`p-3 rounded-xl transition-colors ${activeTab === 'pages' ? 'bg-[#4A3AFF] text-white' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-800'}`} 
+            title="Website Pages & Routing"
+          >
+            <Globe size={20} />
           </button>
         </div>
 
@@ -1054,6 +1074,415 @@ export const LeftSidebar: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Pages & Routing Drawer */}
+      {activeTab === 'pages' && (() => {
+        const rootPages = nodes.filter(n => n.type === 'Frame' && !n.parentId && !n.variantOf && !n.isMasterComponent);
+
+        const referencePage = rootPages.find(p => p.isHomePage) || rootPages[0];
+        const refW = referencePage?.width ? Math.round(referencePage.width) : (typeof window !== 'undefined' ? window.innerWidth : 1440);
+        const refH = referencePage?.height ? Math.round(referencePage.height) : (typeof window !== 'undefined' ? window.innerHeight : 900);
+
+        const handleCreatePage = (e: React.FormEvent) => {
+          e.preventDefault();
+          const cleanName = newPageName.trim() || `Page ${rootPages.length + 1}`;
+          let cleanRoute = newPagePath.trim();
+          if (cleanRoute && !cleanRoute.startsWith('/')) {
+            cleanRoute = `/${cleanRoute}`;
+          }
+
+          let chosenW: number | undefined = undefined;
+          let chosenH: number | undefined = undefined;
+
+          if (newPageSizePreset === '1440x900') {
+            chosenW = 1440;
+            chosenH = 900;
+          } else if (newPageSizePreset === 'window') {
+            chosenW = typeof window !== 'undefined' ? window.innerWidth : 1440;
+            chosenH = typeof window !== 'undefined' ? window.innerHeight : 900;
+          } else if (newPageSizePreset === '1280x800') {
+            chosenW = 1280;
+            chosenH = 800;
+          } else if (newPageSizePreset === 'custom') {
+            chosenW = Math.max(320, newPageCustomW || 1440);
+            chosenH = Math.max(320, newPageCustomH || 900);
+          }
+
+          addPage(cleanName, cleanRoute, chosenW, chosenH);
+          setNewPageName('');
+          setNewPagePath('');
+          setNewPageSizePreset('match');
+          setShowAddPageModal(false);
+        };
+
+        const handleSaveEditPage = (pageId: string) => {
+          if (!editingPageName.trim()) return;
+          let cleanRoute = editingPageRoute.trim();
+          if (cleanRoute && !cleanRoute.startsWith('/')) {
+            cleanRoute = `/${cleanRoute}`;
+          }
+          updateNode(pageId, {
+            name: editingPageName.trim(),
+            ...(cleanRoute ? { routePath: cleanRoute } : {}),
+          }, true);
+          setEditingPageId(null);
+          setEditingPageName('');
+          setEditingPageRoute('');
+          setToastMessage(`Updated page "${editingPageName.trim()}"`);
+        };
+
+        return (
+          <div className="w-84 bg-white border-r border-slate-200 shadow-sm flex flex-col z-10 animate-in slide-in-from-left-4 duration-200">
+            {/* Header */}
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                  <Globe size={16} />
+                </div>
+                <div>
+                  <h2 className="font-heading font-bold text-sm text-slate-800 leading-tight">Pages & Routing</h2>
+                  <p className="text-[10px] text-slate-400">
+                    {rootPages.length} {rootPages.length === 1 ? 'Page' : 'Pages'} in website
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setActiveTab('tools')} 
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-100 transition-colors"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 flex-1 overflow-y-auto">
+              {/* Add New Page Button */}
+              <button
+                onClick={() => {
+                  setNewPageName('');
+                  setNewPagePath('');
+                  setNewPageSizePreset('match');
+                  setShowAddPageModal(true);
+                }}
+                className="w-full mb-3.5 py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-medium text-xs flex items-center justify-center gap-1.5 transition-colors border border-indigo-200 cursor-pointer shadow-2xs"
+              >
+                <Plus size={15} /> Add New Page
+              </button>
+
+              {/* Add Page Modal / Inline Form */}
+              {showAddPageModal && (
+                <form onSubmit={handleCreatePage} className="mb-4 p-3.5 bg-slate-50 rounded-xl border border-indigo-200 flex flex-col gap-2.5 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                    <span className="flex items-center gap-1.5">
+                      <Plus size={13} className="text-indigo-600" /> New Website Page
+                    </span>
+                    <button 
+                      type="button" 
+                      onClick={() => setShowAddPageModal(false)} 
+                      className="text-slate-400 hover:text-slate-600 p-0.5"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Page Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. About Us, Pricing, Contact"
+                      value={newPageName}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewPageName(val);
+                        if (!newPagePath || newPagePath.startsWith('/')) {
+                          const slug = val.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
+                          setNewPagePath(slug ? `/${slug}` : '');
+                        }
+                      }}
+                      className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Route Path (Slug)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. /about, /pricing, /"
+                      value={newPagePath}
+                      onChange={(e) => setNewPagePath(e.target.value)}
+                      className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Canvas Size Preset Picker */}
+                  <div>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Canvas Size</label>
+                    <select
+                      value={newPageSizePreset}
+                      onChange={(e) => setNewPageSizePreset(e.target.value as any)}
+                      className="w-full mt-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:ring-1 focus:ring-indigo-500 focus:outline-none cursor-pointer"
+                    >
+                      <option value="match">
+                        {referencePage ? `Match Existing Page (${refW} × ${refH})` : 'Match Canvas Default'}
+                      </option>
+                      <option value="1440x900">Desktop Standard (1440 × 900)</option>
+                      <option value="window">
+                        Window Fullscreen ({typeof window !== 'undefined' ? window.innerWidth : 1440} × {typeof window !== 'undefined' ? window.innerHeight : 900})
+                      </option>
+                      <option value="1280x800">Laptop Screen (1280 × 800)</option>
+                      <option value="custom">Custom Dimensions...</option>
+                    </select>
+                  </div>
+
+                  {newPageSizePreset === 'custom' && (
+                    <div className="grid grid-cols-2 gap-2 animate-in fade-in duration-150">
+                      <div>
+                        <label className="text-[9.5px] font-semibold text-slate-400 uppercase">Width (px)</label>
+                        <input
+                          type="number"
+                          value={newPageCustomW}
+                          onChange={(e) => setNewPageCustomW(Number(e.target.value) || 0)}
+                          className="w-full mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded-md text-xs font-mono focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                          min={320}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9.5px] font-semibold text-slate-400 uppercase">Height (px)</label>
+                        <input
+                          type="number"
+                          value={newPageCustomH}
+                          onChange={(e) => setNewPageCustomH(Number(e.target.value) || 0)}
+                          className="w-full mt-0.5 px-2 py-1 bg-white border border-slate-200 rounded-md text-xs font-mono focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                          min={320}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddPageModal(false)}
+                      className="px-3 py-1 text-xs text-slate-500 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-3.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors cursor-pointer shadow-sm"
+                    >
+                      Create Page
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Pages List */}
+              {rootPages.length === 0 ? (
+                <div className="text-center py-8 px-2 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center">
+                  <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 mb-2">
+                    <Globe size={20} />
+                  </div>
+                  <h4 className="text-xs font-semibold text-slate-700 mb-1">No pages yet</h4>
+                  <p className="text-[11px] text-slate-400 max-w-[200px] leading-relaxed mb-3">
+                    Add a desktop frame to begin designing your multi-page web app.
+                  </p>
+                  <button
+                    onClick={() => addPage('Home', '/')}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                  >
+                    Create Home Page
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  {rootPages.map((page, index) => {
+                    const isSelected = selectedIds.includes(page.id) || nodes.some(n => selectedIds.includes(n.id) && (n.parentId === page.id || n.id === page.id));
+                    const isHome = !!page.isHomePage || (index === 0 && !rootPages.some(p => p.isHomePage));
+                    const currentRoute = page.routePath || (isHome ? '/' : `/${(page.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
+
+                    const hasTablet = nodes.some(n => n.variantOf === page.id && n.frameType === 'tablet');
+                    const hasMobile = nodes.some(n => n.variantOf === page.id && n.frameType === 'mobile');
+
+                    const isEditingThis = editingPageId === page.id;
+
+                    return (
+                      <div
+                        key={page.id}
+                        className={`p-3 rounded-xl border transition-all flex flex-col gap-2 group overflow-hidden ${
+                          isSelected
+                            ? 'bg-indigo-50/70 border-indigo-300 ring-1 ring-indigo-200 shadow-xs'
+                            : 'bg-slate-50/70 border-slate-200 hover:bg-white hover:border-slate-300 hover:shadow-xs'
+                        }`}
+                      >
+                        {isEditingThis ? (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9.5px] font-bold uppercase text-slate-400">Page Name</label>
+                              <input
+                                type="text"
+                                value={editingPageName}
+                                onChange={(e) => setEditingPageName(e.target.value)}
+                                className="px-2 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                                autoFocus
+                              />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9.5px] font-bold uppercase text-slate-400">Route Slug</label>
+                              <input
+                                type="text"
+                                value={editingPageRoute}
+                                onChange={(e) => setEditingPageRoute(e.target.value)}
+                                className="px-2 py-1 bg-white border border-slate-300 rounded text-xs font-mono focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                              />
+                            </div>
+                            <div className="flex justify-end gap-1.5 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingPageId(null)}
+                                className="px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-200 rounded"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEditPage(page.id)}
+                                className="px-2.5 py-0.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Page header row */}
+                            <div 
+                              className="flex items-center justify-between gap-1 cursor-pointer"
+                              onClick={() => {
+                                panToNode(page.id);
+                              }}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                                  isHome ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                                }`}>
+                                  {isHome ? <Home size={15} /> : <Monitor size={15} />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <h4 className="font-semibold text-xs text-slate-800 truncate" title={page.name}>
+                                      {page.name || `Page ${index + 1}`}
+                                    </h4>
+                                    {isHome && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 shrink-0">
+                                        Home
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="font-mono text-[10px] text-slate-400 block truncate" title={currentRoute}>
+                                    {currentRoute}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Hover actions & Focus */}
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  {!isHome && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setHomePage(page.id);
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors cursor-pointer"
+                                      title="Set as Home Page (/)"
+                                    >
+                                      <Home size={12} />
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      duplicatePage(page.id);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors cursor-pointer"
+                                    title="Duplicate Page"
+                                  >
+                                    <Copy size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingPageId(page.id);
+                                      setEditingPageName(page.name || `Page ${index + 1}`);
+                                      setEditingPageRoute(currentRoute);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded transition-colors cursor-pointer"
+                                    title="Rename Page"
+                                  >
+                                    <Edit2 size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (confirm(`Are you sure you want to delete page "${page.name || 'Page'}" and all its contents?`)) {
+                                        deletePage(page.id);
+                                      }
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                                    title="Delete Page"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    panToNode(page.id);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors shrink-0"
+                                  title="Focus page on canvas"
+                                >
+                                  <Crosshair size={13} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Responsive variants badge bar */}
+                            <div className="flex items-center gap-1.5 pt-1.5 border-t border-slate-200/60 text-[10px]">
+                              <span className="text-slate-400 text-[10px]">Variants:</span>
+                              <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium flex items-center gap-1 text-[9.5px]" title="Desktop frame">
+                                <Monitor size={10} /> Desk
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded font-medium flex items-center gap-1 text-[9.5px] ${
+                                hasTablet ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-400'
+                              }`} title={hasTablet ? 'Tablet variant generated' : 'No tablet variant'}>
+                                <Tablet size={10} /> Tab
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded font-medium flex items-center gap-1 text-[9.5px] ${
+                                hasMobile ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-slate-100 text-slate-400'
+                              }`} title={hasMobile ? 'Mobile variant generated' : 'No mobile variant'}>
+                                <Smartphone size={10} /> Mob
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Add Image Modal */}
       {showImageModal && (

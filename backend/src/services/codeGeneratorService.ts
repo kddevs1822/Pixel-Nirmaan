@@ -61,6 +61,15 @@ export class CodeGeneratorService {
       pages = [allRootFrames[0]];
     }
 
+    // Sort pages: designated home page first
+    pages.sort((a, b) => {
+      const aIsHome = a.isHomePage || a.routePath === '/';
+      const bIsHome = b.isHomePage || b.routePath === '/';
+      if (aIsHome && !bIsHome) return -1;
+      if (!aIsHome && bIsHome) return 1;
+      return 0;
+    });
+
     // Collect truly loose root nodes: nodes with no parentId that are NOT page frames AND NOT master components.
     // Master components already get their own component files; they don't need to appear on a virtual page.
     // Component instances at the root level DO need to be on a page though.
@@ -133,11 +142,26 @@ export class CodeGeneratorService {
 
     // Pages
     const usedNames = new Set<string>();
+    const usedRoutes = new Set<string>();
     const pageRouteMap: { frameId: string; route: string; componentName: string }[] = [];
     pages.forEach((page, index) => {
       const pageName = this.getPageComponentName(page, index, usedNames);
-      const route = this.getPageRoute(pageName, index);
-      pageRouteMap.push({ frameId: page.id, route, componentName: pageName });
+      let route = page.routePath
+        ? (page.routePath.startsWith('/') ? page.routePath : `/${page.routePath}`)
+        : this.getPageRoute(pageName, index);
+
+      if (page.isHomePage || (index === 0 && (!page.routePath || page.routePath === '/'))) {
+        route = '/';
+      }
+
+      let finalRoute = route;
+      let rCount = 1;
+      while (usedRoutes.has(finalRoute.toLowerCase())) {
+        finalRoute = `${route}-${rCount}`;
+        rCount++;
+      }
+      usedRoutes.add(finalRoute.toLowerCase());
+      pageRouteMap.push({ frameId: page.id, route: finalRoute, componentName: pageName });
     });
 
     // Components
@@ -2490,6 +2514,16 @@ ${bodyStr}  return (
 
     const hasVariants = !!(tabletFrame || mobileFrame);
 
+    let seoEffectCode = '';
+    if (page.seoTitle || page.seoDescription) {
+      const titleLine = page.seoTitle ? `\n    document.title = ${JSON.stringify(page.seoTitle)};` : '';
+      const descLine = page.seoDescription ? `\n    let metaDesc = document.querySelector('meta[name="description"]');\n    if (!metaDesc) {\n      metaDesc = document.createElement('meta');\n      metaDesc.setAttribute('name', 'description');\n      document.head.appendChild(metaDesc);\n    }\n    metaDesc.setAttribute('content', ${JSON.stringify(page.seoDescription)});` : '';
+      seoEffectCode = `
+  useEffect(() => {${titleLine}${descLine}
+  }, []);
+`;
+    }
+
     if (!hasVariants) {
       return `import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -2499,7 +2533,7 @@ export default function ${pageName}() {
   const navigate = useNavigate();
   const [scaleX, setScaleX] = useState(1);
   const [scaleY, setScaleY] = useState(1);
-${stateDeclStr}
+${stateDeclStr}${seoEffectCode}
   useEffect(() => {
     const updateScale = () => {
       setScaleX(window.innerWidth / ${dW});
@@ -2541,7 +2575,7 @@ export default function ${pageName}() {
   const [screenType, setScreenType] = useState('desktop');
   const [scaleX, setScaleX] = useState(1);
   const [scaleY, setScaleY] = useState(1);
-${stateDeclStr}
+${stateDeclStr}${seoEffectCode}
   useEffect(() => {
     const updateScale = () => {
       const width = window.innerWidth;

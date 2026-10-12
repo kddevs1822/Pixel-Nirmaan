@@ -2288,6 +2288,22 @@ export const CanvasArea: React.FC = () => {
         }
       }
 
+      if (targetField === 'targetPageId') {
+        let curr: CanvasNode = resolvedTargetNode;
+        while (curr.parentId) {
+          const parent = nodes.find(n => n.id === curr.parentId);
+          if (parent) curr = parent;
+          else break;
+        }
+        if (curr.variantOf) {
+          const primary = nodes.find(n => n.id === curr.variantOf);
+          if (primary) curr = primary;
+        }
+        if (curr.type === 'Frame') {
+          resolvedTargetNode = curr;
+        }
+      }
+
       const originNode = nodes.find(n => n.id === nodeId);
       if (originNode && originNode.actionSequences) {
         const isSelf = resolvedTargetNode.id === originNode.id;
@@ -2816,7 +2832,37 @@ export const CanvasArea: React.FC = () => {
       <div className="fixed inset-0 bg-black z-50 flex flex-col">
         <div className="h-14 flex items-center justify-between px-6 bg-slate-900 text-white shrink-0">
           <div className="flex items-center gap-3">
-            <span className="font-semibold text-sm">Previewing: {primaryFrame.name || 'Screen'}</span>
+            <span className="font-semibold text-sm">Previewing:</span>
+            {(() => {
+              const rootPages = nodes.filter(n => n.type === 'Frame' && !n.parentId && !n.variantOf && !n.isMasterComponent);
+              if (rootPages.length <= 1) {
+                const isHome = !!primaryFrame.isHomePage;
+                const route = primaryFrame.routePath || (isHome ? '/' : `/${(primaryFrame.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
+                return (
+                  <span className="font-semibold text-sm flex items-center gap-1.5">
+                    {primaryFrame.name || 'Screen'}
+                    <span className="text-xs font-mono text-indigo-300 font-normal">({route})</span>
+                  </span>
+                );
+              }
+              return (
+                <select
+                  value={primaryFrame.id}
+                  onChange={(e) => setPreviewFrameId(e.target.value)}
+                  className="bg-slate-800 text-xs text-white border border-slate-700 rounded-lg px-2.5 py-1 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                >
+                  {rootPages.map(p => {
+                    const isHome = !!p.isHomePage;
+                    const route = p.routePath || (isHome ? '/' : `/${(p.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.name || 'Page'} ({route}){isHome ? ' ★ Home' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              );
+            })()}
             <span className="px-2 py-0.5 rounded text-xs font-mono font-bold bg-indigo-600 text-white uppercase tracking-wide">
               {activeDevice.toUpperCase()} ({Math.round(activePreviewFrame.width || 0)}×{Math.round(activePreviewFrame.height || 0)})
             </span>

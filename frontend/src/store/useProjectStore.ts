@@ -813,11 +813,27 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             }
           : undefined;
 
+        // Remap action sequence targets (targetNodeId and targetPageId)
+        const newActionSequences = node.actionSequences
+          ? node.actionSequences.map((seq: any) => ({
+              ...seq,
+              actions: (seq.actions || []).map((act: any) => ({
+                ...act,
+                targetNodeId: act.targetNodeId ? idMap.get(act.targetNodeId) || act.targetNodeId : undefined,
+                targetPageId: act.targetPageId ? idMap.get(act.targetPageId) || act.targetPageId : undefined,
+              }))
+            }))
+          : undefined;
+
         // Shift root elements by offsetX and offsetY so they don't overlap with existing elements
         // (Children with parentId are positioned relative to their parent frame, so they automatically follow the frame)
         const isRoot = !node.parentId;
         const newX = isRoot ? (node.x || 0) + offsetX : node.x;
         const newY = isRoot ? (node.y || 0) + offsetY : node.y;
+
+        // If current canvas already has home page, demote imported home page to avoid route collisions
+        const hasExistingHome = currentNodes.some(n => n.isHomePage);
+        const resolvedIsHome = hasExistingHome ? false : node.isHomePage;
 
         return {
           ...node,
@@ -828,6 +844,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           variantOf: newVariantOf,
           linkTo: newLinkTo,
           animation: newAnimation,
+          actionSequences: newActionSequences,
+          isHomePage: resolvedIsHome,
         };
       });
 

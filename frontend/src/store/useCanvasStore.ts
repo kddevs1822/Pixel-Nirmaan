@@ -60,6 +60,12 @@ export interface CanvasNode {
   variantOf?: string;
   sourceNodeId?: string;
 
+  // Multi-Page & SEO Properties
+  routePath?: string;
+  isHomePage?: boolean;
+  seoTitle?: string;
+  seoDescription?: string;
+
   // Interactive Input properties
   placeholder?: string;
   defaultValue?: any;
@@ -293,6 +299,13 @@ interface CanvasState {
   updatePropOverride: (instanceId: string, propId: string, value: any) => void;
   bindProp: (nodeId: string, field: string, propId: string | null) => void;
   generateResponsiveVariants: (frameId: string) => void;
+  
+  // Page Management
+  addPage: (name?: string, routePath?: string, customWidth?: number, customHeight?: number) => string;
+  duplicatePage: (pageId: string) => string | null;
+  deletePage: (pageId: string) => void;
+  setHomePage: (pageId: string) => void;
+  panToNode: (nodeId: string) => void;
   
   setZoom: (zoom: number) => void;
   setPan: (pan: { x: number; y: number }) => void;
@@ -1110,6 +1123,235 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     } else {
       setToastMessage(`✨ Generated ${labels} screen variants!`);
     }
+  },
+
+  addPage: (name?: string, routePath?: string, customWidth?: number, customHeight?: number) => {
+    const { nodes, past, zoom } = get();
+    const rootPages = nodes.filter(n => n.type === 'Frame' && !n.parentId && !n.variantOf && !n.isMasterComponent);
+    const isFirstPage = rootPages.length === 0;
+
+    // Inherit dimensions and vertical alignment from existing primary/home page
+    const referencePage = rootPages.find(p => p.isHomePage) || rootPages[0];
+    const inheritedWidth = referencePage?.width || (typeof window !== 'undefined' ? window.innerWidth : 1440) || 1440;
+    const inheritedHeight = referencePage?.height || (typeof window !== 'undefined' ? window.innerHeight : 900) || 900;
+    const inheritedY = referencePage?.y !== undefined ? referencePage.y : 100;
+    const inheritedFill = referencePage?.fill || '#ffffff';
+
+    const pageWidth = customWidth && customWidth > 0 ? customWidth : inheritedWidth;
+    const pageHeight = customHeight && customHeight > 0 ? customHeight : inheritedHeight;
+    const pageY = inheritedY;
+
+    let newX = 100;
+    const rootNodes = nodes.filter(n => !n.parentId);
+    if (rootNodes.length > 0) {
+      const maxX = Math.max(...rootNodes.map(n => (n.x || 0) + (n.width || 0)));
+      newX = maxX + 80;
+    }
+
+    const pageNum = rootPages.length + 1;
+    const pageName = name?.trim() || (isFirstPage ? 'Home' : `Page ${pageNum}`);
+    
+    let cleanRoute = routePath?.trim();
+    if (!cleanRoute) {
+      if (isFirstPage) {
+        cleanRoute = '/';
+      } else {
+        const slug = pageName.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        cleanRoute = `/${slug || `page-${pageNum}`}`;
+      }
+    } else {
+      if (!cleanRoute.startsWith('/')) cleanRoute = `/${cleanRoute}`;
+    }
+
+    const newPageId = uuidv4();
+    const newPage: CanvasNode = {
+      id: newPageId,
+      type: 'Frame',
+      name: pageName,
+      x: newX,
+      y: pageY,
+      width: pageWidth,
+      height: pageHeight,
+      frameType: referencePage?.frameType || 'desktop',
+      fill: inheritedFill,
+      routePath: cleanRoute,
+      isHomePage: isFirstPage,
+    };
+
+    const newNodes = [...nodes, newPage];
+    set({
+      past: [...past, nodes],
+      future: [],
+      nodes: newNodes,
+      selectedIds: [newPageId],
+    });
+
+    const cx = (window.innerWidth - 64 - 288) / 2;
+    const cy = (window.innerHeight - 56) / 2;
+    set({
+      pan: {
+        x: cx - (newX * zoom) - ((pageWidth * zoom) / 2),
+        y: cy - (pageY * zoom) - ((pageHeight * zoom) / 2),
+      }
+    });
+
+    get().setToastMessage(`✨ Added page "${pageName}" (${cleanRoute}) [${Math.round(pageWidth)}×${Math.round(pageHeight)}]`);
+    return newPageId;
+  },
+
+  duplicatePage: (pageId: string) => {
+    const { nodes, past, zoom } = get();
+    const page = nodes.find(n => n.id === pageId);
+    if (!page) return null;
+
+    const variants = nodes.filter(n => n.variantOf === pageId);
+    const pageTreeIds = new Set<string>([page.id, ...variants.map(v => v.id)]);
+    let added = true;
+    while (added) {
+      added = false;
+      nodes.forEach(n => {
+        if (n.parentId && pageTreeIds.has(n.parentId) && !pageTreeIds.has(n.id)) {
+          pageTreeIds.add(n.id);
+          added = true;
+        }
+      });
+    }
+
+    const rootNodes = nodes.filter(n => !n.parentId);
+    const maxX = Math.max(...rootNodes.map(n => (n.x || 0) + (n.width || 0)));
+    const offsetX = (maxX + 100) - page.x;
+
+    const idMap = new Map<string, string>();
+    pageTreeIds.forEach(id => idMap.set(id, uuidv4()));
+
+    const dupName = `${page.name || 'Page'} (Copy)`;
+    const slug = dupName.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    const dupRoute = `/${slug}`;
+    const newPageId = idMap.get(page.id)!;
+
+    const duplicatedNodes = nodes.filter(n => pageTreeIds.has(n.id)).map(n => {
+      const isPrimary = n.id === page.id;
+      const isRoot = !n.parentId;
+      const newId = idMap.get(n.id)!;
+      return {
+        ...n,
+        id: newId,
+        name: isPrimary ? dupName : n.name,
+        x: isRoot ? (n.x + offsetX) : n.x,
+        y: n.y,
+        parentId: n.parentId && idMap.has(n.parentId) ? idMap.get(n.parentId) : n.parentId,
+        variantOf: n.variantOf && idMap.has(n.variantOf) ? idMap.get(n.variantOf) : undefined,
+        linkTo: n.linkTo && idMap.has(n.linkTo) ? idMap.get(n.linkTo) : n.linkTo,
+        isHomePage: false,
+        routePath: isPrimary ? dupRoute : n.routePath,
+      };
+    });
+
+    const newNodes = [...nodes, ...duplicatedNodes];
+    set({
+      past: [...past, nodes],
+      future: [],
+      nodes: newNodes,
+      selectedIds: [newPageId],
+    });
+
+    const dupNode = newNodes.find(n => n.id === newPageId);
+    if (dupNode) {
+      const cx = (window.innerWidth - 64 - 288) / 2;
+      const cy = (window.innerHeight - 56) / 2;
+      set({
+        pan: {
+          x: cx - (dupNode.x * zoom) - (((dupNode.width || 1440) * zoom) / 2),
+          y: cy - (dupNode.y * zoom) - (((dupNode.height || 900) * zoom) / 2),
+        }
+      });
+    }
+
+    get().setToastMessage(`📑 Duplicated page "${dupName}"`);
+    return newPageId;
+  },
+
+  deletePage: (pageId: string) => {
+    const { nodes, past } = get();
+    const page = nodes.find(n => n.id === pageId);
+    if (!page) return;
+
+    const variants = nodes.filter(n => n.variantOf === pageId);
+    const deleteIds = new Set<string>([page.id, ...variants.map(v => v.id)]);
+    let added = true;
+    while (added) {
+      added = false;
+      nodes.forEach(n => {
+        if (n.parentId && deleteIds.has(n.parentId) && !deleteIds.has(n.id)) {
+          deleteIds.add(n.id);
+          added = true;
+        }
+      });
+    }
+
+    let remainingNodes = nodes.filter(n => !deleteIds.has(n.id));
+
+    if (page.isHomePage) {
+      const nextHome = remainingNodes.find(n => n.type === 'Frame' && !n.parentId && !n.variantOf && !n.isMasterComponent);
+      if (nextHome) {
+        remainingNodes = remainingNodes.map(n => n.id === nextHome.id ? { ...n, isHomePage: true, routePath: '/' } : n);
+      }
+    }
+
+    set({
+      past: [...past, nodes],
+      future: [],
+      nodes: remainingNodes,
+      selectedIds: [],
+    });
+
+    get().setToastMessage(`🗑️ Deleted page "${page.name || 'Page'}"`);
+  },
+
+  setHomePage: (pageId: string) => {
+    const { nodes, past } = get();
+    const targetPage = nodes.find(n => n.id === pageId);
+    if (!targetPage) return;
+
+    const updated = nodes.map(n => {
+      if (n.id === pageId) {
+        return { ...n, isHomePage: true, routePath: '/' };
+      }
+      if (n.type === 'Frame' && !n.parentId && !n.variantOf && !n.isMasterComponent) {
+        if (n.isHomePage || n.routePath === '/') {
+          const fallbackSlug = `/${(n.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-') || 'page'}`;
+          return { ...n, isHomePage: false, routePath: fallbackSlug };
+        }
+      }
+      return n;
+    });
+
+    set({
+      past: [...past, nodes],
+      future: [],
+      nodes: updated,
+    });
+
+    get().setToastMessage(`🏠 Set "${targetPage.name || 'Page'}" as Home Page (/)`);
+  },
+
+  panToNode: (nodeId: string) => {
+    const { nodes, zoom } = get();
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    const cx = (window.innerWidth - 64 - 288) / 2;
+    const cy = (window.innerHeight - 56) / 2;
+    const nodeW = (node.width || 0) * zoom;
+    const nodeH = (node.height || 0) * zoom;
+
+    set({
+      pan: {
+        x: cx - (node.x * zoom) - (nodeW / 2),
+        y: cy - (node.y * zoom) - (nodeH / 2),
+      },
+      selectedIds: [node.id],
+    });
   },
 
   setZoom: (zoom) => set({ zoom }),

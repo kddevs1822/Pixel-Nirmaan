@@ -57,6 +57,12 @@ export interface CanvasNode {
   variantOf?: string;
   sourceNodeId?: string;
 
+  // Multi-Page & SEO Properties
+  routePath?: string;
+  isHomePage?: boolean;
+  seoTitle?: string;
+  seoDescription?: string;
+
   // Interactive Input properties
   placeholder?: string;
   defaultValue?: any;
