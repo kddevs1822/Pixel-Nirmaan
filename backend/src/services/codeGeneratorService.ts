@@ -2657,34 +2657,40 @@ ${imports}
 
 export default function ${pageName}() {
   const navigate = useNavigate();
-  const [scaleX, setScaleX] = useState(1);
-  const [scaleY, setScaleY] = useState(1);
+  const [scale, setScale] = useState(() => typeof window !== 'undefined' ? (window.innerWidth / ${dW}) : 1);
 ${stateDeclStr}${seoEffectCode}
   useEffect(() => {
     const updateScale = () => {
-      setScaleX(window.innerWidth / ${dW});
-      setScaleY(window.innerHeight / ${dH});
+      setScale(window.innerWidth / ${dW});
     };
     updateScale();
     window.addEventListener('resize', updateScale);
     return () => window.removeEventListener('resize', updateScale);
   }, []);
 ${autoFetchStr}
-  const safeScaleX = Math.max(0.01, (isNaN(scaleX) || !scaleX) ? 1 : scaleX);
-  const safeScaleY = Math.max(0.01, (isNaN(scaleY) || !scaleY) ? 1 : scaleY);
+  const safeScale = Math.max(0.01, (isNaN(scale) || !scale) ? 1 : scale);
 
   return (
-    <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${dBg}' }}>
+    <div className="min-h-screen w-full relative" style={{ backgroundColor: '${dBg}', minHeight: '100vh', overflowX: 'hidden' }}>
       <div 
-        className="relative" 
         style={{ 
-          width: '${dW}px', 
-          height: '${dH}px',
-          transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
-          transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
+          width: '100%',
+          height: \`\${Math.round(${dH} * safeScale)}px\`,
+          position: 'relative',
+          overflow: 'hidden'
         }}
       >
-        ${desktopJsx}
+        <div 
+          className="relative" 
+          style={{ 
+            width: '${dW}px', 
+            height: '${dH}px',
+            transform: \`scale(\${safeScale})\`,
+            transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
+          }}
+        >
+          ${desktopJsx}
+        </div>
       </div>
     </div>
   );
@@ -2698,90 +2704,109 @@ ${imports}
 
 export default function ${pageName}() {
   const navigate = useNavigate();
-  const [screenType, setScreenType] = useState('desktop');
-  const [scaleX, setScaleX] = useState(1);
-  const [scaleY, setScaleY] = useState(1);
+  const getScreenInfo = () => {
+    if (typeof window === 'undefined') return { type: 'desktop', frameW: ${dW}, frameH: ${dH} };
+    const width = window.innerWidth;
+    ${mobileFrame ? `if (width <= 640) return { type: 'mobile', frameW: ${mW}, frameH: ${mH} };` : ''}
+    ${tabletFrame ? `if (width <= 1024) return { type: 'tablet', frameW: ${tW}, frameH: ${tH} };` : ''}
+    return { type: 'desktop', frameW: ${dW}, frameH: ${dH} };
+  };
+
+  const [screenInfo, setScreenInfo] = useState(getScreenInfo);
+  const [scale, setScale] = useState(() => {
+    if (typeof window === 'undefined') return 1;
+    const info = getScreenInfo();
+    return window.innerWidth / info.frameW;
+  });
 ${stateDeclStr}${seoEffectCode}
   useEffect(() => {
     const updateScale = () => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-
-      let currentType = 'desktop';
-      let frameW = ${dW};
-      let frameH = ${dH};
-
-      ${mobileFrame ? `if (width <= 640) {
-        currentType = 'mobile';
-        frameW = ${mW};
-        frameH = ${mH};
-      } else ` : ''}${tabletFrame ? `if (width <= 1024) {
-        currentType = 'tablet';
-        frameW = ${tW};
-        frameH = ${tH};
-      }` : ''}
-
-      setScreenType(currentType);
-      setScaleX(width / frameW);
-      setScaleY(height / frameH);
+      const info = getScreenInfo();
+      setScreenInfo(info);
+      setScale(window.innerWidth / info.frameW);
     };
-
     updateScale();
     window.addEventListener('resize', updateScale);
     return () => window.removeEventListener('resize', updateScale);
   }, []);
 ${autoFetchStr}
-  const safeScaleX = Math.max(0.01, (isNaN(scaleX) || !scaleX) ? 1 : scaleX);
-  const safeScaleY = Math.max(0.01, (isNaN(scaleY) || !scaleY) ? 1 : scaleY);
+  const safeScale = Math.max(0.01, (isNaN(scale) || !scale) ? 1 : scale);
 
-  ${mobileFrame ? `if (screenType === 'mobile') {
+  ${mobileFrame ? `if (screenInfo.type === 'mobile') {
     return (
-      <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${mBg}' }}>
+      <div className="min-h-screen w-full relative" style={{ backgroundColor: '${mBg}', minHeight: '100vh', overflowX: 'hidden' }}>
         <div 
-          className="relative" 
           style={{ 
-            width: '${mW}px', 
-            height: '${mH}px',
-            transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
-            transformOrigin: 'top left'${getFrameEffectStyles(mobileFrame)}
+            width: '100%',
+            height: \`\${Math.round(${mH} * safeScale)}px\`,
+            position: 'relative',
+            overflow: 'hidden'
           }}
         >
-          ${mobileJsx}
+          <div 
+            className="relative" 
+            style={{ 
+              width: '${mW}px', 
+              height: '${mH}px',
+              transform: \`scale(\${safeScale})\`,
+              transformOrigin: 'top left'${getFrameEffectStyles(mobileFrame)}
+            }}
+          >
+            ${mobileJsx}
+          </div>
         </div>
       </div>
     );
   }` : ''}
 
-  ${tabletFrame ? `if (screenType === 'tablet') {
+  ${tabletFrame ? `if (screenInfo.type === 'tablet') {
     return (
-      <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${tBg}' }}>
+      <div className="min-h-screen w-full relative" style={{ backgroundColor: '${tBg}', minHeight: '100vh', overflowX: 'hidden' }}>
         <div 
-          className="relative" 
           style={{ 
-            width: '${tW}px', 
-            height: '${tH}px',
-            transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
-            transformOrigin: 'top left'${getFrameEffectStyles(tabletFrame)}
+            width: '100%',
+            height: \`\${Math.round(${tH} * safeScale)}px\`,
+            position: 'relative',
+            overflow: 'hidden'
           }}
         >
-          ${tabletJsx}
+          <div 
+            className="relative" 
+            style={{ 
+              width: '${tW}px', 
+              height: '${tH}px',
+              transform: \`scale(\${safeScale})\`,
+              transformOrigin: 'top left'${getFrameEffectStyles(tabletFrame)}
+            }}
+          >
+            ${tabletJsx}
+          </div>
         </div>
       </div>
     );
   }` : ''}
 
   return (
-    <div className="w-screen h-screen overflow-hidden" style={{ backgroundColor: '${dBg}' }}>
+    <div className="min-h-screen w-full relative" style={{ backgroundColor: '${dBg}', minHeight: '100vh', overflowX: 'hidden' }}>
       <div 
-        className="relative" 
         style={{ 
-          width: '${dW}px', 
-          height: '${dH}px',
-          transform: \`scale(\${safeScaleX}, \${safeScaleY})\`,
-          transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
+          width: '100%',
+          height: \`\${Math.round(${dH} * safeScale)}px\`,
+          position: 'relative',
+          overflow: 'hidden'
         }}
       >
-        ${desktopJsx}
+        <div 
+          className="relative" 
+          style={{ 
+            width: '${dW}px', 
+            height: '${dH}px',
+            transform: \`scale(\${safeScale})\`,
+            transformOrigin: 'top left'${getFrameEffectStyles(desktopFrame)}
+          }}
+        >
+          ${desktopJsx}
+        </div>
       </div>
     </div>
   );

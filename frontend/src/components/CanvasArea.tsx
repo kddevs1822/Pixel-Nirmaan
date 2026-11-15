@@ -616,6 +616,28 @@ const RenderNode: React.FC<{
       } 
     },
     onDragEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleDragEnd(e, node.id); } },
+    onTransform: (e: any) => {
+      if (mode === 'select' && resolvedNode.type === 'Frame') {
+        const konvaGroup = e.target;
+        const currentScaleX = konvaGroup.scaleX();
+        const currentScaleY = konvaGroup.scaleY();
+        const currentW = konvaGroup.width();
+        const currentH = konvaGroup.height();
+        const newW = Math.max(50, Math.round(currentW * currentScaleX));
+        const newH = Math.max(50, Math.round(currentH * currentScaleY));
+        konvaGroup.setAttrs({
+          width: newW,
+          height: newH,
+          scaleX: 1,
+          scaleY: 1,
+        });
+        const bgRect = konvaGroup.findOne('.frame-bg');
+        if (bgRect) {
+          bgRect.width(newW);
+          bgRect.height(newH);
+        }
+      }
+    },
     onTransformEnd: (e: any) => { if (mode === 'select') { e.cancelBubble = true; handleTransformEnd(e, node.id); } },
     onMouseEnter: (e: any) => {
       if (handleNodeHover) handleNodeHover(e, node, true);
@@ -1019,6 +1041,7 @@ const RenderNode: React.FC<{
         visible={isNodeVisible}
       >
         <Rect
+          name="frame-bg"
           x={0}
           y={0}
           width={resolvedNode.width}
@@ -1471,6 +1494,7 @@ export const CanvasArea: React.FC = () => {
   
   const stageRef = useRef<Konva.Stage>(null);
   const previewStageRef = useRef<any>(null);
+  const previewScrollContainerRef = useRef<HTMLDivElement>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const lastClickedKonvaIdRef = useRef<string | null>(null);
   const dragStartGapRef = useRef<number>(0);
@@ -1488,6 +1512,12 @@ export const CanvasArea: React.FC = () => {
   useEffect(() => {
     setNodeVisibilityMap({});
   }, [mode]);
+
+  useEffect(() => {
+    if (mode === 'preview' && previewScrollContainerRef.current) {
+      previewScrollContainerRef.current.scrollTop = 0;
+    }
+  }, [mode, previewFrameId, previewDeviceOverride]);
   
   useEffect(() => {
     const handleResize = () => {
@@ -1716,7 +1746,7 @@ export const CanvasArea: React.FC = () => {
     const storeNode = nodes.find(n => n.id === id);
     if (!storeNode) return;
 
-    if (storeNode.type === 'Rect' || storeNode.type === 'Image' || storeNode.type === 'Frame') {
+    if (storeNode.type === 'Rect' || storeNode.type === 'Image' || storeNode.type === 'Frame' || storeNode.type === 'FormContainer' || storeNode.type === 'TextInput' || storeNode.type === 'TextArea' || storeNode.type === 'Checkbox' || storeNode.type === 'Switch' || storeNode.type === 'SelectDropdown') {
       const w = node.width();
       const h = node.height();
       node.scaleX(1);
@@ -1725,31 +1755,6 @@ export const CanvasArea: React.FC = () => {
       const newH = Math.max(5, Math.abs(h * scaleY));
       updates.width = newW;
       updates.height = newH;
-
-      if (storeNode.type === 'Frame') {
-        const ratioX = newW / Math.max(1, w);
-        const ratioY = newH / Math.max(1, h);
-        if (ratioX !== 1 || ratioY !== 1) {
-          const scaleChildren = (parentId: string, rx: number, ry: number) => {
-            nodes.filter(n => n.parentId === parentId).forEach(child => {
-              const childUpdates: any = {
-                x: child.x * rx,
-                y: child.y * ry,
-              };
-              if (child.width !== undefined) childUpdates.width = child.width * rx;
-              if (child.height !== undefined) childUpdates.height = child.height * ry;
-              if (child.radius !== undefined) childUpdates.radius = child.radius * Math.min(rx, ry);
-              if (child.fontSize !== undefined) childUpdates.fontSize = child.fontSize * Math.min(rx, ry);
-              if (child.points !== undefined) {
-                childUpdates.points = child.points.map((p, i) => i % 2 === 0 ? p * rx : p * ry);
-              }
-              updateNode(child.id, childUpdates, false);
-              scaleChildren(child.id, rx, ry);
-            });
-          };
-          scaleChildren(id, ratioX, ratioY);
-        }
-      }
     } else if (storeNode.type === 'Circle' || storeNode.type === 'Triangle') {
       updates.scaleX = scaleX;
       updates.scaleY = scaleY;
@@ -2932,17 +2937,22 @@ export const CanvasArea: React.FC = () => {
       ? nodes.find(n => n.id === selectedFrame.variantOf) || selectedFrame 
       : selectedFrame;
 
-    const baseName = (primaryFrame.name || '').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
+    const baseName = (primaryFrame.name || '').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '').trim();
     const variantFrames = nodes.filter(n =>
       n.type === 'Frame' &&
       !n.parentId &&
       n.id !== primaryFrame.id &&
-      (n.variantOf === primaryFrame.id || (n.name && baseName && n.name.startsWith(baseName)))
+      (
+        n.variantOf === primaryFrame.id ||
+        (n.variantOf && primaryFrame.variantOf && n.variantOf === primaryFrame.variantOf) ||
+        (baseName && (n.name === `${baseName} - Desktop` || n.name === `${baseName} - Tablet` || n.name === `${baseName} - Mobile`))
+      )
     );
 
-    const desktopFrame = primaryFrame.frameType === 'desktop' ? primaryFrame : variantFrames.find(v => v.frameType === 'desktop') || primaryFrame;
-    const tabletFrame = primaryFrame.frameType === 'tablet' ? primaryFrame : variantFrames.find(v => v.frameType === 'tablet');
-    const mobileFrame = primaryFrame.frameType === 'mobile' ? primaryFrame : variantFrames.find(v => v.frameType === 'mobile');
+    const primaryType = primaryFrame.frameType || 'desktop';
+    const desktopFrame = primaryType === 'desktop' ? primaryFrame : variantFrames.find(v => (v.frameType || 'desktop') === 'desktop') || primaryFrame;
+    const tabletFrame = primaryType === 'tablet' ? primaryFrame : variantFrames.find(v => v.frameType === 'tablet');
+    const mobileFrame = primaryType === 'mobile' ? primaryFrame : variantFrames.find(v => v.frameType === 'mobile');
 
     // Use manual override if set, otherwise auto-detect from window width
     let activePreviewFrame = desktopFrame;
@@ -2961,16 +2971,44 @@ export const CanvasArea: React.FC = () => {
       }
     }
 
-    const padding = 40;
-    const previewScaleX = (stageSize.width - padding * 2) / (activePreviewFrame.width || 1);
-    const previewScaleY = ((stageSize.height - 56) - padding * 2) / (activePreviewFrame.height || 1);
-    const fitScale = Math.min(previewScaleX, previewScaleY, 1);
-    
-    const centeredX = (stageSize.width - (activePreviewFrame.width || 0) * fitScale) / 2;
-    const centeredY = 20;
+    const activeDevice = activePreviewFrame.frameType || 'desktop';
+    const defaultDeviceHeight = activeDevice === 'mobile' ? 852 : activeDevice === 'tablet' ? 1024 : 900;
+    const defaultDeviceWidth = activeDevice === 'mobile' ? 393 : activeDevice === 'tablet' ? 768 : 1440;
+
+    const frameW = Math.round(activePreviewFrame.width || defaultDeviceWidth);
+    const frameH = Math.round(activePreviewFrame.height || defaultDeviceHeight);
+
+    // Find base (unextended) screen height among root frames of the same device type
+    const rootFramesOfSameType = nodes.filter(n =>
+      n.type === 'Frame' &&
+      !n.parentId &&
+      !n.isMasterComponent &&
+      (n.frameType || 'desktop') === activeDevice
+    );
+    const minHeightAmongScreens = rootFramesOfSameType.length > 0
+      ? Math.min(...rootFramesOfSameType.map(f => f.height || defaultDeviceHeight))
+      : defaultDeviceHeight;
+    const baseViewportH = Math.min(defaultDeviceHeight, minHeightAmongScreens);
+
+    // Available preview area accounting for 56px top bar and padding (24px top, 24px bottom = 48px)
+    const paddingX = 24;
+    const paddingY = 24;
+    const availW = Math.max(300, stageSize.width - paddingX * 2);
+    // Leave 2px margin to prevent any subpixel rounding scrollbars on standard-height screens
+    const availH = Math.max(300, (stageSize.height - 56) - (paddingY * 2 + 2));
+
+    // Base scale so that an unextended standard screen fits completely inside the preview without scrolling
+    const scaleX = availW / frameW;
+    const scaleY = availH / baseViewportH;
+    const fitScale = Math.min(scaleX, scaleY, 1);
+
+    const scaledW = Math.round(frameW * fitScale);
+    const scaledH = Math.round(frameH * fitScale);
+
+    // A screen is considered extended (and therefore scrollable) if its scaled height exceeds available preview height
+    const isScrollable = scaledH > availH;
 
     const modifiedPreviewFrame = { ...activePreviewFrame, x: 0, y: 0 };
-    const activeDevice = activePreviewFrame.frameType || 'desktop';
 
     const deviceButtons: { key: 'desktop'|'tablet'|'mobile', icon: React.ReactNode, label: string, available: boolean }[] = [
       { key: 'desktop', icon: <Monitor size={16} />, label: 'Desktop', available: !!desktopFrame },
@@ -3056,13 +3094,25 @@ export const CanvasArea: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-hidden relative">
-          <Stage ref={previewStageRef} width={stageSize.width} height={stageSize.height - 56}>
-            <Layer x={centeredX} y={centeredY} scaleX={fitScale} scaleY={fitScale}>
-              <RenderNode node={modifiedPreviewFrame} isPreview={true} context={nodeContext} />
-            </Layer>
-          </Stage>
-          {renderInputOverlay()}
+        <div 
+          ref={previewScrollContainerRef}
+          className={`flex-1 ${isScrollable ? 'overflow-y-auto' : 'overflow-hidden'} overflow-x-auto bg-slate-950 flex flex-col items-center py-6 px-6`}
+        >
+          <div 
+            className={`relative shadow-2xl rounded-sm bg-white shrink-0 ${!isScrollable ? 'my-auto' : ''}`}
+            style={{ 
+              width: `${scaledW}px`, 
+              height: `${scaledH}px`,
+              minHeight: `${scaledH}px`
+            }}
+          >
+            <Stage ref={previewStageRef} width={scaledW} height={scaledH}>
+              <Layer scaleX={fitScale} scaleY={fitScale}>
+                <RenderNode node={modifiedPreviewFrame} isPreview={true} context={nodeContext} />
+              </Layer>
+            </Stage>
+            {renderInputOverlay()}
+          </div>
         </div>
       </div>
     );
