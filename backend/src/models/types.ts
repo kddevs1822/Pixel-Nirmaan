@@ -18,6 +18,7 @@ export interface StateVariable {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'array' | 'object';
   defaultValue: any;
+  itemScope?: string;
 }
 
 export interface ComponentPropDef {
@@ -151,6 +152,8 @@ export interface DataSource {
   fetchOnLoad?: boolean;
   targetFrameId?: string;
   targetVariableId?: string;
+  loadingVariableId?: string;
+  errorVariableId?: string;
   responsePath?: string;
 }
 
@@ -200,6 +203,8 @@ export interface NodeAction {
   apiHeaders?: DataSourceHeader[];
   apiBody?: string;
   apiTargetVariableId?: string;
+  apiLoadingVariableId?: string;
+  apiErrorVariableId?: string;
   apiResponsePath?: string;
 
   // Condition parameters
@@ -215,9 +220,11 @@ export interface NodeAction {
   delay?: number;
 }
 
+export type ActionSequenceEvent = 'onClick' | 'onChange' | 'onSubmit' | 'onHover' | 'onFocus' | 'ifElse' | 'if,else';
+
 export interface NodeActionSequence {
   id: string;
-  event: 'onClick' | 'onChange' | 'onSubmit' | 'onHover' | 'onFocus';
+  event: ActionSequenceEvent;
   actions: NodeAction[];
 }
 

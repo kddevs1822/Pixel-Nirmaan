@@ -8,7 +8,7 @@ import useImage from 'use-image';
 import { X, AlertCircle, Monitor, Tablet, Smartphone, Target, Upload, Plus, Layout } from 'lucide-react';
 import { useProjectStore } from '../store/useProjectStore';
 import { getNodeDescriptiveLabel } from '../utils/nodeUtils';
-import { normalizeApiUrl, executeApiFetch } from '../utils/urlUtils';
+import { normalizeApiUrl, executeApiFetch, extractJsonPath, getApiErrorMessage } from '../utils/urlUtils';
 
 const URLImage = ({ node, commonProps, shapeRef, shadowProps }: any) => {
   const [image] = useImage(node.src || '');
@@ -62,6 +62,7 @@ interface NodeContext {
   executeFormReset?: (formNode: CanvasNode) => void;
   findTargetForm?: (originNode: CanvasNode, targetId?: string) => CanvasNode | undefined;
   executeSequenceActions?: (actions: NodeAction[], originNode: CanvasNode, activeStage?: Konva.Stage | null) => Promise<void>;
+  nodeVisibilityMap?: Record<string, boolean>;
 }
 
 const getKonvaEasing = (timing?: string) => {
@@ -169,6 +170,7 @@ const RenderNode: React.FC<{
         const propPath = expr.slice(scope.length + 1);
         const val = propPath.split('.').reduce((obj, k) => obj?.[k], repeaterContext.item);
         if (val !== undefined && val !== null) return String(val);
+        return '';
       }
     }
 
@@ -541,8 +543,25 @@ const RenderNode: React.FC<{
 
   const hasShadow = !!resolvedNode.boxShadow?.enabled;
   const hasBlur = !!(resolvedNode.filterBlur && resolvedNode.filterBlur > 0);
+  const nodeVisibilityMap = context.nodeVisibilityMap || {};
+  const targetId = resolvedNode.id;
+  const primaryTargetId = resolvedNode.sourceNodeId || resolvedNode.variantOf || targetId;
+  const isInitiallyHidden = (mode === 'preview' || isPreview) && !!resolvedNode.animation?.initiallyHidden;
+
+  const isOverridden = nodeVisibilityMap[targetId] !== undefined
+    ? nodeVisibilityMap[targetId]
+    : (nodeVisibilityMap[primaryTargetId] !== undefined
+        ? nodeVisibilityMap[primaryTargetId]
+        : undefined);
+
+  const isNodeVisible = isOverridden !== undefined
+    ? isOverridden
+    : (isInitiallyHidden ? false : true);
+
   const baseOpacity = resolvedNode.opacity !== undefined ? Math.max(0, Math.min(1, resolvedNode.opacity / 100)) : 1;
-  const resolvedOpacity = ((mode === 'preview' || isPreview) && resolvedNode.animation?.initiallyHidden) ? 0 : baseOpacity;
+  const resolvedOpacity = !isNodeVisible
+    ? 0
+    : (isInitiallyHidden && isOverridden === true ? baseOpacity : (isInitiallyHidden ? 0 : baseOpacity));
 
   const shadowProps = {
     shadowEnabled: hasShadow,
@@ -562,13 +581,14 @@ const RenderNode: React.FC<{
     rotation: resolvedNode.rotation || 0,
     fill: resolvedNode.fill,
     opacity: resolvedOpacity,
+    visible: isNodeVisible,
     ...shadowProps,
     filters: hasBlur ? [Konva.Filters.Blur] : undefined,
     blurRadius: hasBlur ? (resolvedNode.filterBlur || 0) : 0,
     draggable: mode === 'select' && (!inComponent || selectedIds.includes(node.id)),
-    listening: (repeaterContext && !isPreview && repeaterContext.index > 0)
+    listening: isNodeVisible && ((repeaterContext && !isPreview && repeaterContext.index > 0)
       ? false
-      : true,
+      : true),
     onClick: (e: any) => handleNodeClick(e, node, false),
     onTap: (e: any) => handleNodeClick(e, node, false),
     onDblClick: (e: any) => handleNodeClick(e, node, true),
@@ -828,7 +848,7 @@ const RenderNode: React.FC<{
   let displayValue = getBoundProperty('text', getBoundProperty('defaultValue', rawValue));
   if (typeof displayValue === 'string') {
     const trimmed = displayValue.trim();
-    if (trimmed === '""' || trimmed === "''") {
+    if (trimmed === '""' || trimmed === "''" || (repeaterContext && (mode === 'preview' || isPreview) && (trimmed === 'Pixel Nirmaan' || trimmed === 'Text'))) {
       displayValue = '';
     }
   }
@@ -899,6 +919,11 @@ const RenderNode: React.FC<{
         useCanvasStore.getState().updateStateVariable(stateVar.id, { defaultValue: inputVal });
       }
     }
+
+    const ifElseSeq = seqs.find(s => s.event === 'ifElse' || s.event === 'if,else');
+    if (ifElseSeq && context.executeSequenceActions) {
+      context.executeSequenceActions(ifElseSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
+    }
   };
 
   const executeFocusActions = () => {
@@ -939,6 +964,10 @@ const RenderNode: React.FC<{
       const clickSeq = seqs.find(s => s.event === 'onClick');
       if (clickSeq && context.executeSequenceActions) {
         context.executeSequenceActions(clickSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
+      }
+      const ifElseSeq = seqs.find(s => s.event === 'ifElse' || s.event === 'if,else');
+      if (ifElseSeq && context.executeSequenceActions) {
+        context.executeSequenceActions(ifElseSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
       }
 
       executeFocusActions();
@@ -987,6 +1016,7 @@ const RenderNode: React.FC<{
         width={resolvedNode.width}
         height={resolvedNode.height}
         draggable={mode === 'select' && !isPreview}
+        visible={isNodeVisible}
       >
         <Rect
           x={0}
@@ -1437,7 +1467,7 @@ const RenderNode: React.FC<{
 };
 
 export const CanvasArea: React.FC = () => {
-  const { nodes, selectedIds, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, updateNodes, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants, pickingTriggerForNodeId, setPickingTriggerForNodeId, pickingActionTarget, setPickingActionTarget, setToastMessage } = useCanvasStore();
+  const { nodes, selectedIds, stateVariables, pan, zoom, setPan, setZoom, selectNodes, toggleNodeSelection, updateNode, updateNodes, mode, setMode, connectingSourceId, setConnectingSourceId, previewFrameId, setPreviewFrameId, generateResponsiveVariants, pickingTriggerForNodeId, setPickingTriggerForNodeId, pickingActionTarget, setPickingActionTarget, setToastMessage } = useCanvasStore();
   
   const stageRef = useRef<Konva.Stage>(null);
   const previewStageRef = useRef<any>(null);
@@ -1453,6 +1483,11 @@ export const CanvasArea: React.FC = () => {
   const [previewDeviceOverride, setPreviewDeviceOverride] = useState<'desktop'|'tablet'|'mobile'|null>(null);
   const [selectionRect, setSelectionRect] = useState<{ startX: number, startY: number, x: number, y: number, width: number, height: number } | null>(null);
   const [connectMousePos, setConnectMousePos] = useState<{ x: number, y: number } | null>(null);
+  const [nodeVisibilityMap, setNodeVisibilityMap] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setNodeVisibilityMap({});
+  }, [mode]);
   
   useEffect(() => {
     const handleResize = () => {
@@ -1996,6 +2031,8 @@ export const CanvasArea: React.FC = () => {
       let headers = act.apiHeaders || [];
       let body = act.apiBody;
       let targetVarId = act.apiTargetVariableId;
+      let loadingVarId = act.apiLoadingVariableId;
+      let errorVarId = act.apiErrorVariableId;
       let responsePath = act.apiResponsePath;
 
       if (act.dataSourceId && act.dataSourceId !== 'custom') {
@@ -2006,12 +2043,22 @@ export const CanvasArea: React.FC = () => {
           headers = ds.headers || [];
           if (!body && ds.bodyTemplate) body = ds.bodyTemplate;
           if (!targetVarId && ds.targetVariableId) targetVarId = ds.targetVariableId;
+          if (!loadingVarId && ds.loadingVariableId) loadingVarId = ds.loadingVariableId;
+          if (!errorVarId && ds.errorVariableId) errorVarId = ds.errorVariableId;
           if (!responsePath && ds.responsePath) responsePath = ds.responsePath;
         }
       }
 
       const cleanUrl = normalizeApiUrl(url);
       if (cleanUrl) {
+        // Lifecycle Point 1: Set loading = true and clear previous error
+        if (loadingVarId) {
+          useCanvasStore.getState().updateStateVariable(loadingVarId, { defaultValue: true });
+        }
+        if (errorVarId) {
+          useCanvasStore.getState().updateStateVariable(errorVarId, { defaultValue: '' });
+        }
+
         try {
           const headersObj: Record<string, string> = {};
           (headers || []).filter(h => h.enabled && h.key.trim()).forEach(h => {
@@ -2021,27 +2068,44 @@ export const CanvasArea: React.FC = () => {
           const res = await executeApiFetch(cleanUrl, {
             method,
             headers: headersObj,
-            body: ['POST', 'PUT', 'PATCH'].includes(method) && body ? body : undefined,
+            body: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && body ? body : undefined,
           });
 
-          let extracted = res.data;
-          if (responsePath && typeof res.data === 'object' && res.data !== null) {
-            extracted = responsePath.split('.').reduce((acc, part) => (acc ? acc[part] : undefined), res.data);
+          if (!res.ok) {
+            const errorMsg = getApiErrorMessage(res, `API returned HTTP ${res.status}`);
+            throw new Error(errorMsg);
           }
+
+          // Lifecycle Point 2: Successful response
+          const extracted = extractJsonPath(res.data, responsePath);
 
           if (targetVarId) {
             const currentVars = useCanvasStore.getState().stateVariables;
             const targetVar = currentVars.find(v => v.id === targetVarId || v.name === targetVarId);
             const resolvedVarId = targetVar ? targetVar.id : targetVarId;
-            useCanvasStore.getState().updateStateVariable(resolvedVarId, { defaultValue: extracted });
+            useCanvasStore.getState().updateStateVariable(resolvedVarId, { defaultValue: extracted !== undefined ? extracted : null });
             const varName = targetVar?.name || resolvedVarId;
             useCanvasStore.getState().setToastMessage(`⚡ API response saved to state variable "${varName}"`);
           } else {
             useCanvasStore.getState().setToastMessage(`⚡ API call successful (Status ${res.status})`);
           }
+
+          if (errorVarId) {
+            useCanvasStore.getState().updateStateVariable(errorVarId, { defaultValue: '' });
+          }
         } catch (err: any) {
+          // Lifecycle Point 3: Error state handling
           console.error('callApi failed:', err);
-          useCanvasStore.getState().setToastMessage(`❌ API call failed: ${err.message}`);
+          const errMsg = err?.message || 'API request failed';
+          if (errorVarId) {
+            useCanvasStore.getState().updateStateVariable(errorVarId, { defaultValue: errMsg });
+          }
+          useCanvasStore.getState().setToastMessage(`❌ API call failed: ${errMsg}`);
+        } finally {
+          // Lifecycle Point 4: Loading reset guaranteed
+          if (loadingVarId) {
+            useCanvasStore.getState().updateStateVariable(loadingVarId, { defaultValue: false });
+          }
         }
       }
     } else if (act.type === 'triggerAnimation') {
@@ -2052,20 +2116,47 @@ export const CanvasArea: React.FC = () => {
       }
     } else if (act.type === 'toggleVisibility') {
       const targetId = act.targetNodeId || (originNode.type !== 'FormContainer' ? originNode.id : undefined);
-      if (targetId && activeStage) {
-        const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId);
-        let shape: any = null;
-        for (const tv of targetVariants) {
-          shape = activeStage.findOne('#node-' + tv.id);
-          if (shape) break;
-        }
-        if (shape) {
-          const currentVis = shape.visible();
-          const actVis = act.visibilityAction || 'toggle';
-          if (actVis === 'show') shape.visible(true);
-          else if (actVis === 'hide') shape.visible(false);
-          else shape.visible(!currentVis);
-          activeStage.batchDraw();
+      if (targetId) {
+        const stage = activeStage || previewStageRef.current || stageRef.current;
+        const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+        const primaryTargetId = targetNode?.sourceNodeId || targetNode?.variantOf || targetId;
+        const isInitiallyHidden = (mode === 'preview') && !!targetNode?.animation?.initiallyHidden;
+
+        const currentVis = nodeVisibilityMap[targetId] !== undefined
+          ? nodeVisibilityMap[targetId]
+          : (nodeVisibilityMap[primaryTargetId] !== undefined
+              ? nodeVisibilityMap[primaryTargetId]
+              : (isInitiallyHidden ? false : true));
+
+        const actVis = act.visibilityAction || 'toggle';
+        let nextVis = !currentVis;
+        if (actVis === 'show') nextVis = true;
+        else if (actVis === 'hide') nextVis = false;
+
+        setNodeVisibilityMap(prev => ({
+          ...prev,
+          [targetId]: nextVis,
+          [primaryTargetId]: nextVis,
+        }));
+
+        if (stage) {
+          const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId || n.id === primaryTargetId);
+          for (const tv of targetVariants) {
+            const shapes = [
+              stage.findOne('#node-' + tv.id),
+              stage.findOne('#node-' + tv.id + '-rep-0'),
+            ].filter(Boolean);
+            shapes.forEach((shape: any) => {
+              shape.visible(nextVis);
+              shape.listening(nextVis);
+              if (nextVis) {
+                shape.opacity(targetNode?.opacity !== undefined ? Math.max(0, Math.min(1, targetNode.opacity / 100)) : 1);
+              } else {
+                shape.opacity(0);
+              }
+            });
+          }
+          stage.batchDraw();
         }
       }
     } else if (act.type === 'resetForm') {
@@ -2307,10 +2398,8 @@ export const CanvasArea: React.FC = () => {
       const originNode = nodes.find(n => n.id === nodeId);
       if (originNode && originNode.actionSequences) {
         const isSelf = resolvedTargetNode.id === originNode.id;
-        const updatedSequences = originNode.actionSequences.map(seq => {
-          if (seq.id !== sequenceId) return seq;
-          const updatedActions = seq.actions.map(act => {
-            if (act.id !== actionId) return act;
+        const updateActRecursive = (act: NodeAction): NodeAction => {
+          if (act.id === actionId) {
             if (targetField === 'targetPageId') {
               return { ...act, targetPageId: resolvedTargetNode.id };
             }
@@ -2318,8 +2407,16 @@ export const CanvasArea: React.FC = () => {
               ...act,
               targetNodeId: isSelf ? undefined : resolvedTargetNode.id,
             };
-          });
-          return { ...seq, actions: updatedActions };
+          }
+          return {
+            ...act,
+            trueActions: act.trueActions ? act.trueActions.map(updateActRecursive) : undefined,
+            falseActions: act.falseActions ? act.falseActions.map(updateActRecursive) : undefined,
+          };
+        };
+        const updatedSequences = originNode.actionSequences.map(seq => {
+          if (seq.id !== sequenceId) return seq;
+          return { ...seq, actions: seq.actions.map(updateActRecursive) };
         });
 
         updateNodes([originNode.id], { actionSequences: updatedSequences }, true);
@@ -2394,10 +2491,16 @@ export const CanvasArea: React.FC = () => {
 
       if (seqs.length > 0) {
         const clickSeq = seqs.find(s => s.event === 'onClick');
+        const ifElseSeq = seqs.find(s => s.event === 'ifElse' || s.event === 'if,else');
         if (clickSeq) {
           executeSequenceActions(clickSeq.actions, node, activeStage);
+        } else if (ifElseSeq) {
+          executeSequenceActions(ifElseSeq.actions, node, activeStage);
         } else if (targetForAction.type === 'FormContainer') {
           executeFormSubmit(targetForAction, activeStage);
+        }
+        if (clickSeq && ifElseSeq) {
+          executeSequenceActions(ifElseSeq.actions, node, activeStage);
         }
 
         const focusSeq = seqs.find(s => s.event === 'onFocus');
@@ -2601,6 +2704,28 @@ export const CanvasArea: React.FC = () => {
     onUpdate: (val: string) => void;
   } | null>(null);
 
+  const isEvaluatingIfElseRef = useRef(false);
+  useEffect(() => {
+    if (mode !== 'preview' || isEvaluatingIfElseRef.current) return;
+    const ifElseNodes = nodes.filter(n => n.actionSequences?.some(s => s.event === 'ifElse' || s.event === 'if,else'));
+    if (!ifElseNodes.length) return;
+
+    isEvaluatingIfElseRef.current = true;
+    const stage = previewStageRef.current || stageRef.current;
+    try {
+      ifElseNodes.forEach(n => {
+        const ifElseSeqs = (n.actionSequences || []).filter(s => s.event === 'ifElse' || s.event === 'if,else');
+        ifElseSeqs.forEach(seq => {
+          executeSequenceActions(seq.actions, n, stage);
+        });
+      });
+    } finally {
+      setTimeout(() => {
+        isEvaluatingIfElseRef.current = false;
+      }, 60);
+    }
+  }, [mode, stateVariables]);
+
   useEffect(() => {
     setActiveEditingInput(null);
 
@@ -2618,6 +2743,14 @@ export const CanvasArea: React.FC = () => {
           if (!frameMatch) return;
         }
 
+        // Lifecycle Point 1: Set loading = true and clear error before start
+        if (ds.loadingVariableId) {
+          updateStateVariable(ds.loadingVariableId, { defaultValue: true });
+        }
+        if (ds.errorVariableId) {
+          updateStateVariable(ds.errorVariableId, { defaultValue: '' });
+        }
+
         try {
           const headersObj: Record<string, string> = {};
           (ds.headers || []).filter(h => h.enabled && h.key.trim()).forEach(h => {
@@ -2627,19 +2760,35 @@ export const CanvasArea: React.FC = () => {
           const res = await executeApiFetch(ds.url, {
             method: ds.method || 'GET',
             headers: headersObj,
-            body: ['POST', 'PUT', 'PATCH'].includes(ds.method || 'GET') && ds.bodyTemplate ? ds.bodyTemplate : undefined,
+            body: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(ds.method || 'GET') && ds.bodyTemplate ? ds.bodyTemplate : undefined,
           });
 
-          let extracted = res.data;
-          if (ds.responsePath && typeof res.data === 'object' && res.data !== null) {
-            extracted = ds.responsePath.split('.').reduce((acc, part) => (acc ? acc[part] : undefined), res.data);
+          if (!res.ok) {
+            const errorMsg = getApiErrorMessage(res, `Auto-fetch failed with HTTP ${res.status}`);
+            throw new Error(errorMsg);
           }
 
+          // Lifecycle Point 2: Successful response
+          const extracted = extractJsonPath(res.data, ds.responsePath);
+
           if (ds.targetVariableId) {
-            updateStateVariable(ds.targetVariableId, { defaultValue: extracted });
+            updateStateVariable(ds.targetVariableId, { defaultValue: extracted !== undefined ? extracted : null });
           }
-        } catch (err) {
+          if (ds.errorVariableId) {
+            updateStateVariable(ds.errorVariableId, { defaultValue: '' });
+          }
+        } catch (err: any) {
+          // Lifecycle Point 3: Error handling
           console.error(`Auto-fetch failed for "${ds.name}":`, err);
+          const errMsg = err?.message || 'Auto-fetch failed';
+          if (ds.errorVariableId) {
+            updateStateVariable(ds.errorVariableId, { defaultValue: errMsg });
+          }
+        } finally {
+          // Lifecycle Point 4: Reset loading = false
+          if (ds.loadingVariableId) {
+            updateStateVariable(ds.loadingVariableId, { defaultValue: false });
+          }
         }
       });
     }
@@ -2772,6 +2921,7 @@ export const CanvasArea: React.FC = () => {
     executeFormReset,
     findTargetForm,
     executeSequenceActions,
+    nodeVisibilityMap,
   };
 
   if (mode === 'preview' && previewFrameId) {
@@ -3466,12 +3616,14 @@ export const CanvasArea: React.FC = () => {
                 if (!sourceBounds || !targetBounds) return null;
 
                 const points = [sourceBounds.centerX, sourceBounds.centerY, targetBounds.centerX, targetBounds.centerY];
+                const eventDisplay = (seq.event === 'ifElse' || seq.event === 'if,else') ? 'if,else' : seq.event;
                 const actionLabel = 
-                  act.type === 'triggerAnimation' ? `⚡ ${seq.event}: ANIMATE` :
-                  act.type === 'toggleVisibility' ? `👁️ ${seq.event}: VISIBILITY` :
-                  act.type === 'submitForm' ? `📋 ${seq.event}: SUBMIT` :
-                  act.type === 'resetForm' ? `🔄 ${seq.event}: RESET` :
-                  act.type === 'navigate' ? `🔗 ${seq.event}: GO TO` : `🎯 ${seq.event}`;
+                  act.type === 'triggerAnimation' ? `⚡ ${eventDisplay}: ANIMATE` :
+                  act.type === 'toggleVisibility' ? `👁️ ${eventDisplay}: VISIBILITY` :
+                  act.type === 'submitForm' ? `📋 ${eventDisplay}: SUBMIT` :
+                  act.type === 'resetForm' ? `🔄 ${eventDisplay}: RESET` :
+                  act.type === 'navigate' ? `🔗 ${eventDisplay}: GO TO` :
+                  act.type === 'condition' ? `🔀 ${eventDisplay}: IF/ELSE` : `🎯 ${eventDisplay}`;
 
                 return (
                   <Group key={`action-seq-link-${originNode.id}-${act.id}`}>
@@ -4493,7 +4645,7 @@ export const CanvasArea: React.FC = () => {
                         if (seq.id !== pickingActionTarget.sequenceId) return seq;
                         return {
                           ...seq,
-                          actions: seq.actions.map(act => act.id === pickingActionTarget.actionId ? { ...act, targetNodeId: undefined } : act)
+                          actions: seq.actions.map(function updateAct(act: any): any { if (act.id === pickingActionTarget.actionId) return { ...act, targetNodeId: undefined }; return { ...act, trueActions: act.trueActions ? act.trueActions.map(updateAct) : undefined, falseActions: act.falseActions ? act.falseActions.map(updateAct) : undefined }; })
                         };
                       });
                       updateNodes([originNode.id], { actionSequences: updated }, true);

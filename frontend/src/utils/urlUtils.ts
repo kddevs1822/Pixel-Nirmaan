@@ -5,6 +5,7 @@
 export const normalizeApiUrl = (rawUrl: string): string => {
   let url = (rawUrl || '').trim();
   if (!url) return '';
+  if (url.startsWith('/')) return url;
 
   // Fix common typo: ttps:// or ttp:// (user typed fast or missed leading 'h')
   if (/^ttps?:\/\//i.test(url)) {
@@ -34,6 +35,59 @@ export interface ApiFetchResult {
 }
 
 /**
+ * Safely extracts a nested property or array element from a JSON response.
+ * Supports dot notation ('data.items') and array indexing ('items[0].title', 'items.0.title').
+ * Returns undefined gracefully if the path does not exist.
+ */
+export const extractJsonPath = (data: any, pathStr?: string): any => {
+  if (!pathStr || !pathStr.trim()) return data;
+  if (data === null || data === undefined) return undefined;
+
+  const clean = pathStr.trim();
+  if (data && data[clean] !== undefined) return data[clean];
+
+  // Normalize array notation e.g. "items[0].name" or "[0].title" -> "items.0.name"
+  let normalizedPath = clean.replace(/\[(\d+)\]/g, '.$1').replace(/^\./, '');
+  if (normalizedPath.startsWith('data.') && !(data && typeof data === 'object' && 'data' in data)) {
+    normalizedPath = normalizedPath.slice(5);
+  }
+  const parts = normalizedPath.split('.').filter(Boolean);
+
+  let current = data;
+  for (const part of parts) {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+    if (typeof current === 'object' && part in current) {
+      current = current[part];
+    } else {
+      return undefined;
+    }
+  }
+  return current !== undefined ? current : data[clean];
+};
+
+/**
+ * Extracts a human-readable error message from an API response data payload or status.
+ */
+export const getApiErrorMessage = (res: { status?: number; statusText?: string; data?: any }, defaultMsg = 'Request failed'): string => {
+  if (res?.data) {
+    if (typeof res.data === 'string' && res.data.trim()) {
+      return res.data.length > 200 ? res.data.slice(0, 197) + '...' : res.data;
+    }
+    if (typeof res.data === 'object') {
+      if (res.data.message && typeof res.data.message === 'string') return res.data.message;
+      if (res.data.error && typeof res.data.error === 'string') return res.data.error;
+      if (res.data.title && typeof res.data.title === 'string') return res.data.title;
+    }
+  }
+  if (res?.status) {
+    return `HTTP ${res.status}: ${res.statusText || defaultMsg}`;
+  }
+  return defaultMsg;
+};
+
+/**
  * Executes an API fetch with automatic URL normalization.
  * If direct browser fetch fails (e.g. CORS block), attempts a proxy request through the backend.
  */
@@ -59,7 +113,7 @@ export const executeApiFetch = async (
     headers,
   };
 
-  if (['POST', 'PUT', 'PATCH'].includes(method) && body !== undefined && body !== null) {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && body !== undefined && body !== null && body !== '') {
     fetchInit.body = typeof body === 'string' ? body : JSON.stringify(body);
   }
 

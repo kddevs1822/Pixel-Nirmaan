@@ -399,14 +399,143 @@ const VariableBindingControl: React.FC<{
 }> = ({ node, propertyKey, label, extraControl }) => {
   const stateVariables = useCanvasStore((state) => state.stateVariables);
   const bindVariableToNodeProperty = useCanvasStore((state) => state.bindVariableToNodeProperty);
+  const nodes = useCanvasStore((state) => state.nodes);
+  const updateNodes = useCanvasStore((state) => state.updateNodes);
+  const updateStateVariable = useCanvasStore((state) => state.updateStateVariable);
+  const dataSources = useCanvasStore((state) => state.dataSources);
   
   const currentBoundVar = node.bindings?.[propertyKey];
   const [isOpen, setIsOpen] = useState(false);
   const [customExpr, setCustomExpr] = useState(currentBoundVar || '');
 
+  // Find nearest ancestor repeater frame (if node itself or any ancestor has repeaterBinding)
+  let currNode: CanvasNode | undefined = node;
+  let activeRepeaterFrame: CanvasNode | null = null;
+  while (currNode) {
+    if (currNode.repeaterBinding) {
+      activeRepeaterFrame = currNode;
+      break;
+    }
+    currNode = currNode.parentId ? nodes.find(n => n.id === currNode!.parentId) : undefined;
+  }
+
+  // Find initial data variable ID
+  const initialDataVarId = (() => {
+    if (activeRepeaterFrame?.repeaterBinding?.arrayVariableId) {
+      const v = stateVariables.find(sv => sv.id === activeRepeaterFrame!.repeaterBinding!.arrayVariableId || sv.name === activeRepeaterFrame!.repeaterBinding!.arrayVariableId);
+      if (v) return v.id;
+    }
+    if (currentBoundVar) {
+      const root = currentBoundVar.trim().split('.')[0];
+      const v = stateVariables.find(sv => sv.id === root || sv.name === root);
+      if (v) return v.id;
+    }
+    return '';
+  })();
+
+  const [selectedDataVarId, setSelectedDataVarId] = useState<string>(initialDataVarId);
+
   useEffect(() => {
     setCustomExpr(currentBoundVar || '');
   }, [currentBoundVar]);
+
+  useEffect(() => {
+    setSelectedDataVarId(initialDataVarId);
+  }, [initialDataVarId, isOpen]);
+
+  // Identify provided variable from selection, custom expression, current bound var, or repeater
+  const providedVar = stateVariables.find(v => 
+    v.id === selectedDataVarId || 
+    v.name === selectedDataVarId ||
+    (customExpr && (v.name === customExpr.trim().split('.')[0] || v.id === customExpr.trim().split('.')[0])) ||
+    (currentBoundVar && (v.name === currentBoundVar.trim().split('.')[0] || v.id === currentBoundVar.trim().split('.')[0])) ||
+    (activeRepeaterFrame?.repeaterBinding?.arrayVariableId && (v.id === activeRepeaterFrame.repeaterBinding.arrayVariableId || v.name === activeRepeaterFrame.repeaterBinding.arrayVariableId))
+  );
+
+  // Check if the provided variable has an item scope name
+  // Note: Only visible if the provided variable has one (arrays, objects with items, repeater-bound, or explicit itemScope)
+  const hasItemScope = Boolean(
+    providedVar && (
+      Boolean(providedVar.itemScope && providedVar.itemScope.trim()) ||
+      providedVar.type === 'array' ||
+      Array.isArray(providedVar.defaultValue) ||
+      Boolean(activeRepeaterFrame?.repeaterBinding?.arrayVariableId && (activeRepeaterFrame.repeaterBinding.arrayVariableId === providedVar.id || activeRepeaterFrame.repeaterBinding.arrayVariableId === providedVar.name)) ||
+      (providedVar.type === 'object' && (
+        Boolean(activeRepeaterFrame?.repeaterBinding) ||
+        dataSources.some(ds => ds.targetVariableId === providedVar.id || ds.targetVariableId === providedVar.name) ||
+        Boolean(providedVar.defaultValue && typeof providedVar.defaultValue === 'object' && Object.values(providedVar.defaultValue).some(val => Array.isArray(val)))
+      ))
+    )
+  );
+
+  const currentScopeName = providedVar?.itemScope || activeRepeaterFrame?.repeaterBinding?.itemName || 'item';
+  const [itemScopeInput, setItemScopeInput] = useState<string>(currentScopeName);
+
+  useEffect(() => {
+    setItemScopeInput(currentScopeName);
+  }, [currentScopeName, selectedDataVarId, isOpen]);
+
+  const handleItemScopeChange = (newScope: string) => {
+    setItemScopeInput(newScope);
+    const cleanScope = newScope.trim() || 'item';
+    if (activeRepeaterFrame?.repeaterBinding) {
+      updateNodes([activeRepeaterFrame.id], {
+        repeaterBinding: {
+          ...activeRepeaterFrame.repeaterBinding,
+          itemName: cleanScope
+        }
+      }, true);
+    }
+    if (providedVar) {
+      updateStateVariable(providedVar.id, {
+        itemScope: cleanScope
+      });
+    }
+  };
+
+  const handleDataVarSelect = (varId: string) => {
+    setSelectedDataVarId(varId);
+    const foundVar = stateVariables.find(v => v.id === varId || v.name === varId);
+    
+    // Update active repeater frame if present
+    if (activeRepeaterFrame?.repeaterBinding) {
+      updateNodes([activeRepeaterFrame.id], {
+        repeaterBinding: {
+          ...activeRepeaterFrame.repeaterBinding,
+          arrayVariableId: varId
+        }
+      }, true);
+    }
+
+    if (foundVar) {
+      const isArrayOrObject = foundVar.type === 'array' || foundVar.type === 'object' || Array.isArray(foundVar.defaultValue);
+      if (isArrayOrObject) {
+        const scope = foundVar.itemScope || activeRepeaterFrame?.repeaterBinding?.itemName || 'item';
+        setItemScopeInput(scope);
+        // If empty or previously bound to primitive, suggest scope.title
+        if (!customExpr || !customExpr.includes('.') || stateVariables.some(sv => sv.name === customExpr)) {
+          const nextVal = `${scope}.title`;
+          setCustomExpr(nextVal);
+          bindVariableToNodeProperty(node.id, propertyKey, nextVal);
+        }
+      } else {
+        // Primitive variable (number, boolean, string)
+        setCustomExpr(foundVar.name);
+        bindVariableToNodeProperty(node.id, propertyKey, foundVar.name);
+      }
+    } else {
+      // Cleared
+      if (!customExpr || stateVariables.some(v => v.name === customExpr)) {
+        setCustomExpr('');
+        bindVariableToNodeProperty(node.id, propertyKey, null);
+      }
+    }
+  };
+
+  const effectiveScope = (hasItemScope ? (itemScopeInput.trim() || 'item') : 'item');
+  const presets = propertyKey === 'src'
+    ? [`${effectiveScope}.thumbnail`, `${effectiveScope}.images[0]`, `${effectiveScope}.image`, `${effectiveScope}.avatar`, `${effectiveScope}.src`, 'products.thumbnail']
+    : [`${effectiveScope}.name`, `${effectiveScope}.title`, `${effectiveScope}.avatar`, `${effectiveScope}.price`];
 
   return (
     <div className="w-full flex flex-col">
@@ -445,14 +574,45 @@ const VariableBindingControl: React.FC<{
             <button type="button" onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600 p-0.5">✕</button>
           </div>
 
+          {/* Data Variable Selector */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-medium text-slate-600">Data Variable:</label>
+            <select
+              value={selectedDataVarId}
+              onChange={(e) => handleDataVarSelect(e.target.value)}
+              className="w-full text-xs px-2 py-1.5 border border-slate-300 rounded-md font-mono bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="">None / Custom Expression</option>
+              {stateVariables.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name} ({v.type})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Item Scope Name - only visible if the provided variable has one */}
+          {hasItemScope && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-medium text-slate-600">Item Scope Name:</label>
+              <input
+                type="text"
+                value={itemScopeInput}
+                placeholder="e.g. item, user, product"
+                onChange={(e) => handleItemScopeChange(e.target.value)}
+                className="w-full text-xs px-2 py-1 border border-slate-300 rounded-md font-mono bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+          )}
+
           {/* Custom Expression / Item Field Input */}
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 pt-1 border-t border-slate-200/60">
             <span className="text-[10px] font-medium text-slate-600">Custom Field / Item Expression:</span>
             <div className="flex gap-1.5">
               <input
                 type="text"
                 value={customExpr}
-                placeholder="e.g. item.name, item.price"
+                placeholder={`e.g. ${effectiveScope}.name, ${effectiveScope}.price`}
                 onChange={(e) => setCustomExpr(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -476,10 +636,7 @@ const VariableBindingControl: React.FC<{
             
             <div className="flex items-center gap-1 flex-wrap pt-0.5">
               <span className="text-[9px] text-slate-400">Presets:</span>
-              {(propertyKey === 'src'
-                ? ['item.thumbnail', 'item.images[0]', 'item.image', 'item.avatar', 'item.src', 'products.thumbnail']
-                : ['item.name', 'item.title', 'item.avatar', 'item.price']
-              ).map(chip => (
+              {presets.map(chip => (
                 <button
                   key={chip}
                   type="button"
@@ -503,6 +660,15 @@ const VariableBindingControl: React.FC<{
             type="button"
             onClick={() => {
               bindVariableToNodeProperty(node.id, propertyKey, null);
+              setSelectedDataVarId('');
+              if (activeRepeaterFrame?.repeaterBinding) {
+                updateNodes([activeRepeaterFrame.id], {
+                  repeaterBinding: {
+                    ...activeRepeaterFrame.repeaterBinding,
+                    arrayVariableId: ''
+                  }
+                }, true);
+              }
               setIsOpen(false);
             }}
             className={`text-left text-xs px-2 py-1 rounded-md hover:bg-slate-200/60 transition-colors cursor-pointer ${!currentBoundVar ? 'font-bold text-slate-700' : 'text-slate-500'}`}
@@ -519,11 +685,11 @@ const VariableBindingControl: React.FC<{
                   key={v.id}
                   type="button"
                   onClick={() => {
-                    bindVariableToNodeProperty(node.id, propertyKey, v.name);
+                    handleDataVarSelect(v.id);
                     setIsOpen(false);
                   }}
                   className={`text-left text-xs px-2 py-1 rounded-md hover:bg-emerald-50 hover:text-emerald-700 flex items-center justify-between transition-colors cursor-pointer ${
-                    currentBoundVar === v.name ? 'bg-emerald-50 text-emerald-700 font-bold' : 'text-slate-700'
+                    currentBoundVar === v.name || selectedDataVarId === v.id ? 'bg-emerald-50 text-emerald-700 font-bold' : 'text-slate-700'
                   }`}
                 >
                   <span className="font-mono">{v.name}</span>
@@ -1806,66 +1972,23 @@ export const RightSidebar: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-indigo-100">
-                  <div>
-                    <label className="text-[11px] font-medium text-slate-600 block mb-1">Layout</label>
-                    <select
-                      value={activeRepeaterFrame.repeaterBinding.direction || 'vertical'}
-                      onChange={(e) => {
-                        updateNodes([activeRepeaterFrame.id], {
-                          repeaterBinding: {
-                            ...activeRepeaterFrame.repeaterBinding!,
-                            direction: e.target.value as any
-                          }
-                        }, true);
-                      }}
-                      className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white text-xs text-slate-800 font-medium"
-                    >
-                      <option value="vertical">↕ Vertical List</option>
-                      <option value="horizontal">↔ Horizontal Grid</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-medium text-slate-600 block mb-1">Data Variable</label>
-                    <select
-                      value={activeRepeaterFrame.repeaterBinding.arrayVariableId}
-                      onChange={(e) => {
-                        updateNodes([activeRepeaterFrame.id], {
-                          repeaterBinding: {
-                            ...activeRepeaterFrame.repeaterBinding!,
-                            arrayVariableId: e.target.value
-                          }
-                        }, true);
-                      }}
-                      className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white font-mono text-slate-800"
-                    >
-                      <option value="">Select array...</option>
-                      {stateVariables.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.name} ({v.type})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-medium text-slate-600 block mb-1">Item Scope Name</label>
-                  <input
-                    type="text"
-                    value={activeRepeaterFrame.repeaterBinding.itemName || 'item'}
-                    placeholder="e.g. item, user, product"
+                <div className="pt-1 border-t border-indigo-100">
+                  <label className="text-[11px] font-medium text-slate-600 block mb-1">Layout</label>
+                  <select
+                    value={activeRepeaterFrame.repeaterBinding.direction || 'vertical'}
                     onChange={(e) => {
                       updateNodes([activeRepeaterFrame.id], {
                         repeaterBinding: {
                           ...activeRepeaterFrame.repeaterBinding!,
-                          itemName: e.target.value || 'item'
+                          direction: e.target.value as any
                         }
                       }, true);
                     }}
-                    className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white font-mono text-slate-800"
-                  />
+                    className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white text-xs text-slate-800 font-medium"
+                  >
+                    <option value="vertical">↕ Vertical List</option>
+                    <option value="horizontal">↔ Horizontal Grid</option>
+                  </select>
                 </div>
               </div>
             )}

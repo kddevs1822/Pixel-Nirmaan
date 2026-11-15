@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import type { CanvasNode, NodeActionSequence, NodeAction, ActionType, StateVariable, DataSource } from '../store/useCanvasStore';
+import type { CanvasNode, NodeActionSequence, NodeAction, ActionType, ActionSequenceEvent, StateVariable, DataSource } from '../store/useCanvasStore';
 import { Plus, Trash2, ChevronUp, ChevronDown, Zap, Target, X, Database, Play, Check, AlertCircle, RefreshCw, GitBranch } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { getNodeDescriptiveLabel } from '../utils/nodeUtils';
@@ -307,6 +307,26 @@ const ActionItem: React.FC<ActionItemProps> = ({
     }
   };
 
+  const handleAddBranchCondition = (branch: 'true' | 'false') => {
+    const defaultVar = stateVariables[0];
+    const newAction: NodeAction = {
+      id: uuidv4(),
+      type: 'condition',
+      enabled: true,
+      conditionVariableId: defaultVar?.id || '',
+      conditionOperator: '==',
+      conditionCompareType: 'static',
+      conditionValue: defaultVar?.type === 'boolean' ? true : defaultVar?.type === 'number' ? 0 : '',
+      trueActions: [],
+      falseActions: [],
+    };
+    if (branch === 'true') {
+      onUpdate({ trueActions: [...(action.trueActions || []), newAction] });
+    } else {
+      onUpdate({ falseActions: [...(action.falseActions || []), newAction] });
+    }
+  };
+
   return (
     <div className={`p-1.5 bg-white border border-slate-200 rounded text-xs flex flex-col gap-1.5 w-full box-border overflow-hidden shadow-2xs ${depth > 0 ? 'bg-slate-50/50' : ''}`}>
       <div className="flex items-center justify-between gap-1 w-full">
@@ -339,7 +359,7 @@ const ActionItem: React.FC<ActionItemProps> = ({
             className="font-medium text-slate-800 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 flex-1 min-w-0 truncate"
           >
             <option value="setState">Set State Variable</option>
-            {depth < 3 && <option value="condition">Condition (If / Else)</option>}
+            {depth < 3 && <option value="condition">If / Else (Condition)</option>}
             <option value="navigate">Navigate Page</option>
             <option value="callApi">Call API (REST)</option>
             <option value="triggerAnimation">Trigger Animation</option>
@@ -517,13 +537,25 @@ const ActionItem: React.FC<ActionItemProps> = ({
                 <span className="text-[10px] font-bold text-emerald-800 flex items-center gap-1">
                   <Check size={11} className="text-emerald-600" /> If True (Then)
                 </span>
-                <button
-                  type="button"
-                  onClick={() => handleAddBranchAction('true')}
-                  className="text-[9.5px] font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-100/60 hover:bg-emerald-100 px-1.5 py-0.2 rounded border border-emerald-200/60 flex items-center gap-0.5 cursor-pointer transition-colors"
-                >
-                  <Plus size={10} /> Action
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleAddBranchAction('true')}
+                    className="text-[9.5px] font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-100/60 hover:bg-emerald-100 px-1.5 py-0.2 rounded border border-emerald-200/60 flex items-center gap-0.5 cursor-pointer transition-colors"
+                  >
+                    <Plus size={10} /> Action
+                  </button>
+                  {depth < 2 && (
+                    <button
+                      type="button"
+                      onClick={() => handleAddBranchCondition('true')}
+                      className="text-[9.5px] font-semibold text-emerald-800 hover:text-emerald-950 bg-emerald-200/60 hover:bg-emerald-200 px-1.5 py-0.2 rounded border border-emerald-300 flex items-center gap-0.5 cursor-pointer transition-colors"
+                      title="Add nested If / Else Condition block"
+                    >
+                      <GitBranch size={9} /> If/Else
+                    </button>
+                  )}
+                </div>
               </div>
 
               <ActionList
@@ -551,13 +583,25 @@ const ActionItem: React.FC<ActionItemProps> = ({
                 <span className="text-[10px] font-bold text-amber-800 flex items-center gap-1">
                   <X size={11} className="text-amber-600" /> If False (Else)
                 </span>
-                <button
-                  type="button"
-                  onClick={() => handleAddBranchAction('false')}
-                  className="text-[9.5px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-100/60 hover:bg-amber-100 px-1.5 py-0.2 rounded border border-amber-200/60 flex items-center gap-0.5 cursor-pointer transition-colors"
-                >
-                  <Plus size={10} /> Action
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleAddBranchAction('false')}
+                    className="text-[9.5px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-100/60 hover:bg-amber-100 px-1.5 py-0.2 rounded border border-amber-200/60 flex items-center gap-0.5 cursor-pointer transition-colors"
+                  >
+                    <Plus size={10} /> Action
+                  </button>
+                  {depth < 2 && (
+                    <button
+                      type="button"
+                      onClick={() => handleAddBranchCondition('false')}
+                      className="text-[9.5px] font-semibold text-amber-800 hover:text-amber-950 bg-amber-200/60 hover:bg-amber-200 px-1.5 py-0.2 rounded border border-amber-300 flex items-center gap-0.5 cursor-pointer transition-colors"
+                      title="Add nested If / Else Condition block"
+                    >
+                      <GitBranch size={9} /> If/Else
+                    </button>
+                  )}
+                </div>
               </div>
 
               <ActionList
@@ -745,6 +789,8 @@ const ActionItem: React.FC<ActionItemProps> = ({
                     onUpdate({
                       dataSourceId: val,
                       apiTargetVariableId: action.apiTargetVariableId || ds?.targetVariableId,
+                      apiLoadingVariableId: action.apiLoadingVariableId || ds?.loadingVariableId,
+                      apiErrorVariableId: action.apiErrorVariableId || ds?.errorVariableId,
                       apiResponsePath: action.apiResponsePath || ds?.responsePath,
                     });
                   }
@@ -772,6 +818,16 @@ const ActionItem: React.FC<ActionItemProps> = ({
                 {selectedDs.targetVariableId && (
                   <span className="text-[9.5px] text-slate-500">
                     Default store: <strong className="text-slate-700 font-mono">{stateVariables.find(v => v.id === selectedDs.targetVariableId)?.name || selectedDs.targetVariableId}</strong>
+                  </span>
+                )}
+                {selectedDs.loadingVariableId && (
+                  <span className="text-[9.5px] text-slate-500">
+                    Loading state: <strong className="text-slate-700 font-mono">{stateVariables.find(v => v.id === selectedDs.loadingVariableId)?.name || selectedDs.loadingVariableId}</strong>
+                  </span>
+                )}
+                {selectedDs.errorVariableId && (
+                  <span className="text-[9.5px] text-slate-500">
+                    Error state: <strong className="text-slate-700 font-mono">{stateVariables.find(v => v.id === selectedDs.errorVariableId)?.name || selectedDs.errorVariableId}</strong>
                   </span>
                 )}
               </div>
@@ -830,7 +886,7 @@ const ActionItem: React.FC<ActionItemProps> = ({
             {/* Target State Variable Selection */}
             <div className="flex flex-col gap-0.5">
               <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
-                Store Result in State Variable
+                Store Result in State Variable (Data)
               </label>
               <select
                 value={action.apiTargetVariableId || ''}
@@ -848,6 +904,53 @@ const ActionItem: React.FC<ActionItemProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Loading and Error Lifecycle Variables */}
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                  Loading State (bool)
+                </label>
+                <select
+                  value={action.apiLoadingVariableId || ''}
+                  onChange={(e) => onUpdate({ apiLoadingVariableId: e.target.value || undefined })}
+                  className="border border-slate-200 rounded px-1 py-1 text-[10px] bg-slate-50 text-slate-800 w-full truncate focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="">
+                    {selectedDs?.loadingVariableId
+                      ? `Default (${stateVariables.find(v => v.id === selectedDs.loadingVariableId)?.name || 'Linked'})`
+                      : '-- None --'}
+                  </option>
+                  {stateVariables.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} ({v.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                  Error State (str)
+                </label>
+                <select
+                  value={action.apiErrorVariableId || ''}
+                  onChange={(e) => onUpdate({ apiErrorVariableId: e.target.value || undefined })}
+                  className="border border-slate-200 rounded px-1 py-1 text-[10px] bg-slate-50 text-slate-800 w-full truncate focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="">
+                    {selectedDs?.errorVariableId
+                      ? `Default (${stateVariables.find(v => v.id === selectedDs.errorVariableId)?.name || 'Linked'})`
+                      : '-- None --'}
+                  </option>
+                  {stateVariables.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} ({v.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Response Path Selection */}
@@ -1124,9 +1227,10 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
     return ops;
   };
 
-  const handleAddSequence = (event: 'onClick' | 'onChange' | 'onSubmit' | 'onHover' | 'onFocus') => {
-    if (actionSequences.some(seq => seq.event === event)) {
-      setToastMessage(`Action sequence for ${event} already exists`);
+  const handleAddSequence = (event: ActionSequenceEvent) => {
+    const isIfElseEvent = event === 'ifElse' || event === 'if,else';
+    if (actionSequences.some(seq => seq.event === event || (isIfElseEvent && (seq.event === 'ifElse' || seq.event === 'if,else')))) {
+      setToastMessage(`Action sequence for ${isIfElseEvent ? 'if,else' : event} already exists`);
       return;
     }
     let defaultVar = stateVariables[0];
@@ -1149,19 +1253,35 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
       initialVal = true;
     }
 
+    const initialActions: NodeAction[] = isIfElseEvent
+      ? [
+          {
+            id: uuidv4(),
+            type: 'condition',
+            enabled: true,
+            conditionVariableId: defaultVarId,
+            conditionOperator: '==',
+            conditionCompareType: 'static',
+            conditionValue: defaultVar.type === 'boolean' ? true : defaultVar.type === 'number' ? 0 : '',
+            trueActions: [],
+            falseActions: [],
+          }
+        ]
+      : [
+          {
+            id: uuidv4(),
+            type: 'setState',
+            enabled: true,
+            stateVariableId: defaultVarId,
+            stateOperation: isDefaultInputOp ? 'setInputVal' : 'set',
+            value: initialVal,
+          }
+        ];
+
     const newSeq: NodeActionSequence = {
       id: uuidv4(),
       event,
-      actions: [
-        {
-          id: uuidv4(),
-          type: 'setState',
-          enabled: true,
-          stateVariableId: defaultVarId,
-          stateOperation: isDefaultInputOp ? 'setInputVal' : 'set',
-          value: initialVal,
-        }
-      ]
+      actions: initialActions,
     };
     updateSequences([...actionSequences, newSeq]);
   };
@@ -1203,15 +1323,50 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
     updateSequences(updated);
   };
 
-  const availableEvents: ('onClick' | 'onChange' | 'onSubmit' | 'onHover' | 'onFocus')[] = [
+  const handleAddConditionAction = (seqId: string) => {
+    let defaultVar = stateVariables[0];
+    if (!defaultVar) {
+      const newVarId = uuidv4();
+      useCanvasStore.getState().addStateVariable({ name: 'isStateActive', type: 'boolean', defaultValue: false });
+      const created = useCanvasStore.getState().stateVariables.slice(-1)[0];
+      defaultVar = created || { id: newVarId, name: 'isStateActive', type: 'boolean', defaultValue: false };
+    }
+    const defaultVarId = defaultVar.id;
+    let initialVal: any = defaultVar.type === 'boolean' ? true : defaultVar.type === 'number' ? 0 : '';
+
+    const updated = actionSequences.map(seq => {
+      if (seq.id !== seqId) return seq;
+      const newAction: NodeAction = {
+        id: uuidv4(),
+        type: 'condition',
+        enabled: true,
+        conditionVariableId: defaultVarId,
+        conditionOperator: '==',
+        conditionCompareType: 'static',
+        conditionValue: initialVal,
+        trueActions: [],
+        falseActions: [],
+      };
+      return { ...seq, actions: [...seq.actions, newAction] };
+    });
+    updateSequences(updated);
+  };
+
+  const availableEvents: ActionSequenceEvent[] = [
     'onClick',
     ...(isInputNode ? ['onChange' as const] : []),
     ...(isFormNode ? ['onSubmit' as const] : []),
     'onHover',
     'onFocus',
+    'ifElse',
   ];
 
-  const unusedEvents = availableEvents.filter(ev => !actionSequences.some(seq => seq.event === ev));
+  const unusedEvents = availableEvents.filter(ev => {
+    if (ev === 'ifElse' || ev === 'if,else') {
+      return !actionSequences.some(seq => seq.event === 'ifElse' || seq.event === 'if,else');
+    }
+    return !actionSequences.some(seq => seq.event === ev);
+  });
 
   return (
     <div className="flex flex-col gap-2.5 pt-4 border-t border-slate-200 w-full max-w-full overflow-hidden box-border">
@@ -1235,7 +1390,9 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
           >
             <option value="" disabled>+ Event</option>
             {unusedEvents.map(ev => (
-              <option key={ev} value={ev}>{ev}</option>
+              <option key={ev} value={ev}>
+                {ev === 'ifElse' || ev === 'if,else' ? 'if,else' : ev}
+              </option>
             ))}
           </select>
         )}
@@ -1267,32 +1424,54 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
                 + On Submit
               </button>
             )}
+            <button
+              onClick={() => handleAddSequence('ifElse')}
+              className="text-[10px] font-medium text-purple-700 bg-white border border-purple-200 rounded px-2 py-0.5 hover:bg-purple-50 transition-colors flex items-center gap-1 cursor-pointer"
+            >
+              <GitBranch size={10} className="text-purple-600" />
+              + If, Else
+            </button>
           </div>
         </div>
       ) : (
         <div className="flex flex-col gap-2.5 w-full">
-          {actionSequences.map(seq => (
-            <div key={seq.id} className="p-2 bg-slate-50 border border-slate-200 rounded-lg flex flex-col gap-1.5 w-full box-border overflow-hidden">
-              <div className="flex justify-between items-center pb-1 border-b border-slate-200 w-full">
-                <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded font-mono">
-                  {seq.event}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleAddAction(seq.id)}
-                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium px-1.5 py-0.5 bg-white border border-slate-200 hover:border-indigo-300 rounded flex items-center gap-0.5 transition-colors cursor-pointer"
-                  >
-                    <Plus size={11} /> Step
-                  </button>
-                  <button
-                    onClick={() => handleRemoveSequence(seq.id)}
-                    className="text-slate-400 hover:text-rose-600 p-0.5 rounded hover:bg-rose-50 transition-colors cursor-pointer"
-                    title="Delete event sequence"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+          {actionSequences.map(seq => {
+            const isIfElse = seq.event === 'ifElse' || seq.event === 'if,else';
+            return (
+              <div key={seq.id} className="p-2 bg-slate-50 border border-slate-200 rounded-lg flex flex-col gap-1.5 w-full box-border overflow-hidden">
+                <div className="flex justify-between items-center pb-1 border-b border-slate-200 w-full">
+                  <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded font-mono flex items-center gap-1 ${
+                    isIfElse
+                      ? 'text-purple-700 bg-purple-50 border border-purple-200'
+                      : 'text-indigo-700 bg-indigo-50'
+                  }`}>
+                    {isIfElse && <GitBranch size={11} className="text-purple-600" />}
+                    {isIfElse ? 'if,else' : seq.event}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleAddAction(seq.id)}
+                      className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium px-1.5 py-0.5 bg-white border border-slate-200 hover:border-indigo-300 rounded flex items-center gap-0.5 transition-colors cursor-pointer"
+                      title="Add standard action step"
+                    >
+                      <Plus size={11} /> Step
+                    </button>
+                    <button
+                      onClick={() => handleAddConditionAction(seq.id)}
+                      className="text-[10px] text-purple-700 hover:text-purple-900 font-medium px-1.5 py-0.5 bg-white border border-purple-200 hover:border-purple-300 rounded flex items-center gap-0.5 transition-colors cursor-pointer"
+                      title="Add If / Else Condition block"
+                    >
+                      <GitBranch size={10} className="text-purple-600" /> If/Else
+                    </button>
+                    <button
+                      onClick={() => handleRemoveSequence(seq.id)}
+                      className="text-slate-400 hover:text-rose-600 p-0.5 rounded hover:bg-rose-50 transition-colors cursor-pointer"
+                      title="Delete event sequence"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </div>
-              </div>
 
               <ActionList
                 actions={seq.actions}
@@ -1312,8 +1491,9 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
                 onTestActionApi={handleTestActionApi}
                 getAllowedOperations={getAllowedOperations}
               />
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

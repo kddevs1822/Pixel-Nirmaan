@@ -48,9 +48,11 @@ export const LeftSidebar: React.FC = () => {
   const [dsMethod, setDsMethod] = useState<'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'>('GET');
   const [dsHeaders, setDsHeaders] = useState<DataSourceHeader[]>([]);
   const [dsBodyTemplate, setDsBodyTemplate] = useState('');
-  const [dsFetchOnLoad, setDsFetchOnLoad] = useState(false);
+  const [dsFetchOnLoad, setDsFetchOnLoad] = useState(true);
   const [dsTargetFrameId, setDsTargetFrameId] = useState('');
   const [dsTargetVariableId, setDsTargetVariableId] = useState('');
+  const [dsLoadingVariableId, setDsLoadingVariableId] = useState('');
+  const [dsErrorVariableId, setDsErrorVariableId] = useState('');
   const [dsResponsePath, setDsResponsePath] = useState('');
 
   // Image Creation Modal State
@@ -263,9 +265,11 @@ export const LeftSidebar: React.FC = () => {
       { id: uuidv4(), key: 'Content-Type', value: 'application/json', enabled: true }
     ]);
     setDsBodyTemplate('');
-    setDsFetchOnLoad(false);
+    setDsFetchOnLoad(true);
     setDsTargetFrameId('');
     setDsTargetVariableId('');
+    setDsLoadingVariableId('');
+    setDsErrorVariableId('');
     setDsResponsePath('');
     setTestResult(null);
     setShowAddDsModal(true);
@@ -283,6 +287,8 @@ export const LeftSidebar: React.FC = () => {
     setDsFetchOnLoad(!!ds.fetchOnLoad);
     setDsTargetFrameId(ds.targetFrameId || '');
     setDsTargetVariableId(ds.targetVariableId || '');
+    setDsLoadingVariableId(ds.loadingVariableId || '');
+    setDsErrorVariableId(ds.errorVariableId || '');
     setDsResponsePath(ds.responsePath || '');
     setTestResult(null);
     setShowAddDsModal(true);
@@ -378,6 +384,8 @@ export const LeftSidebar: React.FC = () => {
       fetchOnLoad: dsFetchOnLoad,
       targetFrameId: dsTargetFrameId || undefined,
       targetVariableId: dsTargetVariableId || undefined,
+      loadingVariableId: dsLoadingVariableId || undefined,
+      errorVariableId: dsErrorVariableId || undefined,
       responsePath: dsResponsePath.trim() || undefined,
     };
 
@@ -844,7 +852,7 @@ export const LeftSidebar: React.FC = () => {
 
                 {/* Target State Variable */}
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Store In State Variable</label>
+                  <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Store In State Variable (Data)</label>
                   <select
                     value={dsTargetVariableId}
                     onChange={(e) => setDsTargetVariableId(e.target.value)}
@@ -857,6 +865,40 @@ export const LeftSidebar: React.FC = () => {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Loading and Error Lifecycle Variables */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Loading Variable</label>
+                    <select
+                      value={dsLoadingVariableId}
+                      onChange={(e) => setDsLoadingVariableId(e.target.value)}
+                      className="w-full mt-1 px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:ring-1 focus:ring-sky-500 focus:outline-none"
+                    >
+                      <option value="">-- None --</option>
+                      {stateVariables.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Error Variable</label>
+                    <select
+                      value={dsErrorVariableId}
+                      onChange={(e) => setDsErrorVariableId(e.target.value)}
+                      className="w-full mt-1 px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:ring-1 focus:ring-sky-500 focus:outline-none"
+                    >
+                      <option value="">-- None --</option>
+                      {stateVariables.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {/* Response Path */}
@@ -1058,6 +1100,16 @@ export const LeftSidebar: React.FC = () => {
                         {targetVar && (
                           <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 font-medium truncate max-w-[180px]">
                             📦 {targetVar.name}{ds.responsePath ? ` (${ds.responsePath})` : ''}
+                          </span>
+                        )}
+                        {ds.loadingVariableId && (
+                          <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 font-medium truncate max-w-[140px]" title="Loading state variable">
+                            ⏳ {stateVariables.find(v => v.id === ds.loadingVariableId)?.name || ds.loadingVariableId}
+                          </span>
+                        )}
+                        {ds.errorVariableId && (
+                          <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-700 font-medium truncate max-w-[140px]" title="Error state variable">
+                            ⚠️ {stateVariables.find(v => v.id === ds.errorVariableId)?.name || ds.errorVariableId}
                           </span>
                         )}
                         {!ds.fetchOnLoad && !targetVar && (

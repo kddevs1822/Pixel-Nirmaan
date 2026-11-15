@@ -753,6 +753,7 @@ ${routeElements.join('\n')}
   private static normalizeUrl(rawUrl: string): string {
     let url = (rawUrl || '').trim();
     if (!url) return '';
+    if (url.startsWith('/')) return url;
     if (/^ttps?:\/\//i.test(url)) {
       url = 'h' + url;
     } else if (/^\/\//.test(url)) {
@@ -817,9 +818,9 @@ ${routeElements.join('\n')}
   }
 
   private static generatePathAccess(base: string, pathStr: string): string {
-    const parts = pathStr.split('.').filter(Boolean);
-    if (parts.length === 0) return base;
-    return base + '?.' + parts.join('?.');
+    const clean = (pathStr || '').trim();
+    if (!clean) return base;
+    return "((val) => { if (!val) return val; if (val['" + clean + "'] !== undefined) return val['" + clean + "']; let norm = '" + clean + "'.replace(/\\[(\\d+)\\]/g, '.$1'); if (norm.startsWith('data.') && !('data' in val)) norm = norm.slice(5); const parts = norm.split('.').filter(Boolean); let c = val; for (const p of parts) { if (c == null) return undefined; c = c[p]; } return c !== undefined ? c : val['" + clean + "']; })(" + base + ")";
   }
 
   private static actionsHaveNavigate(actions: NodeAction[]): boolean {
@@ -870,10 +871,13 @@ ${routeElements.join('\n')}
       if (act.type === 'setState' && act.stateVariableId) {
         addVar(act.stateVariableId);
       } else if (act.type === 'callApi') {
-        const targetVarId = act.apiTargetVariableId || (act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId)?.targetVariableId : undefined);
-        if (targetVarId) {
-          addVar(targetVarId);
-        }
+        const ds = act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId) : undefined;
+        const targetVarId = act.apiTargetVariableId || ds?.targetVariableId;
+        const loadingVarId = act.apiLoadingVariableId || ds?.loadingVariableId;
+        const errorVarId = act.apiErrorVariableId || ds?.errorVariableId;
+        if (targetVarId) addVar(targetVarId);
+        if (loadingVarId) addVar(loadingVarId);
+        if (errorVarId) addVar(errorVarId);
       } else if (act.type === 'condition') {
         if (act.conditionVariableId) {
           addVar(act.conditionVariableId);
@@ -1003,11 +1007,11 @@ ${routeElements.join('\n')}
           const primaryTargetId = targetNode?.sourceNodeId || targetId;
           const visAction = act.visibilityAction || 'toggle';
           if (visAction === 'show') {
-            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; }`);
+            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.display = ''; visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; }`);
           } else if (visAction === 'hide') {
-            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; }`);
+            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { visEl.classList.add('hidden'); visEl.style.display = 'none'; visEl.style.pointerEvents = 'none'; }`);
           } else {
-            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { if (visEl.classList.contains('hidden') || visEl.classList.contains('is-initially-hidden')) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; } else { visEl.classList.add('hidden'); visEl.style.pointerEvents = 'none'; } }`);
+            statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { const isCurrentlyHidden = visEl.classList.contains('hidden') || visEl.classList.contains('is-initially-hidden') || visEl.style.display === 'none'; if (isCurrentlyHidden) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.display = ''; visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; } else { visEl.classList.add('hidden'); visEl.style.display = 'none'; visEl.style.pointerEvents = 'none'; } }`);
           }
         }
       } else if (act.type === 'resetForm') {
@@ -1028,6 +1032,8 @@ ${routeElements.join('\n')}
         let headersObj: Record<string, string> = {};
         let body = act.apiBody;
         let targetVarId = act.apiTargetVariableId;
+        let loadingVarId = act.apiLoadingVariableId;
+        let errorVarId = act.apiErrorVariableId;
         let responsePath = act.apiResponsePath;
 
         if (act.dataSourceId && act.dataSourceId !== 'custom') {
@@ -1040,6 +1046,8 @@ ${routeElements.join('\n')}
             });
             if (!body && ds.bodyTemplate) body = ds.bodyTemplate;
             if (!targetVarId && ds.targetVariableId) targetVarId = ds.targetVariableId;
+            if (!loadingVarId && ds.loadingVariableId) loadingVarId = ds.loadingVariableId;
+            if (!errorVarId && ds.errorVariableId) errorVarId = ds.errorVariableId;
             if (!responsePath && ds.responsePath) responsePath = ds.responsePath;
           }
         } else if (act.apiHeaders) {
@@ -1059,16 +1067,30 @@ ${routeElements.join('\n')}
           const cleanVarName = rawVarName ? this.sanitizeVarName(rawVarName) : '';
           const setter = cleanVarName ? `set${cleanVarName.charAt(0).toUpperCase() + cleanVarName.slice(1)}` : '';
 
+          const loadingSv = loadingVarId ? (stateVariables || []).find(v => v.id === loadingVarId || v.name === loadingVarId) : undefined;
+          const rawLoadingName = loadingSv ? loadingSv.name : loadingVarId;
+          const cleanLoadingName = rawLoadingName ? this.sanitizeVarName(rawLoadingName) : '';
+          const loadingSetter = cleanLoadingName ? `set${cleanLoadingName.charAt(0).toUpperCase() + cleanLoadingName.slice(1)}` : '';
+
+          const errorSv = errorVarId ? (stateVariables || []).find(v => v.id === errorVarId || v.name === errorVarId) : undefined;
+          const rawErrorName = errorSv ? errorSv.name : errorVarId;
+          const cleanErrorName = rawErrorName ? this.sanitizeVarName(rawErrorName) : '';
+          const errorSetter = cleanErrorName ? `set${cleanErrorName.charAt(0).toUpperCase() + cleanErrorName.slice(1)}` : '';
+
           const headersStr = JSON.stringify(headersObj);
-          const bodyStr = (['POST', 'PUT', 'PATCH'].includes(method) && body)
+          const bodyStr = (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && body)
             ? `, body: ${JSON.stringify(body)}`
             : '';
 
           const pathAccess = responsePath ? `result = ${this.generatePathAccess('data', responsePath)};` : '';
-          const setterCall = setter ? `${setter}(result);` : '';
+          const setterCall = setter ? `${setter}(result !== undefined ? result : null);` : '';
+          const clearErrorCall = errorSetter ? `${errorSetter}('');` : '';
+          const setErrorCall = errorSetter ? `${errorSetter}(err.message || 'API request failed');` : '';
+          const setLoadingTrue = loadingSetter ? `${loadingSetter}(true);` : '';
+          const setLoadingFalse = loadingSetter ? `${loadingSetter}(false);` : '';
           const logCall = cleanVarName ? `console.log('⚡ [PixelNirmaan] API response saved to "${cleanVarName}":', result);` : `console.log('⚡ [PixelNirmaan] API call success:', result);`;
 
-          statements.push(`try { const res = await fetch('${finalUrl}', { method: '${method}', headers: ${headersStr}${bodyStr} }); const data = await res.json(); let result = data; ${pathAccess} ${setterCall} ${logCall} } catch (err) { console.error('API call error:', err); }`);
+          statements.push(`try { ${setLoadingTrue} ${clearErrorCall} const res = await fetch('${finalUrl}', { method: '${method}', headers: ${headersStr}${bodyStr} }); const contentType = res.headers.get('content-type') || ''; let data; if (contentType.includes('application/json')) { data = await res.json(); } else { const text = await res.text(); try { data = JSON.parse(text); } catch { data = text; } } if (!res.ok) { throw new Error('HTTP ' + res.status + ': ' + (res.statusText || 'Error')); } let result = data; ${pathAccess} ${setterCall} ${logCall} } catch (err) { console.error('API call error:', err); ${setErrorCall} } finally { ${setLoadingFalse} }`);
         }
       } else if (act.type === 'condition') {
         if (!act.conditionVariableId) return;
@@ -1221,6 +1243,14 @@ ${routeElements.join('\n')}
           }
           else if (seq.event === 'onHover') onMouseEnterStatements.push(...statements);
           else if (seq.event === 'onFocus') onFocusStatements.push(...statements);
+          else if (seq.event === 'ifElse' || seq.event === 'if,else') {
+            const isInputNode = ['TextInput', 'TextArea', 'SelectDropdown', 'Checkbox', 'Switch'].includes(node.type);
+            if (isInputNode) {
+              onChangeStatements.push(...statements);
+            } else {
+              onClickStatements.push(...statements);
+            }
+          }
         }
       });
     }
@@ -1882,7 +1912,7 @@ ${routeElements.join('\n')}
     const staticContentJsx = rawStaticJsx ? `${rawStaticJsx}\n${indent}` : '';
 
     return `${staticContentJsx}<div className="flex ${flexDir} gap-[${gapPx}px] pointer-events-none" style={{ position: 'absolute', left: '${minX}px', top: '${minY}px' }}>
-${indent}  {(${arrayVarName} || []).map((${itemName}, index) => (
+${indent}  {(Array.isArray(${arrayVarName}) ? ${arrayVarName} : (Array.isArray(${arrayVarName}?.products) ? ${arrayVarName}.products : (Array.isArray(${arrayVarName}?.items) ? ${arrayVarName}.items : (Array.isArray(${arrayVarName}?.data) ? ${arrayVarName}.data : (Array.isArray(${arrayVarName}?.results) ? ${arrayVarName}.results : (typeof ${arrayVarName} === 'object' && ${arrayVarName} !== null ? Object.values(${arrayVarName}).find(v => Array.isArray(v)) || [] : [])))))).map((${itemName}, index) => (
 ${indent}    <div key={index} className="relative shrink-0 pointer-events-none" style={{ width: '${itemW}px', height: '${itemH}px' }}>
 ${indent}      ${rawRepeatedJsx}
 ${indent}    </div>
@@ -2127,12 +2157,17 @@ ${indent}</div>`;
       const boundExpr = node.bindings?.text || (nodeRelated.find(n => n.bindings?.text)?.bindings?.text);
       const boundText = boundExpr ? this.resolveBindingExpr(boundExpr, stateVariables) : null;
       let fallbackText = (node.text && node.text.trim() !== '') ? node.text : '';
-      if (fallbackText === '""' || fallbackText === "''") fallbackText = '';
+      if (fallbackText === '""' || fallbackText === "''" || fallbackText.trim().toLowerCase() === 'pixel nirmaan' || fallbackText.trim().toLowerCase() === 'text') {
+        fallbackText = '';
+      }
       if (boundText) {
         innerContent = `{typeof ${boundText} === 'boolean' ? String(${boundText}) : (typeof ${boundText} === 'object' && ${boundText} !== null ? (Array.isArray(${boundText}) ? \`[\${${boundText}.length} items]\` : JSON.stringify(${boundText})) : (${boundText} ?? "${fallbackText}"))}`;
       } else {
         let textVal = node.text || '';
-        if (textVal === '""' || textVal === "''") textVal = '';
+        const isInRepeater = Boolean(parentNode?.repeaterBinding || offset);
+        if (textVal === '""' || textVal === "''" || (isInRepeater && (textVal.trim().toLowerCase() === 'pixel nirmaan' || textVal.trim().toLowerCase() === 'text'))) {
+          textVal = '';
+        }
         innerContent = dynamicProps.text 
           ? `{typeof ${dynamicProps.text.expression} === 'boolean' ? String(${dynamicProps.text.expression}) : (${dynamicProps.text.expression} || "${dynamicProps.text.defaultValue}")}` 
           : textVal;
@@ -2372,7 +2407,11 @@ ${bodyStr}  return (
       const cleanName = this.sanitizeVarName(sv.name);
       if (declaredVarNames.has(cleanName)) return;
       declaredVarNames.add(cleanName);
-      const val = JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type));
+      const isRepeaterArray = repeaterFramesOnPage.some(rf => {
+        const binding = rf.repeaterBinding;
+        return binding && (binding.arrayVariableId === sv.id || binding.arrayVariableId === sv.name);
+      });
+      const val = isRepeaterArray ? '[]' : JSON.stringify(this.cleanDefaultValue(sv.defaultValue, sv.type));
       const setter = `set${cleanName.charAt(0).toUpperCase() + cleanName.slice(1)}`;
       stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${val});`);
     });
@@ -2425,10 +2464,56 @@ ${bodyStr}  return (
       stateDeclarations.push(`const [${cleanName}, ${setter}] = useState(${JSON.stringify(defaultArray, null, 2)});`);
     });
 
+    // Collect all page frame IDs including child frames and sourceNodeIds
+    const allPageFrameNodeIds = new Set<string>(pageFrameIds);
+    allNodes.forEach(n => {
+      if (pageFrameIds.has(n.id)) {
+        allPageFrameNodeIds.add(n.id);
+        if (n.sourceNodeId) allPageFrameNodeIds.add(n.sourceNodeId);
+      }
+      let curr: CanvasNode | undefined = n;
+      while (curr && curr.parentId) {
+        if (pageFrameIds.has(curr.parentId)) {
+          allPageFrameNodeIds.add(n.id);
+          if (n.sourceNodeId) allPageFrameNodeIds.add(n.sourceNodeId);
+          break;
+        }
+        curr = nodesById[curr.parentId];
+      }
+    });
+
+    // Check if any node on this page explicitly has a callApi action for a given dataSourceId
+    const pageCalledDataSourceIds = new Set<string>();
+    allNodes.forEach(node => {
+      if (node.actionSequences) {
+        node.actionSequences.forEach(seq => {
+          seq.actions?.forEach(act => {
+            if (act.type === 'callApi' && act.dataSourceId) {
+              pageCalledDataSourceIds.add(act.dataSourceId);
+            }
+          });
+        });
+      }
+    });
+
     // Generate page-load auto-fetch effects
-    const pageLoadDataSources = (dataSources || []).filter(ds => 
-      ds.fetchOnLoad && (!ds.targetFrameId || pageFrameIds.has(ds.targetFrameId) || (desktopFrame && ds.targetFrameId === desktopFrame.sourceNodeId))
-    );
+    const pageLoadDataSources = (dataSources || []).filter(ds => {
+      const isTargetOnThisPage = !ds.targetFrameId || allPageFrameNodeIds.has(ds.targetFrameId) || (desktopFrame && ds.targetFrameId === desktopFrame.sourceNodeId);
+      if (!isTargetOnThisPage) return false;
+      if (ds.fetchOnLoad) return true;
+
+      // Auto-fetch if ds target variable is bound on this page and not manually called by an explicit action
+      const sv = ds.targetVariableId ? (stateVariables || []).find(v => v.id === ds.targetVariableId || v.name === ds.targetVariableId) : undefined;
+      const varName = sv ? sv.name : ds.targetVariableId;
+      const isVarUsedOnPage = varName && (
+        repeaterFramesOnPage.some(rf => rf.repeaterBinding?.arrayVariableId === ds.targetVariableId || rf.repeaterBinding?.arrayVariableId === varName) ||
+        allNodes.some(n => Object.values(n.bindings || {}).some(b => b && b.includes(varName)))
+      );
+      if (isVarUsedOnPage && !pageCalledDataSourceIds.has(ds.id)) {
+        return true;
+      }
+      return false;
+    });
 
     const autoFetchEffects: string[] = [];
     pageLoadDataSources.forEach(ds => {
@@ -2442,32 +2527,73 @@ ${bodyStr}  return (
         stateDeclarations.push(`const [${cleanVarName}, ${setter}] = useState(${defaultVal});`);
       }
 
+      const loadingSv = ds.loadingVariableId ? (stateVariables || []).find(v => v.id === ds.loadingVariableId || v.name === ds.loadingVariableId) : undefined;
+      const rawLoadingName = loadingSv ? loadingSv.name : ds.loadingVariableId;
+      const cleanLoadingName = rawLoadingName ? this.sanitizeVarName(rawLoadingName) : '';
+      if (cleanLoadingName && !declaredVarNames.has(cleanLoadingName)) {
+        declaredVarNames.add(cleanLoadingName);
+        const setter = `set${cleanLoadingName.charAt(0).toUpperCase() + cleanLoadingName.slice(1)}`;
+        stateDeclarations.push(`const [${cleanLoadingName}, ${setter}] = useState(false);`);
+      }
+
+      const errorSv = ds.errorVariableId ? (stateVariables || []).find(v => v.id === ds.errorVariableId || v.name === ds.errorVariableId) : undefined;
+      const rawErrorName = errorSv ? errorSv.name : ds.errorVariableId;
+      const cleanErrorName = rawErrorName ? this.sanitizeVarName(rawErrorName) : '';
+      if (cleanErrorName && !declaredVarNames.has(cleanErrorName)) {
+        declaredVarNames.add(cleanErrorName);
+        const setter = `set${cleanErrorName.charAt(0).toUpperCase() + cleanErrorName.slice(1)}`;
+        stateDeclarations.push(`const [${cleanErrorName}, ${setter}] = useState('');`);
+      }
+
       const headersObj: Record<string, string> = {};
       (ds.headers || []).filter(h => h.enabled && h.key).forEach(h => {
         headersObj[h.key] = h.value;
       });
 
       const method = ds.method || 'GET';
-      const bodyStr = (['POST', 'PUT', 'PATCH'].includes(method) && ds.bodyTemplate)
+      const bodyStr = (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && ds.bodyTemplate)
         ? `,\n        body: ${JSON.stringify(ds.bodyTemplate)}`
         : '';
       const setter = cleanVarName ? `set${cleanVarName.charAt(0).toUpperCase() + cleanVarName.slice(1)}` : '';
+      const loadingSetter = cleanLoadingName ? `set${cleanLoadingName.charAt(0).toUpperCase() + cleanLoadingName.slice(1)}` : '';
+      const errorSetter = cleanErrorName ? `set${cleanErrorName.charAt(0).toUpperCase() + cleanErrorName.slice(1)}` : '';
+
       const pathAccess = ds.responsePath ? `result = ${this.generatePathAccess('data', ds.responsePath)};` : '';
-      const setterCall = setter ? `${setter}(result);` : '';
+      const setterCall = setter ? `${setter}(result !== undefined ? result : null);` : '';
+      const clearErrorCall = errorSetter ? `${errorSetter}('');` : '';
+      const setErrorCall = errorSetter ? `${errorSetter}(err.message || 'Failed to load data');` : '';
+      const setLoadingTrue = loadingSetter ? `${loadingSetter}(true);` : '';
+      const setLoadingFalse = loadingSetter ? `${loadingSetter}(false);` : '';
 
       autoFetchEffects.push(`  useEffect(() => {
     const fetch_${this.sanitizeVarName(ds.name || 'data')} = async () => {
+      ${setLoadingTrue}
+      ${clearErrorCall}
       try {
         const res = await fetch('${this.normalizeUrl(ds.url)}', {
           method: '${method}',
           headers: ${JSON.stringify(headersObj)}${bodyStr}
         });
-        const data = await res.json();
+        const contentType = res.headers.get('content-type') || '';
+        let data;
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          const text = await res.text();
+          try { data = JSON.parse(text); } catch { data = text; }
+        }
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status + ': ' + (res.statusText || 'Error'));
+        }
         let result = data;
         ${pathAccess}
         ${setterCall}
+        console.log('⚡ [PixelNirmaan] Auto-fetched data for "${ds.name}":', result);
       } catch (err) {
         console.error('Failed to load data for ${ds.name}:', err);
+        ${setErrorCall}
+      } finally {
+        ${setLoadingFalse}
       }
     };
     fetch_${this.sanitizeVarName(ds.name || 'data')}();

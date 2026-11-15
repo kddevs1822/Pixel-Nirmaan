@@ -12,7 +12,7 @@ export const proxyRequest = async (req: Request, res: Response) => {
       headers,
     };
 
-    if (['POST', 'PUT', 'PATCH'].includes(method.toUpperCase()) && body) {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase()) && body) {
       options.body = typeof body === 'string' ? body : JSON.stringify(body);
     }
 

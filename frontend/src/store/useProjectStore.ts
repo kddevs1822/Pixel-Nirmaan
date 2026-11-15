@@ -813,15 +813,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             }
           : undefined;
 
-        // Remap action sequence targets (targetNodeId and targetPageId)
+        // Remap action sequence targets (targetNodeId and targetPageId) recursively
+        const remapAction = (act: any): any => ({
+          ...act,
+          targetNodeId: act.targetNodeId ? idMap.get(act.targetNodeId) || act.targetNodeId : undefined,
+          targetPageId: act.targetPageId ? idMap.get(act.targetPageId) || act.targetPageId : undefined,
+          trueActions: Array.isArray(act.trueActions) ? act.trueActions.map(remapAction) : undefined,
+          falseActions: Array.isArray(act.falseActions) ? act.falseActions.map(remapAction) : undefined,
+        });
         const newActionSequences = node.actionSequences
           ? node.actionSequences.map((seq: any) => ({
               ...seq,
-              actions: (seq.actions || []).map((act: any) => ({
-                ...act,
-                targetNodeId: act.targetNodeId ? idMap.get(act.targetNodeId) || act.targetNodeId : undefined,
-                targetPageId: act.targetPageId ? idMap.get(act.targetPageId) || act.targetPageId : undefined,
-              }))
+              actions: (seq.actions || []).map(remapAction)
             }))
           : undefined;
 
