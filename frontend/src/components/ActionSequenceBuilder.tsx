@@ -12,7 +12,7 @@ interface TargetElementPickerProps {
   onSelectTarget: (id: string | undefined) => void;
   sequenceId: string;
   actionId: string;
-  actionType: 'triggerAnimation' | 'toggleVisibility' | 'submitForm' | 'resetForm' | 'navigate';
+  actionType: 'triggerAnimation' | 'toggleVisibility' | 'submitForm' | 'resetForm' | 'navigate' | 'setProperty';
   label?: string;
   defaultLabel?: string;
   allowedTypes?: string[];
@@ -353,12 +353,21 @@ const ActionItem: React.FC<ActionItemProps> = ({
                   trueActions: action.trueActions || [],
                   falseActions: action.falseActions || [],
                 };
+              } else if (newType === 'setProperty') {
+                patch = {
+                  type: 'setProperty',
+                  targetProperty: action.targetProperty || 'fill',
+                  propertyValueType: action.propertyValueType || 'static',
+                  propertyValue: action.propertyValue !== undefined ? action.propertyValue : '#4A3AFF',
+                  propertyVariableId: action.propertyVariableId || '',
+                };
               }
               onUpdate(patch);
             }}
             className="font-medium text-slate-800 bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 flex-1 min-w-0 truncate"
           >
             <option value="setState">Set State Variable</option>
+            <option value="setProperty">Change Property</option>
             {depth < 3 && <option value="condition">If / Else (Condition)</option>}
             <option value="navigate">Navigate Page</option>
             <option value="callApi">Call API (REST)</option>
@@ -1095,6 +1104,285 @@ const ActionItem: React.FC<ActionItemProps> = ({
         </div>
       )}
 
+      {action.type === 'setProperty' && (() => {
+        const targetProp = action.targetProperty || 'fill';
+        const valType = action.propertyValueType || 'static';
+        const isColorProp = targetProp === 'fill' || targetProp === 'stroke';
+        const isNumProp = ['strokeWidth', 'cornerRadius', 'width', 'height', 'fontSize', 'rotation', 'filterBlur', 'x', 'y'].includes(targetProp);
+        const isOpacity = targetProp === 'opacity';
+        const isText = targetProp === 'text';
+        const isFontWeight = targetProp === 'fontWeight';
+        const isTextAlign = targetProp === 'textAlign';
+        const isVisible = targetProp === 'visible';
+
+        const COLOR_PRESETS = ['transparent', '#FFFFFF', '#000000', '#4A3AFF', '#10B981', '#EF4444', '#F59E0B', '#8B5CF6', '#EC4899', '#64748B'];
+
+        return (
+          <div className="flex flex-col gap-2 pt-1.5 border-t border-slate-100 w-full">
+            {/* Target Element Picker */}
+            <TargetElementPicker
+              originNode={originNode}
+              targetId={action.targetNodeId}
+              onSelectTarget={(id) => onUpdate({ targetNodeId: id })}
+              sequenceId={sequenceId}
+              actionId={action.id}
+              actionType="setProperty"
+              label="Target Element"
+              defaultLabel={`Current Element (${originNode.name || originNode.type})`}
+            />
+
+            {/* Target Property Dropdown */}
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                Property to Change
+              </label>
+              <select
+                value={targetProp}
+                onChange={(e) => {
+                  const newProp = e.target.value as any;
+                  let defVal: any = '#4A3AFF';
+                  if (newProp === 'stroke') defVal = '#000000';
+                  else if (newProp === 'strokeWidth') defVal = 1;
+                  else if (newProp === 'cornerRadius') defVal = 8;
+                  else if (newProp === 'width') defVal = 100;
+                  else if (newProp === 'height') defVal = 40;
+                  else if (newProp === 'opacity') defVal = 100;
+                  else if (newProp === 'text') defVal = 'Text';
+                  else if (newProp === 'fontSize') defVal = 16;
+                  else if (newProp === 'fontWeight') defVal = 'bold';
+                  else if (newProp === 'textAlign') defVal = 'center';
+                  else if (newProp === 'rotation') defVal = 0;
+                  else if (newProp === 'filterBlur') defVal = 4;
+                  else if (newProp === 'x' || newProp === 'y') defVal = 0;
+                  else if (newProp === 'visible') defVal = true;
+
+                  onUpdate({
+                    targetProperty: newProp,
+                    propertyValue: defVal
+                  });
+                }}
+                className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-slate-50 text-slate-800 font-medium truncate focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                <optgroup label="Style & Colors">
+                  <option value="fill">Fill / Background Color</option>
+                  <option value="stroke">Border Color (stroke)</option>
+                  <option value="strokeWidth">Border Width (px)</option>
+                  <option value="cornerRadius">Border Radius (px)</option>
+                  <option value="opacity">Opacity (%)</option>
+                  <option value="filterBlur">Blur (px)</option>
+                </optgroup>
+                <optgroup label="Dimensions & Position">
+                  <option value="width">Width (px)</option>
+                  <option value="height">Height (px)</option>
+                  <option value="x">Position X (px)</option>
+                  <option value="y">Position Y (px)</option>
+                  <option value="rotation">Rotation (°)</option>
+                </optgroup>
+                <optgroup label="Text & Typography">
+                  <option value="text">Text Content</option>
+                  <option value="fontSize">Font Size (px)</option>
+                  <option value="fontWeight">Font Weight</option>
+                  <option value="textAlign">Text Align</option>
+                </optgroup>
+                <optgroup label="Visibility">
+                  <option value="visible">Visibility (visible/hidden)</option>
+                </optgroup>
+              </select>
+            </div>
+
+            {/* Value Type Selector: Static vs Variable */}
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                  Value Source
+                </label>
+                <div className="flex rounded border border-slate-200 bg-slate-50 p-0.5 text-[9.5px]">
+                  <button
+                    type="button"
+                    onClick={() => onUpdate({ propertyValueType: 'static' })}
+                    className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${valType === 'static' ? 'bg-white shadow-2xs text-indigo-700 font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+                  >
+                    Static Value
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onUpdate({ propertyValueType: 'variable' })}
+                    className={`px-2 py-0.5 rounded font-medium transition-colors cursor-pointer ${valType === 'variable' ? 'bg-white shadow-2xs text-indigo-700 font-bold' : 'text-slate-600 hover:text-slate-900'}`}
+                  >
+                    State Variable
+                  </button>
+                </div>
+              </div>
+
+              {/* Variable Picker */}
+              {valType === 'variable' ? (
+                <div className="flex flex-col gap-0.5">
+                  <select
+                    value={action.propertyVariableId || ''}
+                    onChange={(e) => onUpdate({ propertyVariableId: e.target.value })}
+                    className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-slate-50 text-slate-800 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="" disabled>Select State Variable</option>
+                    {stateVariables.map(sv => (
+                      <option key={sv.id} value={sv.id}>{sv.name} ({sv.type})</option>
+                    ))}
+                  </select>
+                  {stateVariables.length === 0 && (
+                    <span className="text-[8.5px] text-amber-600 italic">No state variables available. Create one first in State Variables.</span>
+                  )}
+                </div>
+              ) : (
+                /* Static Input Controls */
+                <div className="flex flex-col gap-1.5">
+                  {isColorProp && (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="color"
+                          value={action.propertyValue && action.propertyValue.startsWith('#') && action.propertyValue.length === 7 ? action.propertyValue : '#4A3AFF'}
+                          onChange={(e) => onUpdate({ propertyValue: e.target.value })}
+                          className="w-7 h-7 rounded border border-slate-200 cursor-pointer p-0.5 bg-white shrink-0"
+                          title="Pick Color"
+                        />
+                        <input
+                          type="text"
+                          placeholder="#4A3AFF or transparent"
+                          value={action.propertyValue ?? ''}
+                          onChange={(e) => onUpdate({ propertyValue: e.target.value })}
+                          className="flex-1 min-w-0 border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      {/* Color Presets */}
+                      <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                        {COLOR_PRESETS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => onUpdate({ propertyValue: c })}
+                            className={`w-4 h-4 rounded-full border transition-transform hover:scale-110 cursor-pointer ${action.propertyValue === c ? 'ring-2 ring-indigo-500 ring-offset-1 border-indigo-400' : 'border-slate-300'}`}
+                            style={{ backgroundColor: c === 'transparent' ? 'transparent' : c }}
+                            title={c}
+                          >
+                            {c === 'transparent' && <span className="block text-[8px] text-slate-500 leading-none">∅</span>}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {isNumProp && (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={action.propertyValue !== undefined && action.propertyValue !== '' ? action.propertyValue : ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          onUpdate({ propertyValue: val === '' ? 0 : Number(val) });
+                        }}
+                        className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                        {targetProp === 'rotation' ? 'deg' : 'px'}
+                      </span>
+                    </div>
+                  )}
+
+                  {isOpacity && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={action.propertyValue !== undefined ? Number(action.propertyValue) : 100}
+                        onChange={(e) => onUpdate({ propertyValue: Number(e.target.value) })}
+                        className="flex-1 cursor-pointer accent-indigo-600"
+                      />
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={action.propertyValue !== undefined ? Number(action.propertyValue) : 100}
+                          onChange={(e) => {
+                            const val = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                            onUpdate({ propertyValue: val });
+                          }}
+                          className="w-12 border border-slate-200 rounded px-1 py-0.5 text-[10px] bg-white text-center font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <span className="text-[10px] text-slate-400 font-mono">%</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {isText && (
+                    <input
+                      type="text"
+                      placeholder="Enter new text content..."
+                      value={action.propertyValue ?? ''}
+                      onChange={(e) => onUpdate({ propertyValue: e.target.value })}
+                      className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  )}
+
+                  {isFontWeight && (
+                    <select
+                      value={action.propertyValue || 'normal'}
+                      onChange={(e) => onUpdate({ propertyValue: e.target.value })}
+                      className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="normal">Normal (400)</option>
+                      <option value="500">Medium (500)</option>
+                      <option value="600">Semi Bold (600)</option>
+                      <option value="bold">Bold (700)</option>
+                      <option value="800">Extra Bold (800)</option>
+                    </select>
+                  )}
+
+                  {isTextAlign && (
+                    <select
+                      value={action.propertyValue || 'left'}
+                      onChange={(e) => onUpdate({ propertyValue: e.target.value })}
+                      className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                      <option value="right">Right</option>
+                      <option value="justify">Justify</option>
+                    </select>
+                  )}
+
+                  {isVisible && (
+                    <select
+                      value={action.propertyValue === true || action.propertyValue === 'true' ? 'true' : 'false'}
+                      onChange={(e) => onUpdate({ propertyValue: e.target.value === 'true' })}
+                      className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="true">True (Visible)</option>
+                      <option value="false">False (Hidden)</option>
+                    </select>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Optional Delay */}
+            <div className="flex items-center justify-between pt-0.5">
+              <label className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Delay (ms)</label>
+              <input
+                type="number"
+                min={0}
+                step={100}
+                placeholder="0"
+                value={action.delay || ''}
+                onChange={(e) => onUpdate({ delay: e.target.value ? Number(e.target.value) : undefined })}
+                className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] bg-slate-50 text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+        );
+      })()}
+
       {(action.type === 'submitForm' || action.type === 'resetForm') && (
         <div className="flex flex-col gap-1.5 pt-1.5 border-t border-slate-100 w-full">
           <TargetElementPicker
@@ -1220,7 +1508,7 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
       ops.push({ value: 'decrement', label: 'Decrement (-)' });
     }
 
-    if (seqEvent === 'onChange' && isInputNode) {
+    if ((seqEvent === 'onChange' || seqEvent === 'onToggleOn' || seqEvent === 'onToggleOff' || seqEvent === 'onCheck' || seqEvent === 'onUncheck') && isInputNode) {
       ops.push({ value: 'setInputVal', label: 'From Input' });
     }
 
@@ -1243,7 +1531,11 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
     const defaultVarId = defaultVar.id;
     const isDefaultInputOp = (event === 'onChange' && isInputNode);
     let initialVal: any = true;
-    if (isDefaultInputOp) {
+    if (event === 'onToggleOn' || event === 'onCheck') {
+      initialVal = defaultVar.type === 'boolean' ? true : defaultVar.type === 'number' ? 1 : 'on';
+    } else if (event === 'onToggleOff' || event === 'onUncheck') {
+      initialVal = defaultVar.type === 'boolean' ? false : defaultVar.type === 'number' ? 0 : 'off';
+    } else if (isDefaultInputOp) {
       initialVal = '';
     } else if (defaultVar.type === 'number') {
       initialVal = 0;
@@ -1353,6 +1645,8 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
   };
 
   const availableEvents: ActionSequenceEvent[] = [
+    ...(node.type === 'Switch' ? ['onToggleOn' as const, 'onToggleOff' as const] : []),
+    ...(node.type === 'Checkbox' ? ['onCheck' as const, 'onUncheck' as const] : []),
     'onClick',
     ...(isInputNode ? ['onChange' as const] : []),
     ...(isFormNode ? ['onSubmit' as const] : []),
@@ -1386,14 +1680,28 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
               }
             }}
             defaultValue=""
-            className="text-[11px] font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 hover:bg-indigo-100 cursor-pointer max-w-[125px] truncate"
+            className="text-[11px] font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5 hover:bg-indigo-100 cursor-pointer max-w-[135px] truncate"
           >
             <option value="" disabled>+ Event</option>
-            {unusedEvents.map(ev => (
-              <option key={ev} value={ev}>
-                {ev === 'ifElse' || ev === 'if,else' ? 'if,else' : ev}
-              </option>
-            ))}
+            {unusedEvents.map(ev => {
+              let label: string = ev;
+              if (ev === 'ifElse' || ev === 'if,else') label = 'if,else';
+              else if (ev === 'onToggleOn') label = 'When On';
+              else if (ev === 'onToggleOff') label = 'When Off';
+              else if (ev === 'onCheck') label = 'When Checked';
+              else if (ev === 'onUncheck') label = 'When Unchecked';
+              else if (ev === 'onClick') label = 'On Click';
+              else if (ev === 'onChange') label = 'On Change';
+              else if (ev === 'onSubmit') label = 'On Submit';
+              else if (ev === 'onHover') label = 'On Hover';
+              else if (ev === 'onFocus') label = 'On Focus';
+
+              return (
+                <option key={ev} value={ev}>
+                  {label}
+                </option>
+              );
+            })}
           </select>
         )}
       </div>
@@ -1402,16 +1710,48 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
         <div className="p-2.5 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center w-full box-border">
           <p className="text-[11px] text-slate-500 mb-1.5">No action sequences attached</p>
           <div className="flex flex-wrap gap-1 justify-center">
-            <button
-              onClick={() => handleAddSequence('onClick')}
-              className="text-[10px] font-medium text-indigo-600 bg-white border border-indigo-200 rounded px-2 py-0.5 hover:bg-indigo-50 transition-colors"
-            >
-              + On Click
-            </button>
+            {node.type === 'Switch' ? (
+              <>
+                <button
+                  onClick={() => handleAddSequence('onToggleOn')}
+                  className="text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-300 rounded px-2 py-0.5 hover:bg-emerald-100 transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <Plus size={10} /> When On
+                </button>
+                <button
+                  onClick={() => handleAddSequence('onToggleOff')}
+                  className="text-[10px] font-medium text-slate-700 bg-slate-100 border border-slate-300 rounded px-2 py-0.5 hover:bg-slate-200 transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <Plus size={10} /> When Off
+                </button>
+              </>
+            ) : node.type === 'Checkbox' ? (
+              <>
+                <button
+                  onClick={() => handleAddSequence('onCheck')}
+                  className="text-[10px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-300 rounded px-2 py-0.5 hover:bg-emerald-100 transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <Plus size={10} /> When Checked
+                </button>
+                <button
+                  onClick={() => handleAddSequence('onUncheck')}
+                  className="text-[10px] font-medium text-slate-700 bg-slate-100 border border-slate-300 rounded px-2 py-0.5 hover:bg-slate-200 transition-colors cursor-pointer flex items-center gap-1"
+                >
+                  <Plus size={10} /> When Unchecked
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => handleAddSequence('onClick')}
+                className="text-[10px] font-medium text-indigo-600 bg-white border border-indigo-200 rounded px-2 py-0.5 hover:bg-indigo-50 transition-colors cursor-pointer"
+              >
+                + On Click
+              </button>
+            )}
             {isInputNode && (
               <button
                 onClick={() => handleAddSequence('onChange')}
-                className="text-[10px] font-medium text-indigo-600 bg-white border border-indigo-200 rounded px-2 py-0.5 hover:bg-indigo-50 transition-colors"
+                className="text-[10px] font-medium text-indigo-600 bg-white border border-indigo-200 rounded px-2 py-0.5 hover:bg-indigo-50 transition-colors cursor-pointer"
               >
                 + On Change
               </button>
@@ -1419,7 +1759,7 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
             {isFormNode && (
               <button
                 onClick={() => handleAddSequence('onSubmit')}
-                className="text-[10px] font-medium text-indigo-600 bg-white border border-indigo-200 rounded px-2 py-0.5 hover:bg-indigo-50 transition-colors"
+                className="text-[10px] font-medium text-indigo-600 bg-white border border-indigo-200 rounded px-2 py-0.5 hover:bg-indigo-50 transition-colors cursor-pointer"
               >
                 + On Submit
               </button>
@@ -1437,16 +1777,37 @@ export const ActionSequenceBuilder: React.FC<ActionSequenceBuilderProps> = ({ no
         <div className="flex flex-col gap-2.5 w-full">
           {actionSequences.map(seq => {
             const isIfElse = seq.event === 'ifElse' || seq.event === 'if,else';
+            const isOn = seq.event === 'onToggleOn' || seq.event === 'onCheck';
+            const isOff = seq.event === 'onToggleOff' || seq.event === 'onUncheck';
+
+            let eventLabel: string = seq.event;
+            if (isIfElse) eventLabel = 'if,else';
+            else if (seq.event === 'onToggleOn') eventLabel = 'When On';
+            else if (seq.event === 'onToggleOff') eventLabel = 'When Off';
+            else if (seq.event === 'onCheck') eventLabel = 'When Checked';
+            else if (seq.event === 'onUncheck') eventLabel = 'When Unchecked';
+            else if (seq.event === 'onClick') eventLabel = 'On Click';
+            else if (seq.event === 'onChange') eventLabel = 'On Change';
+            else if (seq.event === 'onSubmit') eventLabel = 'On Submit';
+            else if (seq.event === 'onHover') eventLabel = 'On Hover';
+            else if (seq.event === 'onFocus') eventLabel = 'On Focus';
+
+            const badgeColor = isOn
+              ? 'text-emerald-800 bg-emerald-50 border border-emerald-300'
+              : isOff
+              ? 'text-slate-700 bg-slate-100 border border-slate-300'
+              : isIfElse
+              ? 'text-purple-700 bg-purple-50 border border-purple-200'
+              : 'text-indigo-700 bg-indigo-50';
+
             return (
               <div key={seq.id} className="p-2 bg-slate-50 border border-slate-200 rounded-lg flex flex-col gap-1.5 w-full box-border overflow-hidden">
                 <div className="flex justify-between items-center pb-1 border-b border-slate-200 w-full">
-                  <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded font-mono flex items-center gap-1 ${
-                    isIfElse
-                      ? 'text-purple-700 bg-purple-50 border border-purple-200'
-                      : 'text-indigo-700 bg-indigo-50'
-                  }`}>
+                  <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded font-mono flex items-center gap-1 ${badgeColor}`}>
                     {isIfElse && <GitBranch size={11} className="text-purple-600" />}
-                    {isIfElse ? 'if,else' : seq.event}
+                    {isOn && <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 shrink-0" />}
+                    {isOff && <span className="inline-block w-2 h-2 rounded-full bg-slate-400 shrink-0" />}
+                    {eventLabel}
                   </span>
                   <div className="flex items-center gap-1">
                     <button

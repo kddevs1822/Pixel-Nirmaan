@@ -876,7 +876,7 @@ const RenderNode: React.FC<{
   }
   const displaySrc = getBoundProperty('src', resolvedNode.src || '');
 
-  const executeChangeActions = (inputVal: any) => {
+  const executeChangeActions = async (inputVal: any) => {
     const primaryId = resolvedNode.sourceNodeId || resolvedNode.id;
     const related = nodes.filter(n => n.id === primaryId || n.sourceNodeId === primaryId);
     let seqs = resolvedNode.actionSequences || [];
@@ -889,8 +889,26 @@ const RenderNode: React.FC<{
       }
     }
 
+    if (resolvedNode.type === 'Switch' || resolvedNode.type === 'Checkbox') {
+      const isChecked = Boolean(inputVal);
+      if (isChecked) {
+        const onSeq = seqs.find(s => s.event === 'onToggleOn' || s.event === 'onCheck');
+        if (onSeq && context.executeSequenceActions) {
+          await context.executeSequenceActions(onSeq.actions, { ...resolvedNode, checked: true }, shapeRef.current?.getStage() || null);
+        }
+      } else {
+        const offSeq = seqs.find(s => s.event === 'onToggleOff' || s.event === 'onUncheck');
+        if (offSeq && context.executeSequenceActions) {
+          await context.executeSequenceActions(offSeq.actions, { ...resolvedNode, checked: false }, shapeRef.current?.getStage() || null);
+        }
+      }
+    }
+
     const changeSeq = seqs.find(s => s.event === 'onChange');
     if (changeSeq) {
+      if (context.executeSequenceActions) {
+        await context.executeSequenceActions(changeSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
+      }
       changeSeq.actions.forEach(act => {
         if (act.enabled === false) return;
         if (act.type === 'setState' && act.stateVariableId) {
@@ -944,7 +962,7 @@ const RenderNode: React.FC<{
 
     const ifElseSeq = seqs.find(s => s.event === 'ifElse' || s.event === 'if,else');
     if (ifElseSeq && context.executeSequenceActions) {
-      context.executeSequenceActions(ifElseSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
+      await context.executeSequenceActions(ifElseSeq.actions, resolvedNode, shapeRef.current?.getStage() || null);
     }
   };
 
@@ -2158,6 +2176,95 @@ export const CanvasArea: React.FC = () => {
                 shape.opacity(targetNode?.opacity !== undefined ? Math.max(0, Math.min(1, targetNode.opacity / 100)) : 1);
               } else {
                 shape.opacity(0);
+              }
+            });
+          }
+          stage.batchDraw();
+        }
+      }
+    } else if (act.type === 'setProperty') {
+      if (act.delay && act.delay > 0) {
+        await new Promise(r => setTimeout(r, act.delay));
+      }
+      const targetId = act.targetNodeId || (originNode.type !== 'FormContainer' ? originNode.id : undefined);
+      if (targetId) {
+        const targetNode = nodes.find(n => n.id === targetId || n.sourceNodeId === targetId);
+        const targetProp = act.targetProperty || 'fill';
+        let valToSet: any = act.propertyValue;
+        if (act.propertyValueType === 'variable') {
+          const currentVars = useCanvasStore.getState().stateVariables;
+          const v = currentVars.find((sv: any) => sv.id === act.propertyVariableId || sv.name === act.propertyVariableId);
+          valToSet = v ? v.defaultValue : undefined;
+        }
+
+        if (['strokeWidth', 'cornerRadius', 'width', 'height', 'fontSize', 'rotation', 'filterBlur', 'x', 'y'].includes(targetProp)) {
+          const num = Number(valToSet);
+          valToSet = isNaN(num) ? 0 : num;
+        } else if (targetProp === 'opacity') {
+          const num = Number(valToSet);
+          valToSet = isNaN(num) ? 100 : Math.max(0, Math.min(100, num));
+        } else if (targetProp === 'visible') {
+          valToSet = (valToSet === true || valToSet === 'true');
+        } else if (targetProp === 'text') {
+          valToSet = String(valToSet ?? '');
+        }
+
+        const targetVariants = nodes.filter(n => n.id === targetId || n.sourceNodeId === targetId || (targetNode?.sourceNodeId && n.id === targetNode.sourceNodeId));
+        targetVariants.forEach(tv => {
+          useCanvasStore.getState().updateNode(tv.id, { [targetProp]: valToSet }, true);
+        });
+
+        const stage = activeStage || previewStageRef.current || stageRef.current;
+        if (stage) {
+          for (const tv of targetVariants) {
+            const shapes = [
+              stage.findOne('#node-' + tv.id),
+              stage.findOne('#node-' + tv.id + '-rep-0'),
+            ].filter(Boolean);
+            shapes.forEach((shape: any) => {
+              try {
+                if (targetProp === 'fill') {
+                  if (typeof shape.fill === 'function') shape.fill(valToSet);
+                  const innerShape = shape.findOne && (shape.findOne('Rect') || shape.findOne('Circle') || shape.findOne('Text'));
+                  if (innerShape && typeof innerShape.fill === 'function') innerShape.fill(valToSet);
+                } else if (targetProp === 'stroke') {
+                  if (typeof shape.stroke === 'function') shape.stroke(valToSet);
+                  const innerShape = shape.findOne && (shape.findOne('Rect') || shape.findOne('Circle'));
+                  if (innerShape && typeof innerShape.stroke === 'function') innerShape.stroke(valToSet);
+                } else if (targetProp === 'strokeWidth') {
+                  if (typeof shape.strokeWidth === 'function') shape.strokeWidth(valToSet);
+                  const innerShape = shape.findOne && (shape.findOne('Rect') || shape.findOne('Circle'));
+                  if (innerShape && typeof innerShape.strokeWidth === 'function') innerShape.strokeWidth(valToSet);
+                } else if (targetProp === 'cornerRadius') {
+                  if (typeof shape.cornerRadius === 'function') shape.cornerRadius(valToSet);
+                  const innerShape = shape.findOne && shape.findOne('Rect');
+                  if (innerShape && typeof innerShape.cornerRadius === 'function') innerShape.cornerRadius(valToSet);
+                } else if (targetProp === 'width') {
+                  if (typeof shape.width === 'function') shape.width(valToSet);
+                } else if (targetProp === 'height') {
+                  if (typeof shape.height === 'function') shape.height(valToSet);
+                } else if (targetProp === 'opacity') {
+                  if (typeof shape.opacity === 'function') shape.opacity(Math.max(0, Math.min(1, valToSet / 100)));
+                } else if (targetProp === 'text') {
+                  if (typeof shape.text === 'function') shape.text(valToSet);
+                  const innerText = shape.findOne && shape.findOne('Text');
+                  if (innerText && typeof innerText.text === 'function') innerText.text(valToSet);
+                } else if (targetProp === 'fontSize') {
+                  if (typeof shape.fontSize === 'function') shape.fontSize(valToSet);
+                  const innerText = shape.findOne && shape.findOne('Text');
+                  if (innerText && typeof innerText.fontSize === 'function') innerText.fontSize(valToSet);
+                } else if (targetProp === 'rotation') {
+                  if (typeof shape.rotation === 'function') shape.rotation(valToSet);
+                } else if (targetProp === 'x') {
+                  if (typeof shape.x === 'function') shape.x(valToSet);
+                } else if (targetProp === 'y') {
+                  if (typeof shape.y === 'function') shape.y(valToSet);
+                } else if (targetProp === 'visible') {
+                  if (typeof shape.visible === 'function') shape.visible(valToSet);
+                  if (typeof shape.listening === 'function') shape.listening(valToSet);
+                }
+              } catch (e) {
+                console.error('Error applying setProperty on Konva node:', e);
               }
             });
           }
@@ -4670,6 +4777,7 @@ export const CanvasArea: React.FC = () => {
       {pickingActionTarget && (() => {
         const originNode = nodes.find(n => n.id === pickingActionTarget.nodeId);
         const actionLabel = 
+          pickingActionTarget.actionType === 'setProperty' ? 'Target Element to Change Property' :
           pickingActionTarget.actionType === 'triggerAnimation' ? 'Target Element to Animate' :
           pickingActionTarget.actionType === 'toggleVisibility' ? 'Target Element for Visibility' :
           pickingActionTarget.actionType === 'submitForm' ? 'Target Form to Submit' :

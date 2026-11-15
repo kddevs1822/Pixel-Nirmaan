@@ -870,6 +870,8 @@ ${routeElements.join('\n')}
 
       if (act.type === 'setState' && act.stateVariableId) {
         addVar(act.stateVariableId);
+      } else if (act.type === 'setProperty' && act.propertyValueType === 'variable' && act.propertyVariableId) {
+        addVar(act.propertyVariableId);
       } else if (act.type === 'callApi') {
         const ds = act.dataSourceId ? (dataSources || []).find(d => d.id === act.dataSourceId) : undefined;
         const targetVarId = act.apiTargetVariableId || ds?.targetVariableId;
@@ -1013,6 +1015,61 @@ ${routeElements.join('\n')}
           } else {
             statements.push(`const visEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (visEl) { const isCurrentlyHidden = visEl.classList.contains('hidden') || visEl.classList.contains('is-initially-hidden') || visEl.style.display === 'none'; if (isCurrentlyHidden) { visEl.classList.remove('hidden', 'is-initially-hidden'); visEl.style.display = ''; visEl.style.opacity = '1'; visEl.style.pointerEvents = 'auto'; } else { visEl.classList.add('hidden'); visEl.style.display = 'none'; visEl.style.pointerEvents = 'none'; } }`);
           }
+        }
+      } else if (act.type === 'setProperty') {
+        if (act.delay && act.delay > 0) {
+          statements.push(`await new Promise(r => setTimeout(r, ${act.delay}));`);
+        }
+        const targetId = act.targetNodeId || (node.type !== 'FormContainer' ? node.id : undefined);
+        if (targetId) {
+          const targetNode = allNodes.find(n => n.id === targetId);
+          const primaryTargetId = targetNode?.sourceNodeId || targetId;
+          const targetProp = act.targetProperty || 'fill';
+          
+          let valExpr = '';
+          if (act.propertyValueType === 'variable') {
+            const rawVarName = act.propertyVariableId ? (stateVariables || []).find(v => v.id === act.propertyVariableId || v.name === act.propertyVariableId)?.name || act.propertyVariableId : '';
+            valExpr = rawVarName ? this.sanitizeVarName(rawVarName) : '""';
+          } else {
+            valExpr = JSON.stringify(act.propertyValue !== undefined ? act.propertyValue : '');
+          }
+
+          let styleMutation = '';
+          if (targetProp === 'fill') {
+            styleMutation = `const isTextNode = targetEl.querySelector('p, span, h1, h2, h3, h4, h5, h6') || targetEl.tagName === 'P' || targetEl.tagName === 'SPAN'; if (isTextNode && targetEl.classList.contains('text-node')) { targetEl.style.color = val; if (innerEl) innerEl.style.color = val; } else { targetEl.style.backgroundColor = val; if (innerEl) innerEl.style.backgroundColor = val; }`;
+          } else if (targetProp === 'stroke') {
+            styleMutation = `targetEl.style.borderColor = val; if (innerEl) innerEl.style.borderColor = val;`;
+          } else if (targetProp === 'strokeWidth') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.borderWidth = px; targetEl.style.borderStyle = 'solid'; if (innerEl) { innerEl.style.borderWidth = px; innerEl.style.borderStyle = 'solid'; }`;
+          } else if (targetProp === 'cornerRadius') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.borderRadius = px; if (innerEl) innerEl.style.borderRadius = px;`;
+          } else if (targetProp === 'width') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.width = px;`;
+          } else if (targetProp === 'height') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.height = px;`;
+          } else if (targetProp === 'opacity') {
+            styleMutation = `const num = Number(val); const op = !isNaN(num) ? (num > 1 ? num / 100 : num) : val; targetEl.style.opacity = String(op);`;
+          } else if (targetProp === 'text') {
+            styleMutation = `if (targetEl.tagName === 'INPUT' || targetEl.tagName === 'TEXTAREA') { targetEl.value = val; } else { const textTarget = innerEl || targetEl; textTarget.innerText = val; }`;
+          } else if (targetProp === 'fontSize') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.fontSize = px; if (innerEl) innerEl.style.fontSize = px;`;
+          } else if (targetProp === 'fontWeight') {
+            styleMutation = `targetEl.style.fontWeight = val; if (innerEl) innerEl.style.fontWeight = val;`;
+          } else if (targetProp === 'textAlign') {
+            styleMutation = `targetEl.style.textAlign = val; if (innerEl) innerEl.style.textAlign = val;`;
+          } else if (targetProp === 'rotation') {
+            styleMutation = `targetEl.style.transform = 'rotate(' + val + 'deg)';`;
+          } else if (targetProp === 'filterBlur') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.filter = 'blur(' + px + ')'; if (innerEl) innerEl.style.filter = 'blur(' + px + ')';`;
+          } else if (targetProp === 'x') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.left = px;`;
+          } else if (targetProp === 'y') {
+            styleMutation = `const px = (typeof val === 'number' || !isNaN(val)) ? val + 'px' : val; targetEl.style.top = px;`;
+          } else if (targetProp === 'visible') {
+            styleMutation = `if (Boolean(val) && val !== 'false') { targetEl.classList.remove('hidden', 'is-initially-hidden'); targetEl.style.display = ''; targetEl.style.opacity = '1'; targetEl.style.pointerEvents = 'auto'; } else { targetEl.classList.add('hidden'); targetEl.style.display = 'none'; targetEl.style.pointerEvents = 'none'; }`;
+          }
+
+          statements.push(`const targetEl = document.querySelector('[data-node-id="${primaryTargetId}"]') || document.getElementById('node-${targetId}') || document.getElementById('node-${primaryTargetId}'); if (targetEl) { const innerEl = targetEl.querySelector('[data-anim="true"]') || targetEl; const val = ${valExpr}; ${styleMutation} }`);
         }
       } else if (act.type === 'resetForm') {
         if (act.delay && act.delay > 0) {
@@ -1200,6 +1257,8 @@ ${routeElements.join('\n')}
     const onFocusStatements: string[] = [];
     const onBlurStatements: string[] = [];
     const onChangeStatements: string[] = [];
+    const onToggleOnStatements: string[] = [];
+    const onToggleOffStatements: string[] = [];
     const onSubmitStatements: string[] = [];
     let refProp = '';
 
@@ -1236,6 +1295,8 @@ ${routeElements.join('\n')}
         if (statements.length > 0) {
           if (seq.event === 'onClick') onClickStatements.push(...statements);
           else if (seq.event === 'onChange') onChangeStatements.push(...statements);
+          else if (seq.event === 'onToggleOn' || seq.event === 'onCheck') onToggleOnStatements.push(...statements);
+          else if (seq.event === 'onToggleOff' || seq.event === 'onUncheck') onToggleOffStatements.push(...statements);
           else if (seq.event === 'onSubmit') {
             if (node.type === 'FormContainer') {
               onSubmitStatements.push(...statements);
@@ -1253,6 +1314,12 @@ ${routeElements.join('\n')}
           }
         }
       });
+
+      if (onToggleOnStatements.length > 0 || onToggleOffStatements.length > 0) {
+        const onBranch = onToggleOnStatements.length > 0 ? onToggleOnStatements.map(s => `{ ${s} }`).join(' ') : '';
+        const offBranch = onToggleOffStatements.length > 0 ? onToggleOffStatements.map(s => `{ ${s} }`).join(' ') : '';
+        onChangeStatements.unshift(`if (e.target.checked) { ${onBranch} } else { ${offBranch} }`);
+      }
     }
 
     // 2. Cross-element triggers (matching triggers across variants and ancestors)

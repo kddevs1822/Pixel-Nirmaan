@@ -168,7 +168,8 @@ export type ActionType =
   | 'resetForm'
   | 'submitForm'
   | 'callApi'
-  | 'condition';
+  | 'condition'
+  | 'setProperty';
 
 export type ConditionOperator = 
   | '==' 
@@ -219,11 +220,44 @@ export interface NodeAction {
   trueActions?: NodeAction[];
   falseActions?: NodeAction[];
 
+  // Change Property parameters
+  targetProperty?: 
+    | 'fill' 
+    | 'stroke' 
+    | 'strokeWidth' 
+    | 'cornerRadius' 
+    | 'width' 
+    | 'height' 
+    | 'opacity' 
+    | 'text' 
+    | 'fontSize' 
+    | 'fontWeight'
+    | 'textAlign'
+    | 'rotation' 
+    | 'filterBlur' 
+    | 'x' 
+    | 'y' 
+    | 'visible';
+  propertyValueType?: 'static' | 'variable';
+  propertyValue?: any;
+  propertyVariableId?: string;
+
   // Optional delay (ms)
   delay?: number;
 }
 
-export type ActionSequenceEvent = 'onClick' | 'onChange' | 'onSubmit' | 'onHover' | 'onFocus' | 'ifElse' | 'if,else';
+export type ActionSequenceEvent = 
+  | 'onClick' 
+  | 'onChange' 
+  | 'onSubmit' 
+  | 'onHover' 
+  | 'onFocus' 
+  | 'ifElse' 
+  | 'if,else'
+  | 'onToggleOn'
+  | 'onToggleOff'
+  | 'onCheck'
+  | 'onUncheck';
 
 export interface NodeActionSequence {
   id: string;
