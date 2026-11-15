@@ -470,7 +470,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: nodes.filter(n => !idsToDelete.has(n.id)),
       selectedIds: [],
     });
-    get().setToastMessage(`🗑️ Deleted ${count} element${count > 1 ? 's' : ''}`);
+    get().setToastMessage(`Deleted ${count} element${count > 1 ? 's' : ''}`);
   },
 
   duplicateNodes: () => {
@@ -516,7 +516,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: [...nodes, ...newNodes],
       selectedIds: topLevelNewIds.length > 0 ? topLevelNewIds : newNodes.map(n => n.id),
     });
-    get().setToastMessage(`✨ Duplicated ${selectedIds.length} element${selectedIds.length > 1 ? 's' : ''}`);
+    get().setToastMessage(`Duplicated ${selectedIds.length} element${selectedIds.length > 1 ? 's' : ''}`);
   },
 
   copyNodes: () => {
@@ -538,7 +538,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const nodesToCopy = nodes.filter(n => idsToCopy.has(n.id));
     set({ clipboard: nodesToCopy });
-    get().setToastMessage(`📋 Copied ${selectedIds.length} element${selectedIds.length > 1 ? 's' : ''}`);
+    get().setToastMessage(`Copied ${selectedIds.length} element${selectedIds.length > 1 ? 's' : ''}`);
   },
 
   pasteNodes: () => {
@@ -570,7 +570,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: [...nodes, ...newNodes],
       selectedIds: topLevelNewIds.length > 0 ? topLevelNewIds : newNodes.map(n => n.id),
     });
-    get().setToastMessage(`📋 Pasted ${topLevelNewIds.length} element${topLevelNewIds.length > 1 ? 's' : ''}`);
+    get().setToastMessage(`Pasted ${topLevelNewIds.length} element${topLevelNewIds.length > 1 ? 's' : ''}`);
   },
 
   reorderNodes: (action) => {
@@ -1130,9 +1130,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const labels = targetTypes.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(' & ');
     if (isUpdateMode) {
-      setToastMessage(`🔄 Updated existing ${labels} screen variants!`);
+      setToastMessage(`Updated existing ${labels} screen variants!`);
     } else {
-      setToastMessage(`✨ Generated ${labels} screen variants!`);
+      setToastMessage(`Generated ${labels} screen variants!`);
     }
   },
 
@@ -1206,7 +1206,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
     });
 
-    get().setToastMessage(`✨ Added page "${pageName}" (${cleanRoute}) [${Math.round(pageWidth)}×${Math.round(pageHeight)}]`);
+    get().setToastMessage(`Added page "${pageName}" (${cleanRoute}) [${Math.round(pageWidth)}×${Math.round(pageHeight)}]`);
     return newPageId;
   },
 
@@ -1278,7 +1278,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       });
     }
 
-    get().setToastMessage(`📑 Duplicated page "${dupName}"`);
+    get().setToastMessage(`Duplicated page "${dupName}"`);
     return newPageId;
   },
 
@@ -1316,7 +1316,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       selectedIds: [],
     });
 
-    get().setToastMessage(`🗑️ Deleted page "${page.name || 'Page'}"`);
+    get().setToastMessage(`Deleted page "${page.name || 'Page'}"`);
   },
 
   setHomePage: (pageId: string) => {
@@ -1343,7 +1343,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: updated,
     });
 
-    get().setToastMessage(`🏠 Set "${targetPage.name || 'Page'}" as Home Page (/)`);
+    get().setToastMessage(`Set "${targetPage.name || 'Page'}" as Home Page (/)`);
   },
 
   panToNode: (nodeId: string) => {
@@ -1381,7 +1381,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: previous,
       selectedIds: [], 
     });
-    get().setToastMessage('↩️ Undo');
+    get().setToastMessage('Undo');
   },
 
   redo: () => {
@@ -1397,6 +1397,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: next,
       selectedIds: [],
     });
-    get().setToastMessage('↪️ Redo');
+    get().setToastMessage('Redo');
   },
 }));

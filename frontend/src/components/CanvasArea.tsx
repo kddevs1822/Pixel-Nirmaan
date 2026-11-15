@@ -5,7 +5,7 @@ import type { CanvasNode, NodeAction } from '../store/useCanvasStore';
 import Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import useImage from 'use-image';
-import { X, AlertCircle, Monitor, Tablet, Smartphone, Target, Upload, Plus, Layout } from 'lucide-react';
+import { X, AlertCircle, Monitor, Tablet, Smartphone, Target, Upload, Plus, Layout, Check } from 'lucide-react';
 import { useProjectStore } from '../store/useProjectStore';
 import { getNodeDescriptiveLabel } from '../utils/nodeUtils';
 import { normalizeApiUrl, executeApiFetch, extractJsonPath, getApiErrorMessage } from '../utils/urlUtils';
@@ -1452,7 +1452,7 @@ const RenderNode: React.FC<{
         <Text
           x={resolvedNode.x}
           y={resolvedNode.y - 14}
-          text={node.isMasterComponent ? `❖ ${node.componentName || 'Component'}` : `◇ Instance`}
+          text={node.isMasterComponent ? `[Component] ${node.componentName || 'Component'}` : `[Instance]`}
           fill={indicatorStroke}
           fontSize={10}
           fontFamily="Inter"
@@ -2085,9 +2085,9 @@ export const CanvasArea: React.FC = () => {
             const resolvedVarId = targetVar ? targetVar.id : targetVarId;
             useCanvasStore.getState().updateStateVariable(resolvedVarId, { defaultValue: extracted !== undefined ? extracted : null });
             const varName = targetVar?.name || resolvedVarId;
-            useCanvasStore.getState().setToastMessage(`⚡ API response saved to state variable "${varName}"`);
+            useCanvasStore.getState().setToastMessage(`API response saved to state variable "${varName}"`);
           } else {
-            useCanvasStore.getState().setToastMessage(`⚡ API call successful (Status ${res.status})`);
+            useCanvasStore.getState().setToastMessage(`API call successful (Status ${res.status})`);
           }
 
           if (errorVarId) {
@@ -2100,7 +2100,7 @@ export const CanvasArea: React.FC = () => {
           if (errorVarId) {
             useCanvasStore.getState().updateStateVariable(errorVarId, { defaultValue: errMsg });
           }
-          useCanvasStore.getState().setToastMessage(`❌ API call failed: ${errMsg}`);
+          useCanvasStore.getState().setToastMessage(`API call failed: ${errMsg}`);
         } finally {
           // Lifecycle Point 4: Loading reset guaranteed
           if (loadingVarId) {
@@ -2425,7 +2425,7 @@ export const CanvasArea: React.FC = () => {
         if (isSelf) {
           setToastMessage(`Target set to Current Element (${originNode.name || originNode.type})`);
         } else {
-          setToastMessage(`🎯 Target element set to "${targetLabel}"`);
+          setToastMessage(`Target element set to "${targetLabel}"`);
         }
       }
 
@@ -2889,7 +2889,7 @@ export const CanvasArea: React.FC = () => {
                       }`}
                     >
                       <span>{opt}</span>
-                      {isSelected && <span className="text-indigo-600 font-bold">✓</span>}
+                      {isSelected && <Check size={14} className="text-indigo-600 stroke-[3]" />}
                     </button>
                   );
                 })}
@@ -3006,7 +3006,7 @@ export const CanvasArea: React.FC = () => {
                     const route = p.routePath || (isHome ? '/' : `/${(p.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
                     return (
                       <option key={p.id} value={p.id}>
-                        {p.name || 'Page'} ({route}){isHome ? ' ★ Home' : ''}
+                        {p.name || 'Page'} ({route}){isHome ? ' (Home)' : ''}
                       </option>
                     );
                   })}
@@ -3474,7 +3474,7 @@ export const CanvasArea: React.FC = () => {
                   }}
                 >
                   <Circle radius={14} fill="#EF4444" shadowColor="rgba(0,0,0,0.3)" shadowBlur={6} shadowOffsetY={2} />
-                  <Text text="✕" fill="white" fontSize={14} fontStyle="bold" fontFamily="Inter, sans-serif" x={-5} y={-7} listening={false} />
+                  <Text text="×" fill="white" fontSize={14} fontStyle="bold" fontFamily="Inter, sans-serif" x={-5} y={-7} listening={false} />
                 </Group>
               )}
             </Group>
@@ -3533,7 +3533,7 @@ export const CanvasArea: React.FC = () => {
                       shadowBlur={4}
                     />
                     <Text
-                      text={`⚡ ON ${actionText}: ${(targetNode.name || 'Element').toUpperCase()}`}
+                      text={`ON ${actionText}: ${(targetNode.name || 'Element').toUpperCase()}`}
                       fill="white"
                       fontSize={9}
                       fontStyle="bold"
@@ -3588,7 +3588,7 @@ export const CanvasArea: React.FC = () => {
                     }}
                   >
                     <Circle radius={13} fill="#EF4444" shadowColor="rgba(0,0,0,0.3)" shadowBlur={4} shadowOffsetY={1} />
-                    <Text text="✕" fill="white" fontSize={12} fontStyle="bold" fontFamily="Inter, sans-serif" x={-4} y={-6} listening={false} />
+                    <Text text="×" fill="white" fontSize={12} fontStyle="bold" fontFamily="Inter, sans-serif" x={-4} y={-6} listening={false} />
                   </Group>
                 </Group>
               );
@@ -3618,12 +3618,12 @@ export const CanvasArea: React.FC = () => {
                 const points = [sourceBounds.centerX, sourceBounds.centerY, targetBounds.centerX, targetBounds.centerY];
                 const eventDisplay = (seq.event === 'ifElse' || seq.event === 'if,else') ? 'if,else' : seq.event;
                 const actionLabel = 
-                  act.type === 'triggerAnimation' ? `⚡ ${eventDisplay}: ANIMATE` :
-                  act.type === 'toggleVisibility' ? `👁️ ${eventDisplay}: VISIBILITY` :
-                  act.type === 'submitForm' ? `📋 ${eventDisplay}: SUBMIT` :
-                  act.type === 'resetForm' ? `🔄 ${eventDisplay}: RESET` :
-                  act.type === 'navigate' ? `🔗 ${eventDisplay}: GO TO` :
-                  act.type === 'condition' ? `🔀 ${eventDisplay}: IF/ELSE` : `🎯 ${eventDisplay}`;
+                  act.type === 'triggerAnimation' ? `${eventDisplay}: ANIMATE` :
+                  act.type === 'toggleVisibility' ? `${eventDisplay}: VISIBILITY` :
+                  act.type === 'submitForm' ? `${eventDisplay}: SUBMIT` :
+                  act.type === 'resetForm' ? `${eventDisplay}: RESET` :
+                  act.type === 'navigate' ? `${eventDisplay}: GO TO` :
+                  act.type === 'condition' ? `${eventDisplay}: IF/ELSE` : `${eventDisplay}`;
 
                 return (
                   <Group key={`action-seq-link-${originNode.id}-${act.id}`}>
@@ -3699,7 +3699,7 @@ export const CanvasArea: React.FC = () => {
                     shadowBlur={6}
                   />
                   <Text
-                    text={`🎯 Click to select: ${hLabel.slice(0, 18)}`}
+                    text={`Click to select: ${hLabel.slice(0, 18)}`}
                     fill="#E0E7FF"
                     fontSize={9}
                     fontStyle="bold"
@@ -3764,9 +3764,9 @@ export const CanvasArea: React.FC = () => {
               );
 
               const slideTitle = anim.type.toUpperCase().replace('-', ' ');
-              const startPillText = `🟢 START (${startDist > 0 ? `-${startDist}px` : `${startDist}px`})`;
-              const endPillText = `🔴 END (${endDist}px)`;
-              const midPillText = `➡ ${slideTitle}: ${totalTravelDist}px`;
+              const startPillText = `START (${startDist > 0 ? `-${startDist}px` : `${startDist}px`})`;
+              const endPillText = `END (${endDist}px)`;
+              const midPillText = `${slideTitle}: ${totalTravelDist}px`;
 
               const startPillW = 130;
               const endPillW = 120;
@@ -4105,7 +4105,7 @@ export const CanvasArea: React.FC = () => {
                         shadowBlur={4}
                       />
                       <Text
-                        text={`🦘 BOUNCE PEAK: ${heightDist}px (Drag)`}
+                        text={`BOUNCE PEAK: ${heightDist}px (Drag)`}
                         fill="white"
                         fontSize={10}
                         fontStyle="bold"
@@ -4127,7 +4127,7 @@ export const CanvasArea: React.FC = () => {
               const newHeight = height * scaleFactor;
               const newX = centerX - newWidth / 2;
               const newY = centerY - newHeight / 2;
-              const pillText = `💗 PULSE RANGE: ${Math.round(scaleFactor * 100)}% (Drag)`;
+              const pillText = `PULSE RANGE: ${Math.round(scaleFactor * 100)}% (Drag)`;
               const pillWidth = 180;
 
               return (
@@ -4216,7 +4216,7 @@ export const CanvasArea: React.FC = () => {
             if (anim.type === 'spin') {
               const deg = anim.degrees ?? 360;
               const outerRadius = Math.max(width, height) / 2 + 15;
-              const pillText = `🔄 SPIN ANGLE: ${deg}° (Drag)`;
+              const pillText = `SPIN ANGLE: ${deg}° (Drag)`;
               const pillWidth = 170;
 
               return (
@@ -4309,7 +4309,7 @@ export const CanvasArea: React.FC = () => {
 
             if (anim.type === 'fade-in') {
               const opacityVal = anim.startOpacity ?? 0;
-              const pillText = `👁 FADE IN: ${opacityVal}% (Drag)`;
+              const pillText = `FADE IN: ${opacityVal}% (Drag)`;
               const pillWidth = 160;
 
               return (
@@ -4560,7 +4560,7 @@ export const CanvasArea: React.FC = () => {
                     shadowOffsetY={2}
                   />
                   <Text
-                    text={`${isVertical ? '↕' : '↔'} GAP: ${gap}px (Drag)`}
+                    text={`GAP: ${gap}px (Drag)`}
                     fill="white"
                     fontSize={10}
                     fontStyle="bold"
@@ -4681,8 +4681,8 @@ export const CanvasArea: React.FC = () => {
             <div className={`w-3 h-3 rounded-full ${connectingSourceId ? 'bg-emerald-400 animate-pulse' : 'bg-blue-400'}`} />
             <span className="text-sm font-medium">
               {connectingSourceId
-                ? '✨ Now click the target frame to create the connection'
-                : '👆 Click an element inside a frame to start a connection'}
+                ? 'Now click the target frame to create the connection'
+                : 'Click an element inside a frame to start a connection'}
             </span>
           </div>
         </div>

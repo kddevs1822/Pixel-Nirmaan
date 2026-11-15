@@ -33,7 +33,7 @@ export const getNodeDescriptiveLabel = (node: CanvasNode, allNodes?: CanvasNode[
     typeLabel = `Form "${node.name || 'Form'}"`;
   } else if (node.type === 'Frame') {
     const routeInfo = node.routePath ? ` (${node.routePath})` : (node.isHomePage ? ' (/)' : '');
-    const homeBadge = node.isHomePage ? ' 🏠' : '';
+    const homeBadge = node.isHomePage ? ' (Home)' : '';
     typeLabel = `Frame "${node.name || 'Desktop'}"${routeInfo}${homeBadge}`;
   } else if (node.type === 'Rect') {
     const fillStr = node.fill && typeof node.fill === 'string' ? node.fill : '';

@@ -405,8 +405,9 @@ export const ProjectModal: React.FC = () => {
                     </div>
 
                     {p.outputPath ? (
-                      <span className="truncate max-w-[140px] text-[10px] text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">
-                        📁 {p.outputPath.split(/[\\/]/).pop()}
+                      <span className="truncate max-w-[140px] text-[10px] text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Folder size={11} className="shrink-0" />
+                        <span className="truncate">{p.outputPath.split(/[\\/]/).pop()}</span>
                       </span>
                     ) : (
                       <span className="text-[10px] text-slate-300">No export folder set</span>

@@ -63,9 +63,9 @@ export const useKeyboardShortcuts = () => {
         const user = useAuthStore.getState().user;
         if (user && activeProject) {
           saveCurrentProjectNodes({ nodes, stateVariables } as any);
-          setToastMessage('💾 Project saved successfully!');
+          setToastMessage('Project saved successfully!');
         } else {
-          setToastMessage('💾 Changes saved locally');
+          setToastMessage('Changes saved locally');
         }
         return;
       }

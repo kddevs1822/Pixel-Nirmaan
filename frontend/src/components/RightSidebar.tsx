@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCanvasStore } from '../store/useCanvasStore';
-import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Repeat, Image as ImageIcon, Globe, Home, Maximize2, Sparkles } from 'lucide-react';
+import { ChevronsUp, ChevronUp, ChevronDown, ChevronsDown, Component, Unlink, ArrowRight, RefreshCw, Monitor, Smartphone, Target, X, MousePointer, Link2, Play, Pause, MousePointerClick, ScrollText, Zap, Repeat, Image as ImageIcon, Globe, Home, Maximize2, Sparkles } from 'lucide-react';
 import type { CanvasNode } from '../store/useCanvasStore';
 import { v4 as uuidv4 } from 'uuid';
 import { ActionSequenceBuilder } from './ActionSequenceBuilder';
@@ -142,9 +142,9 @@ const HoverPreviewCard: React.FC<{
             type="button"
             onClick={triggerPlay}
             title="Play preview animation"
-            className="text-[10px] text-slate-600 hover:text-[#4A3AFF] px-1.5 py-0.5 rounded bg-white border border-slate-200 hover:border-indigo-300 font-medium cursor-pointer shadow-xs transition-colors"
+            className="text-[10px] text-slate-600 hover:text-[#4A3AFF] px-1.5 py-0.5 rounded bg-white border border-slate-200 hover:border-indigo-300 font-medium cursor-pointer shadow-xs transition-colors flex items-center gap-1"
           >
-            ▶ Play
+            <Play size={10} className="fill-current" /> Play
           </button>
         </div>
       </div>
@@ -313,9 +313,13 @@ const AnimationPreviewCard: React.FC<{
               type="button"
               onClick={togglePause}
               title={isPaused ? "Resume animation" : "Pause animation"}
-              className="text-[10px] text-slate-600 hover:text-[#4A3AFF] px-1.5 py-0.5 rounded bg-white border border-slate-200 hover:border-indigo-300 font-medium cursor-pointer shadow-xs transition-colors"
+              className="text-[10px] text-slate-600 hover:text-[#4A3AFF] px-1.5 py-0.5 rounded bg-white border border-slate-200 hover:border-indigo-300 font-medium cursor-pointer shadow-xs transition-colors flex items-center gap-1"
             >
-              {isPaused ? '▶ Resume' : '⏸ Pause'}
+              {isPaused ? (
+                <span className="flex items-center gap-1"><Play size={10} className="fill-current" /> Resume</span>
+              ) : (
+                <span className="flex items-center gap-1"><Pause size={10} className="fill-current" /> Pause</span>
+              )}
             </button>
           )}
           <button
@@ -377,13 +381,13 @@ const AnimationPreviewCard: React.FC<{
 
       {/* Footer Info */}
       <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
-        <span className="truncate min-w-0 flex-1">
-          {trigger === 'click' ? '👉 Click shape to test' : 
-           trigger === 'dblclick' ? '✌️ Double-click shape to test' :
-           trigger === 'hover' ? '🖱️ Hover shape to test' : 
-           trigger === 'focus' ? '🎯 Focus shape to test' :
-           trigger === 'scroll' ? '📜 Triggers on scroll into view' :
-           (ANIMATION_DESCRIPTIONS[type] || 'Keyframe animation')}
+        <span className="truncate min-w-0 flex-1 flex items-center gap-1.5">
+          {trigger === 'click' ? <><MousePointerClick size={12} className="text-slate-500 shrink-0" /><span>Click shape to test</span></> : 
+           trigger === 'dblclick' ? <><MousePointerClick size={12} className="text-slate-500 shrink-0" /><span>Double-click shape to test</span></> : 
+           trigger === 'hover' ? <><MousePointer size={12} className="text-slate-500 shrink-0" /><span>Hover shape to test</span></> : 
+           trigger === 'focus' ? <><Target size={12} className="text-slate-500 shrink-0" /><span>Focus shape to test</span></> : 
+           trigger === 'scroll' ? <><ScrollText size={12} className="text-slate-500 shrink-0" /><span>Triggers on scroll into view</span></> : 
+           <span>{ANIMATION_DESCRIPTIONS[type] || 'Keyframe animation'}</span>}
         </span>
         <span className="font-mono text-slate-500 whitespace-nowrap shrink-0">{duration}ms • {infinite ? '∞' : '1x'}</span>
       </div>
@@ -562,7 +566,7 @@ const VariableBindingControl: React.FC<{
           {currentBoundVar ? (
             <span className="max-w-[90px] truncate">{currentBoundVar}</span>
           ) : (
-            isOpen && <span className="text-[9px] text-slate-400">✕</span>
+            isOpen && <X size={9} className="text-slate-400" />
           )}
         </button>
       </div>
@@ -571,7 +575,7 @@ const VariableBindingControl: React.FC<{
         <div className="w-full my-2 p-2.5 bg-slate-50 border border-slate-200 shadow-sm rounded-xl flex flex-col gap-2.5 text-xs">
           <div className="flex items-center justify-between text-[10px] uppercase font-bold text-slate-500 pb-1 border-b border-slate-200/60">
             <span>Bind {label || propertyKey} Expression</span>
-            <button type="button" onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600 p-0.5">✕</button>
+            <button type="button" onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-slate-600 p-0.5"><X size={12} /></button>
           </div>
 
           {/* Data Variable Selector */}
@@ -960,7 +964,10 @@ export const RightSidebar: React.FC = () => {
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            <span>⚡ Actions</span>
+            <span className="flex items-center gap-1.5">
+              <Zap size={13} className={sidebarTab === 'actions' ? 'text-amber-300' : 'text-amber-500'} />
+              <span>Actions</span>
+            </span>
             {primaryNode.actionSequences && primaryNode.actionSequences.length > 0 && (
               <span className={`w-2 h-2 rounded-full ${sidebarTab === 'actions' ? 'bg-amber-300' : 'bg-[#4A3AFF]'}`} />
             )}
@@ -1081,7 +1088,7 @@ export const RightSidebar: React.FC = () => {
                               height: refPage.height,
                               y: refPage.y,
                             }, true);
-                            setToastMessage(`📐 Matched page size & aligned to ${refPage.name || 'page'} (${Math.round(refPage.width || 0)}×${Math.round(refPage.height || 0)})`);
+                            setToastMessage(`Matched page size & aligned to ${refPage.name || 'page'} (${Math.round(refPage.width || 0)}×${Math.round(refPage.height || 0)})`);
                           }}
                           className="w-full py-1.5 px-2 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-xs font-medium flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
                         >
@@ -1754,7 +1761,7 @@ export const RightSidebar: React.FC = () => {
                       className="text-slate-400 hover:text-red-500 p-1"
                       title="Remove option"
                     >
-                      ✕
+                      <X size={13} />
                     </button>
                   </div>
                 ))}
@@ -1986,8 +1993,8 @@ export const RightSidebar: React.FC = () => {
                     }}
                     className="w-full text-xs p-1.5 border rounded border-slate-200 bg-white text-xs text-slate-800 font-medium"
                   >
-                    <option value="vertical">↕ Vertical List</option>
-                    <option value="horizontal">↔ Horizontal Grid</option>
+                    <option value="vertical">Vertical List</option>
+                    <option value="horizontal">Horizontal Grid</option>
                   </select>
                 </div>
               </div>
@@ -2681,7 +2688,7 @@ export const RightSidebar: React.FC = () => {
                 const route = frame.routePath || (isHome ? '/' : `/${(frame.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
                 return (
                   <option key={frame.id} value={frame.id}>
-                    {`${frame.name || 'Page'} (${route})${isHome ? ' ★ Home' : ''}`}
+                    {`${frame.name || 'Page'} (${route})${isHome ? ' (Home)' : ''}`}
                   </option>
                 );
               })}
@@ -2712,7 +2719,7 @@ export const RightSidebar: React.FC = () => {
                     const route = frame.routePath || (isHome ? '/' : `/${(frame.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
                     return (
                       <option key={frame.id} value={frame.id}>
-                        {`${frame.name || 'Page'} (${route})${isHome ? ' ★ Home' : ''}`}
+                        {`${frame.name || 'Page'} (${route})${isHome ? ' (Home)' : ''}`}
                       </option>
                     );
                   })}

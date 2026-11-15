@@ -102,7 +102,7 @@ const TargetElementPicker: React.FC<TargetElementPickerProps> = ({
                   targetField: isPagePicker ? 'targetPageId' : 'targetNodeId',
                   allowedTypes,
                 });
-                setToastMessage(`🎯 Click any element on canvas to select as ${label.toLowerCase()}`);
+                setToastMessage(`Click any element on canvas to select as ${label.toLowerCase()}`);
               }}
               className={`flex items-center justify-center gap-1 px-2 py-1 rounded border text-[10.5px] font-medium transition-all shrink-0 cursor-pointer ${
                 targetNode
@@ -125,7 +125,7 @@ const TargetElementPicker: React.FC<TargetElementPickerProps> = ({
                 const isHome = !!candidate.isHomePage;
                 const route = candidate.routePath || (isHome ? '/' : `/${(candidate.name || 'page').toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`);
                 const labelText = isPagePicker
-                  ? `${candidate.name || 'Page'} (${route})${isHome ? ' ★ Home' : ''}`
+                  ? `${candidate.name || 'Page'} (${route})${isHome ? ' (Home)' : ''}`
                   : getNodeDescriptiveLabel(candidate, nodes);
                 return (
                   <option key={candidate.id} value={candidate.id}>
@@ -797,7 +797,7 @@ const ActionItem: React.FC<ActionItemProps> = ({
                 }}
                 className="border border-slate-200 rounded px-1.5 py-1 text-[10px] bg-slate-50 text-slate-800 w-full truncate focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
-                <option value="custom">⚙️ Custom / Inline API Endpoint</option>
+                <option value="custom">Custom / Inline API Endpoint</option>
                 {dataSources.map(ds => (
                   <option key={ds.id} value={ds.id}>
                     {ds.method} - {ds.name} ({ds.url})
