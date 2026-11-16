@@ -25,6 +25,10 @@ export const TopBar: React.FC = () => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [outputPath, setOutputPath] = useState(() => localStorage.getItem('pixelnirmaan-output-path') || '');
+  const [exportFormat, setExportFormat] = useState<'jsx' | 'tsx'>(() => {
+    const saved = localStorage.getItem('pixelnirmaan-export-format');
+    return saved === 'jsx' || saved === 'tsx' ? saved : 'tsx';
+  });
   const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
   const [exportMessage, setExportMessage] = useState('');
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -119,6 +123,11 @@ export const TopBar: React.FC = () => {
 
   const hasFrame = nodes.some(n => n.type === 'Frame');
 
+  const handleFormatChange = (fmt: 'jsx' | 'tsx') => {
+    setExportFormat(fmt);
+    localStorage.setItem('pixelnirmaan-export-format', fmt);
+  };
+
   const handleExportZip = async () => {
     if (!user) {
       openAuthModal();
@@ -136,7 +145,7 @@ export const TopBar: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ nodes, stateVariables, dataSources })
+        body: JSON.stringify({ nodes, stateVariables, dataSources, exportFormat })
       });
       
       if (!response.ok) {
@@ -162,7 +171,7 @@ export const TopBar: React.FC = () => {
       });
 
       const blob = await zip.generateAsync({ type: 'blob' });
-      saveAs(blob, 'pixelnirmaan-export.zip');
+      saveAs(blob, `pixelnirmaan-${exportFormat}-export.zip`);
     } catch (error: any) {
       console.error("Export error:", error);
       alert(`Export Error: ${error.message}`);
@@ -195,7 +204,7 @@ export const TopBar: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ nodes, stateVariables, dataSources, outputPath: outputPath.trim() })
+        body: JSON.stringify({ nodes, stateVariables, dataSources, outputPath: outputPath.trim(), exportFormat })
       });
 
       const data = await response.json();
@@ -205,7 +214,7 @@ export const TopBar: React.FC = () => {
       }
 
       setExportStatus('success');
-      setExportMessage(`${data.fileCount} files exported`);
+      setExportMessage(`${data.fileCount} ${exportFormat.toUpperCase()} files exported`);
       setTimeout(() => { setExportStatus('idle'); setExportMessage(''); }, 3000);
     } catch (error: any) {
       console.error("Export to folder error:", error);
@@ -521,39 +530,36 @@ export const TopBar: React.FC = () => {
         )}
       </div>
       
-      <div className="flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
+      <div className="flex items-center gap-1.5 mx-auto shrink-0 px-2">
         <button 
           onClick={undo} 
           disabled={past.length === 0}
-          className="p-2 rounded hover:bg-slate-100 disabled:opacity-50 disabled:hover:bg-transparent text-slate-600 transition-colors"
+          className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent text-slate-600 transition-colors cursor-pointer"
           title="Undo (Ctrl+Z)"
         >
-          <Undo size={18} />
+          <Undo size={17} />
         </button>
         <button 
           onClick={redo} 
           disabled={future.length === 0}
-          className="p-2 rounded hover:bg-slate-100 disabled:opacity-50 disabled:hover:bg-transparent text-slate-600 transition-colors"
+          className="p-1.5 rounded hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent text-slate-600 transition-colors cursor-pointer"
           title="Redo (Ctrl+Shift+Z)"
         >
-          <Redo size={18} />
+          <Redo size={17} />
         </button>
-        <div className="w-px h-6 bg-slate-200 mx-2" />
-        <button onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} className="p-2 rounded hover:bg-slate-100 text-slate-600">
-          <ZoomOut size={18} />
+        <div className="w-px h-5 bg-slate-200 mx-1" />
+        <button onClick={() => setZoom(Math.max(0.1, zoom - 0.1))} className="p-1.5 rounded hover:bg-slate-100 text-slate-600 cursor-pointer" title="Zoom Out">
+          <ZoomOut size={17} />
         </button>
-        <span className="text-xs font-mono font-medium text-slate-600 w-12 text-center">
+        <span className="text-xs font-mono font-medium text-slate-600 w-11 text-center select-none">
           {Math.round(zoom * 100)}%
         </span>
-        <button onClick={() => setZoom(Math.min(5, zoom + 0.1))} className="p-2 rounded hover:bg-slate-100 text-slate-600">
-          <ZoomIn size={18} />
+        <button onClick={() => setZoom(Math.min(5, zoom + 0.1))} className="p-1.5 rounded hover:bg-slate-100 text-slate-600 cursor-pointer" title="Zoom In">
+          <ZoomIn size={17} />
         </button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <button onClick={() => setShowShortcuts(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition-colors" title="Help & Shortcuts">
-          <HelpCircle size={16} />
-        </button>
+      <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
           onClick={() => useProjectStore.getState().triggerJsonImport({ importIntoCurrent: true })}
@@ -563,10 +569,38 @@ export const TopBar: React.FC = () => {
           <Upload size={15} className="text-slate-500" />
           <span>Import JSON</span>
         </button>
-        <button onClick={handlePreview} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition-colors">
+        <button onClick={handlePreview} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition-colors cursor-pointer">
           <Play size={16} />
           <span>Preview</span>
         </button>
+
+        {/* Format Selector: JSX or TSX */}
+        <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs font-semibold" title="Choose export code format: JSX or TSX">
+          <button
+            type="button"
+            onClick={() => handleFormatChange('jsx')}
+            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+              exportFormat === 'jsx'
+                ? 'bg-white text-indigo-600 shadow-sm font-bold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+            title="Export JavaScript (.jsx)"
+          >
+            JSX
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFormatChange('tsx')}
+            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+              exportFormat === 'tsx'
+                ? 'bg-white text-indigo-600 shadow-sm font-bold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+            title="Export TypeScript (.tsx)"
+          >
+            TSX
+          </button>
+        </div>
 
         {/* Export button with dropdown */}
         <div className="relative" ref={exportMenuRef}>
@@ -581,7 +615,7 @@ export const TopBar: React.FC = () => {
               style={{backgroundColor: '#4A3AFF'}} 
               onMouseOver={(e) => { if (hasFrame) e.currentTarget.style.opacity = '0.9'; }} 
               onMouseOut={(e) => { if (hasFrame) e.currentTarget.style.opacity = '1'; }}
-              title={!hasFrame ? 'Cannot export: Please add at least one Frame to the canvas' : outputPath ? `Export to: ${outputPath}` : 'Download as ZIP'}
+              title={!hasFrame ? 'Cannot export: Please add at least one Frame to the canvas' : outputPath ? `Export ${exportFormat.toUpperCase()} to: ${outputPath}` : `Download as ${exportFormat.toUpperCase()} ZIP`}
             >
               {outputPath ? <FolderOutput size={16} /> : <Download size={16} />}
               <span>{exportStatus === 'exporting' ? 'Exporting...' : outputPath ? 'Export Code' : 'Download ZIP'}</span>
@@ -605,6 +639,29 @@ export const TopBar: React.FC = () => {
           {/* Dropdown menu */}
           {showExportMenu && (
             <div className="absolute right-0 top-full mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden z-50">
+              <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-600">Export Format</span>
+                <div className="flex items-center bg-white p-0.5 rounded-md border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleFormatChange('jsx')}
+                    className={`px-2.5 py-0.5 rounded text-[11px] font-medium transition-all cursor-pointer ${
+                      exportFormat === 'jsx' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    JSX
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFormatChange('tsx')}
+                    className={`px-2.5 py-0.5 rounded text-[11px] font-medium transition-all cursor-pointer ${
+                      exportFormat === 'tsx' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    TSX
+                  </button>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={handleExportZip}
@@ -616,9 +673,9 @@ export const TopBar: React.FC = () => {
               >
                 <Download size={16} className="text-slate-500 shrink-0" />
                 <div>
-                  <div className="font-medium text-slate-800">Download ZIP</div>
+                  <div className="font-medium text-slate-800">Download ZIP ({exportFormat.toUpperCase()})</div>
                   <div className="text-xs text-slate-500">
-                    {!hasFrame ? 'Requires at least one Frame' : 'Download as a zip file'}
+                    {!hasFrame ? 'Requires at least one Frame' : `Download as .${exportFormat} zip file`}
                   </div>
                 </div>
               </button>
@@ -634,7 +691,7 @@ export const TopBar: React.FC = () => {
               >
                 <FolderOutput size={16} className="text-slate-500 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium text-slate-800">Export to Folder</div>
+                  <div className="font-medium text-slate-800">Export to Folder ({exportFormat.toUpperCase()})</div>
                   {!hasFrame ? (
                     <div className="text-xs text-slate-400">Requires at least one Frame</div>
                   ) : outputPath ? (
@@ -662,6 +719,15 @@ export const TopBar: React.FC = () => {
         </div>
 
         <div className="w-px h-6 bg-slate-200 mx-0.5" />
+
+        <button
+          type="button"
+          onClick={() => setShowShortcuts(true)}
+          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+          title="Help & Shortcuts"
+        >
+          <HelpCircle size={18} />
+        </button>
 
         {/* User Auth: Profile Avatar or Sign In button */}
         {user ? (

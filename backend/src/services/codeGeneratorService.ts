@@ -1,18 +1,26 @@
 import { CanvasNode, StateVariable, DataSource, NodeAction } from '../models/types';
 
 export class CodeGeneratorService {
-  static generate(nodes: CanvasNode[], stateVariables: StateVariable[] = [], dataSources: DataSource[] = []): Record<string, string> {
+  static generate(nodes: CanvasNode[], stateVariables: StateVariable[] = [], dataSources: DataSource[] = [], format: 'jsx' | 'tsx' = 'jsx'): Record<string, string> {
     const hasFrame = nodes.some(n => n.type === 'Frame');
     if (!hasFrame) {
       throw new Error('Cannot export: No Frame found on canvas. Please add at least one Frame before exporting.');
     }
 
     const files: Record<string, string> = {};
+    const isTsx = format === 'tsx';
+    const compExt = isTsx ? 'tsx' : 'jsx';
 
     // Base config files
-    files['package.json'] = this.generatePackageJson();
-    files['vite.config.js'] = this.generateViteConfig();
-    files['index.html'] = this.generateIndexHtml();
+    files['package.json'] = this.generatePackageJson(format);
+    if (isTsx) {
+      files['tsconfig.json'] = this.generateTsConfig();
+      files['src/vite-env.d.ts'] = this.generateViteEnvDts();
+      files['vite.config.ts'] = this.generateViteConfig();
+    } else {
+      files['vite.config.js'] = this.generateViteConfig();
+    }
+    files['index.html'] = this.generateIndexHtml(format);
     files['tailwind.config.js'] = this.generateTailwindConfig();
     files['postcss.config.js'] = this.generatePostcssConfig();
     files['src/index.css'] = this.generateIndexCss();
@@ -167,19 +175,19 @@ export class CodeGeneratorService {
     // Components
     masterComponents.forEach(comp => {
       const componentName = this.getComponentName(comp);
-      files[`src/components/${componentName}.jsx`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap, stateVariables, masterComponents, dataSources);
+      files[`src/components/${componentName}.${compExt}`] = this.generateComponentCode(comp, nodes, nodesById, pages, pageRouteMap, stateVariables, masterComponents, dataSources, format);
     });
 
     // Generate page code
     pages.forEach((page, index) => {
       const routeInfo = pageRouteMap.find(p => p.frameId === page.id);
       const pageName = routeInfo ? routeInfo.componentName : `Page${index + 1}`;
-      files[`src/pages/${pageName}.jsx`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap, pageName, stateVariables, dataSources);
+      files[`src/pages/${pageName}.${compExt}`] = this.generatePageCode(page, nodes, nodesById, masterComponents, pages, pageRouteMap, pageName, stateVariables, dataSources, format);
     });
 
     // App & Router
-    files['src/App.jsx'] = this.generateAppCode(pageRouteMap);
-    files['src/main.jsx'] = this.generateMainCode();
+    files[`src/App.${compExt}`] = this.generateAppCode(pageRouteMap, format);
+    files[`src/main.${compExt}`] = this.generateMainCode(format);
 
     return files;
   }
@@ -233,7 +241,22 @@ export class CodeGeneratorService {
     return safeName;
   }
 
-  private static generatePackageJson(): string {
+  private static generatePackageJson(format: 'jsx' | 'tsx' = 'jsx'): string {
+    const isTsx = format === 'tsx';
+    const devDependencies: Record<string, string> = {
+      "@vitejs/plugin-react": "^4.2.1",
+      "autoprefixer": "^10.4.18",
+      "postcss": "^8.4.35",
+      "tailwindcss": "^3.4.1",
+      "vite": "^5.1.5"
+    };
+
+    if (isTsx) {
+      devDependencies["@types/react"] = "^18.2.64";
+      devDependencies["@types/react-dom"] = "^18.2.21";
+      devDependencies["typescript"] = "^5.2.2";
+    }
+
     return JSON.stringify({
       name: "generated-app",
       private: true,
@@ -241,7 +264,7 @@ export class CodeGeneratorService {
       type: "module",
       scripts: {
         "dev": "vite",
-        "build": "vite build",
+        "build": isTsx ? "tsc && vite build" : "vite build",
         "preview": "vite preview"
       },
       dependencies: {
@@ -249,16 +272,35 @@ export class CodeGeneratorService {
         "react-dom": "^18.2.0",
         "react-router-dom": "^6.22.0"
       },
-      devDependencies: {
-        "@types/react": "^18.2.64",
-        "@types/react-dom": "^18.2.21",
-        "@vitejs/plugin-react": "^4.2.1",
-        "autoprefixer": "^10.4.18",
-        "postcss": "^8.4.35",
-        "tailwindcss": "^3.4.1",
-        "vite": "^5.1.5"
-      }
+      devDependencies
     }, null, 2);
+  }
+
+  private static generateTsConfig(): string {
+    return JSON.stringify({
+      compilerOptions: {
+        target: "ES2020",
+        useDefineForClassFields: true,
+        lib: ["ES2020", "DOM", "DOM.Iterable"],
+        module: "ESNext",
+        skipLibCheck: true,
+        moduleResolution: "bundler",
+        allowImportingTsExtensions: false,
+        resolveJsonModule: true,
+        isolatedModules: true,
+        noEmit: true,
+        jsx: "react-jsx",
+        strict: false,
+        noUnusedLocals: false,
+        noUnusedParameters: false,
+        noFallthroughCasesInSwitch: true
+      },
+      include: ["src"]
+    }, null, 2);
+  }
+
+  private static generateViteEnvDts(): string {
+    return `/// <reference types="vite/client" />\n`;
   }
 
   private static generateTailwindConfig(): string {
@@ -292,7 +334,8 @@ export default defineConfig({
 `;
   }
 
-  private static generateIndexHtml(): string {
+  private static generateIndexHtml(format: 'jsx' | 'tsx' = 'jsx'): string {
+    const mainScript = format === 'tsx' ? '/src/main.tsx' : '/src/main.jsx';
     return `<!doctype html>
 <html lang="en">
   <head>
@@ -305,7 +348,7 @@ export default defineConfig({
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="${mainScript}"></script>
   </body>
 </html>
 `;
@@ -533,13 +576,14 @@ body {
 `;
   }
 
-  private static generateMainCode(): string {
+  private static generateMainCode(format: 'jsx' | 'tsx' = 'jsx'): string {
+    const rootEl = format === 'tsx' ? "document.getElementById('root')!" : "document.getElementById('root')";
     return `import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App.jsx';
+import App from './App';
 import './index.css';
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+ReactDOM.createRoot(${rootEl}).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,
@@ -547,7 +591,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 `;
   }
 
-  private static generateAppCode(routes: { frameId: string; route: string; componentName: string }[]): string {
+  private static generateAppCode(routes: { frameId: string; route: string; componentName: string }[], _format: 'jsx' | 'tsx' = 'jsx'): string {
     const uniqueImports = Array.from(new Set(routes.map(r => r.componentName)));
     const imports = uniqueImports.map(name => `import ${name} from './pages/${name}';`).join('\n');
     
@@ -2295,7 +2339,8 @@ ${indent}</div>`;
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
     stateVariables: StateVariable[] = [],
     masterComponents: CanvasNode[] = [],
-    dataSources: DataSource[] = []
+    dataSources: DataSource[] = [],
+    format: 'jsx' | 'tsx' = 'jsx'
   ): string {
     const componentName = this.getComponentName(comp);
     const compDescendants = [comp, ...this.getDescendants(comp.id, allNodes)];
@@ -2378,10 +2423,11 @@ ${indent}</div>`;
     
     const rootClasses = this.generateNodeTailwindClasses(comp, true);
     const compImportsStr = compImports ? compImports + '\n' : '';
+    const propsParam = format === 'tsx' ? 'props: any' : 'props';
     
     return `${reactImport}
 ${routerImportStr}${compImportsStr}
-export default function ${componentName}(props) {
+export default function ${componentName}(${propsParam}) {
 ${bodyStr}  return (
     <div className="${rootClasses}">
       ${childrenJsx}
@@ -2400,7 +2446,8 @@ ${bodyStr}  return (
     pageRouteMap: { frameId: string; route: string; componentName: string }[] = [],
     pageName: string = 'Page',
     stateVariables: StateVariable[] = [],
-    dataSources: DataSource[] = []
+    dataSources: DataSource[] = [],
+    _format: 'jsx' | 'tsx' = 'jsx'
   ): string {
     // Find all variant frames for this primary page
     const baseName = (page.name || '').replace(/\s*-\s*(Desktop|Tablet|Mobile)$/i, '');
